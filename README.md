@@ -154,7 +154,7 @@ go build -o opensync ./cmd/server
 
 ## 发布与 Docker 镜像
 
-发布 GitHub Release 或推送 `v*.*.*` 版本标签时，会自动构建并推送多架构 Docker 镜像到 GitHub Container Registry。
+发布 GitHub Release 时，会自动构建并推送多架构 Docker 镜像到 GitHub Container Registry。
 
 例如发布 `v1.0.0` 后，会生成：
 
