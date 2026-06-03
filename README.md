@@ -1,65 +1,106 @@
 # OpenSync
 
-OpenSync is an AList automation tool for scheduling file synchronization jobs, tracking task progress, and sending completion notifications.
+OpenSync 是一个面向 AList 的自动化同步和备份工具，用来创建定时同步任务、查看任务进度，并在任务完成后发送通知。
 
-## Features
+它可以部署在飞牛系统（fnOS）、NAS、家庭服务器或普通 Docker 环境中，作为群晖 Cloud Sync 的轻量平替方案使用：通过 AList 统一接入网盘、对象存储、WebDAV 等存储端，再由 OpenSync 自动执行目录同步，实现持续、可视化的自动化备份。
 
-- Manage multiple AList engines
-- Create manual or scheduled synchronization jobs
-- Support add-only sync, full sync, and move mode
-- Track live progress, transfer speed, file counts, failures, and task history
-- View task details in nested drawers without leaving the job page
-- Configure notification channels including webhook, ServerChan, DingTalk, WeCom, and Lark
-- Built-in login, password management, dark mode, and SQLite storage
-- Docker deployment with persistent runtime data
+## 适合场景
 
-## Docker
+- 在飞牛系统下把本地目录自动备份到 AList 支持的远端存储
+- 替代或补充群晖 Cloud Sync，做跨网盘、跨存储的自动同步
+- 给家庭 NAS、影音库、照片库、文档目录配置定时备份
+- 统一管理多个 AList 引擎和多条同步任务
+- 查看每次同步的成功、失败、进度和错误原因
+- 同步完成后通过 Webhook、ServerChan、钉钉、企业微信、飞书等渠道通知
 
-Pull the latest image:
+## 功能
+
+- 多 AList 引擎管理
+- 手动任务和定时任务
+- 仅新增、全同步、移动模式
+- 实时进度、传输速度、文件数量、失败记录和历史任务
+- 任务详情抽屉展示，不离开当前作业页面
+- 通知渠道配置和测试发送
+- 登录、修改密码、深色模式
+- SQLite 本地数据存储
+- Docker 和 Docker Compose 部署
+- GitHub Release 自动构建 Docker 镜像
+
+## Docker Compose 部署
+
+推荐使用 Docker Compose 部署：
 
 ```bash
-docker pull ghcr.io/chenbin3625/opensync:latest
+mkdir -p opensync
+cd opensync
+curl -O https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docker-compose.yml
+docker compose up -d
 ```
 
-Run OpenSync:
+启动后访问：
 
-```bash
-docker run -d \
-  --name opensync \
-  -p 8023:8023 \
-  -v opensync-data:/app/data \
-  ghcr.io/chenbin3625/opensync:latest
+```text
+http://你的设备IP:8023/
 ```
 
-Open `http://127.0.0.1:8023/`.
-
-On first launch, the initial admin password is printed in the container logs:
+首次启动时，初始管理员密码会打印在容器日志里：
 
 ```bash
 docker logs opensync
 ```
 
-## Build Locally
+默认配置会把运行数据保存到当前目录的 `data/` 文件夹。请保留这个目录，它包含数据库、密钥、语言设置和日志。
+
+## docker-compose.yml
+
+```yaml
+services:
+  opensync:
+    image: ghcr.io/chenbin3625/opensync:latest
+    container_name: opensync
+    restart: unless-stopped
+    ports:
+      - "8023:8023"
+    volumes:
+      - ./data:/app/data
+    environment:
+      TAO_PORT: 8023
+      GIN_MODE: release
+```
+
+## Docker 命令部署
+
+```bash
+docker run -d \
+  --name opensync \
+  --restart unless-stopped \
+  -p 8023:8023 \
+  -v opensync-data:/app/data \
+  ghcr.io/chenbin3625/opensync:latest
+```
+
+## 本地构建镜像
 
 ```bash
 docker build -t opensync .
 docker run -d \
   --name opensync \
+  --restart unless-stopped \
   -p 8023:8023 \
   -v opensync-data:/app/data \
   opensync
 ```
 
-## Local Development
+## 本地开发
 
-Start the backend:
+启动后端：
 
 ```bash
 cd backend
 go run ./cmd/server
 ```
 
-Start the frontend dev server in another terminal:
+启动前端开发服务：
 
 ```bash
 cd frontend
@@ -67,11 +108,21 @@ npm install
 npm run dev
 ```
 
-The frontend runs on `http://127.0.0.1:3000/` and proxies `/svr` API calls to `http://localhost:8023`.
+前端开发服务地址：
 
-## Production Build Without Docker
+```text
+http://127.0.0.1:3000/
+```
 
-Build the frontend first. The Vite config writes static files into the Go embed directory.
+开发服务会把 `/svr` 接口代理到：
+
+```text
+http://localhost:8023
+```
+
+## 不使用 Docker 的生产构建
+
+先构建前端，构建结果会写入 Go 的静态资源嵌入目录：
 
 ```bash
 cd frontend
@@ -79,7 +130,7 @@ npm install
 npm run build
 ```
 
-Then build and run the backend:
+再构建并运行后端：
 
 ```bash
 cd ../backend
@@ -87,36 +138,32 @@ go build -o opensync ./cmd/server
 ./opensync
 ```
 
-## Configuration
+## 环境变量
 
-Runtime data is stored under `backend/data` during local development and `/app/data` in Docker. This includes the SQLite database, generated secret key, language preference, and logs.
+当 `data/config.ini` 不存在时，会读取环境变量：
 
-Environment variables are used when `data/config.ini` is not present:
-
-| Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `TAO_PORT` | `8023` | HTTP server port |
-| `TAO_EXPIRES` | `2` | Login expiration in days |
-| `TAO_LOG_LEVEL` | `1` | File log level |
-| `TAO_CONSOLE_LEVEL` | `2` | Console log level |
-| `TAO_LOG_SAVE` | `7` | Log retention in days |
-| `TAO_TASK_SAVE` | `0` | Task retention, `0` keeps all tasks |
-| `TAO_TASK_TIMEOUT` | `72` | Task timeout in hours |
+| `TAO_PORT` | `8023` | HTTP 服务端口 |
+| `TAO_EXPIRES` | `2` | 登录有效期，单位天 |
+| `TAO_LOG_LEVEL` | `1` | 文件日志等级 |
+| `TAO_CONSOLE_LEVEL` | `2` | 控制台日志等级 |
+| `TAO_LOG_SAVE` | `7` | 日志保留天数 |
+| `TAO_TASK_SAVE` | `0` | 任务保留配置，`0` 表示保留全部 |
+| `TAO_TASK_TIMEOUT` | `72` | 任务超时时间，单位小时 |
 
-## Docker Release Automation
+## 发布与 Docker 镜像
 
-Publishing a GitHub Release or pushing a semantic version tag triggers the Docker workflow and pushes a multi-architecture image to GitHub Container Registry.
+发布 GitHub Release 或推送 `v*.*.*` 版本标签时，会自动构建并推送多架构 Docker 镜像到 GitHub Container Registry。
 
-Use semantic version tags such as `v1.2.3`. A published release creates:
+例如发布 `v1.0.0` 后，会生成：
 
-- `ghcr.io/chenbin3625/opensync:1.2.3`
-- `ghcr.io/chenbin3625/opensync:1.2`
-- `ghcr.io/chenbin3625/opensync:latest` for non-prerelease versions
+- `ghcr.io/chenbin3625/opensync:1.0.0`
+- `ghcr.io/chenbin3625/opensync:1.0`
+- `ghcr.io/chenbin3625/opensync:latest`
 - `ghcr.io/chenbin3625/opensync:sha-<commit>`
 
-The workflow can also be run manually from the GitHub Actions tab.
-
-## Development Checks
+## 开发检查
 
 ```bash
 cd frontend
@@ -126,10 +173,10 @@ cd ../backend
 go test ./...
 ```
 
-`npm run lint` currently reports strict lint issues. Use frontend build and backend tests as the baseline checks until lint cleanup is complete.
+当前 `npm run lint` 会报告一些严格规则问题。正式检查以“前端构建通过”和“后端测试通过”为准。
 
-## Security Notes
+## 注意事项
 
-- Do not commit runtime files from `backend/data`.
-- Keep the generated `secret.key` stable for a deployed instance by using a persistent data volume.
-- Rotate AList tokens if a local runtime directory is ever shared accidentally.
+- 不要提交或公开 `backend/data` 或 Docker 挂载的 `data` 目录。
+- `secret.key` 会影响登录 Cookie 和敏感信息加解密，部署后应通过持久化目录保留。
+- 如果误分享了运行数据目录，请及时更换 AList Token。

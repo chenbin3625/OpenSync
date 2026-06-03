@@ -17,6 +17,7 @@ frontend/*.local
 frontend/.eslintcache
 
 # Backend runtime data and local binaries
+data/
 backend/data/*
 !backend/data/.gitkeep
 backend/taosync

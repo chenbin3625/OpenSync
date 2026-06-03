@@ -1,0 +1,12 @@
+services:
+  opensync:
+    image: ghcr.io/chenbin3625/opensync:latest
+    container_name: opensync
+    restart: unless-stopped
+    ports:
+      - "8023:8023"
+    volumes:
+      - ./data:/app/data
+    environment:
+      TAO_PORT: 8023
+      GIN_MODE: release
