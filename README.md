@@ -105,7 +105,7 @@ Environment variables are used when `data/config.ini` is not present:
 
 ## Docker Release Automation
 
-Publishing a GitHub Release triggers the Docker workflow and pushes a multi-architecture image to GitHub Container Registry.
+Publishing a GitHub Release or pushing a semantic version tag triggers the Docker workflow and pushes a multi-architecture image to GitHub Container Registry.
 
 Use semantic version tags such as `v1.2.3`. A published release creates:
 
