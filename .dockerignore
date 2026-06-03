@@ -1,0 +1,11 @@
+**/node_modules
+**/.git
+**/dist
+**/*.md
+**/.gitkeep
+backend/data/*
+backend/taosync
+backend/server
+backend/opensync
+backend/cmd/server/web/*
+!backend/cmd/server/web/.gitkeep

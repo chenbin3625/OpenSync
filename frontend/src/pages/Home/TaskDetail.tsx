@@ -1,0 +1,233 @@
+import { useState, useEffect } from 'react';
+import { Table, Tag, Button, Space, Select, Popover, Progress, Empty, Typography, Card } from 'antd';
+import { ArrowLeftOutlined, FileSearchOutlined } from '@ant-design/icons';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { jobGetTaskItem } from '../../api/job';
+import dayjs from 'dayjs';
+
+const { Text } = Typography;
+
+const taskItemStatusList = [
+  '等待中', '进行中', '成功', '取消中', '已取消',
+  '出错（将重试）', '失败中', '已失败', '等待重试中', '等待重试前',
+];
+
+const statusColors: Record<number, string> = {
+  0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
+  4: 'default', 5: 'error', 6: 'error', 7: 'error', 8: 'default', 9: 'default',
+};
+
+const typeNames: Record<number, string> = {
+  0: '复制', 1: '删除', 2: '移动',
+};
+
+function formatSize(val: number | null): string {
+  if (val == null) return '--';
+  if (val === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let size = val;
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i++;
+  }
+  return `${size.toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
+}
+
+type TaskDetailProps = {
+  taskId?: number | string;
+  embedded?: boolean;
+  onBack?: () => void;
+};
+
+export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBack }: TaskDetailProps = {}) {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const routeTaskId = searchParams.get('taskId') || '';
+  const taskId = taskIdProp !== undefined && taskIdProp !== null ? String(taskIdProp) : routeTaskId;
+
+  const [list, setList] = useState<Record<string, unknown>[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [loading, setLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<number | undefined>(undefined);
+  const [typeFilter, setTypeFilter] = useState<number | undefined>(undefined);
+
+  const fetchData = async () => {
+    if (!taskId) return;
+    setLoading(true);
+    try {
+      const params: Record<string, unknown> = {
+        taskId,
+        pageSize,
+        pageNum: page,
+      };
+      if (statusFilter !== undefined) params.status = statusFilter;
+      if (typeFilter !== undefined) params.type = typeFilter;
+      const res = await jobGetTaskItem(params) as { data?: { dataList?: Record<string, unknown>[]; count?: number } };
+      const data = res.data;
+      const items = (data?.dataList || []).map((item) => {
+        const prog = typeof item.progress === 'string' ? parseInt(item.progress as string) : (item.progress as number);
+        return { ...item, progress: Math.min(prog || 0, 100) };
+      });
+      setList(items);
+      setTotal(data?.count || 0);
+    } catch {
+      /* ignore */
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchData(); }, [taskId, page, pageSize, statusFilter, typeFilter]);
+
+  const columns = [
+    {
+      title: '文件名/目录',
+      dataIndex: 'fileName',
+      key: 'fileName',
+      render: (_: unknown, record: Record<string, unknown>) =>
+        (record.fileName as string) || (record.dstPath as string) || '--',
+    },
+    {
+      title: '文件大小',
+      dataIndex: 'fileSize',
+      key: 'fileSize',
+      width: 120,
+      render: (val: number | null) => formatSize(val),
+    },
+    {
+      title: '操作类型',
+      dataIndex: 'type',
+      key: 'type',
+      width: 100,
+      render: (val: number, record: Record<string, unknown>) => {
+        if (val === 0) return record.isPath ? '创建' : '复制';
+        return typeNames[val] || String(val);
+      },
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 140,
+      render: (status: number, record: Record<string, unknown>) => {
+        if (status === 1) {
+          const pct = Number(record.progress as number || 0);
+          return <Progress percent={pct} size="small" />;
+        }
+        if (status === 7 && record.errMsg) {
+          return (
+            <Popover title="错误原因" content={record.errMsg as string} trigger="hover">
+              <Tag color={statusColors[status]}>失败，<span style={{ color: '#1677ff', cursor: 'pointer' }}>原因</span></Tag>
+            </Popover>
+          );
+        }
+        return (
+          <Tag color={statusColors[status]}>
+            {taskItemStatusList[status] || String(status)}
+          </Tag>
+        );
+      },
+    },
+  ];
+
+  const expandedRowRender = (record: Record<string, unknown>) => (
+    <div style={{ padding: '8px 0' }}>
+      {record.type !== 1 && (
+        <div style={{ marginBottom: 8 }}>
+          <Text strong>来源目录：</Text>
+          <Text style={{ wordBreak: 'break-all' }}>{(record.srcPath as string) || '--'}</Text>
+        </div>
+      )}
+      <div style={{ marginBottom: 8 }}>
+        <Text strong>目标目录：</Text>
+        <Text style={{ wordBreak: 'break-all' }}>{(record.dstPath as string) || '--'}</Text>
+      </div>
+      <div>
+        <Text strong>创建时间：</Text>
+        <Text>
+          {record.createTime
+            ? dayjs.unix(record.createTime as number).format('YYYY-MM-DD HH:mm:ss')
+            : '--'}
+        </Text>
+      </div>
+    </div>
+  );
+
+  const content = (
+    <>
+      <div className="page-header">
+        {embedded ? (
+          <span />
+        ) : (
+          <Space>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => (onBack ? onBack() : navigate(-1 as never))}>返回</Button>
+            <h2>任务详情</h2>
+          </Space>
+        )}
+        <Space>
+          <Select
+            placeholder="筛选状态"
+            allowClear
+            style={{ width: 160 }}
+            value={statusFilter}
+            onChange={(v) => { setStatusFilter(v); setPage(1); }}
+            options={taskItemStatusList.map((label, value) => ({ label, value }))}
+          />
+          <Select
+            placeholder="筛选操作类型"
+            allowClear
+            style={{ width: 140 }}
+            value={typeFilter}
+            onChange={(v) => { setTypeFilter(v); setPage(1); }}
+            options={[
+              { label: '复制/创建', value: 0 },
+              { label: '删除', value: 1 },
+              { label: '移动', value: 2 },
+            ]}
+          />
+        </Space>
+      </div>
+
+      {list.length === 0 && !loading ? (
+        <Empty
+          image={<FileSearchOutlined style={{ fontSize: 64, color: '#bbb' }} />}
+          styles={{ image: { height: 80 } }}
+          description={<Text type="secondary">暂无文件详情记录</Text>}
+          className="empty-state-compact"
+        />
+      ) : (
+        <Table
+          dataSource={list}
+          columns={columns}
+          rowKey="id"
+          loading={loading}
+          expandable={{
+            expandedRowRender,
+          }}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50', '100'],
+            onChange: (p, ps) => { setPage(p); setPageSize(ps); },
+            showTotal: (t) => `共 ${t} 条`,
+          }}
+          size="middle"
+        />
+      )}
+    </>
+  );
+
+  if (embedded) {
+    return <div>{content}</div>;
+  }
+
+  return (
+    <Card>
+      {content}
+    </Card>
+  );
+}
