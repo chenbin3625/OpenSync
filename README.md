@@ -154,7 +154,7 @@ go build -o opensync ./cmd/server
 
 ## 发布与 Docker 镜像
 
-发布 GitHub Release 时，会自动构建并推送多架构 Docker 镜像到 GitHub Container Registry。
+发布 GitHub Release 时，会自动构建并推送 Docker 镜像到 GitHub Container Registry。
 
 例如发布 `v1.0.0` 后，会生成：
 
@@ -162,6 +162,8 @@ go build -o opensync ./cmd/server
 - `ghcr.io/chenbin3625/opensync:1.0`
 - `ghcr.io/chenbin3625/opensync:latest`
 - `ghcr.io/chenbin3625/opensync:sha-<commit>`
+
+当前自动发布的镜像平台为 `linux/amd64`，适合常见 x86_64 飞牛系统、群晖、NAS 和服务器设备。
 
 ## 开发检查
 
