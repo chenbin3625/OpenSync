@@ -45,7 +45,11 @@ func UpdateNotify(c *gin.Context) {
 
 	if notifyIDStr, ok := req["notifyId"]; ok {
 		// Update status
-		notifyID, _ := strconv.ParseInt(toStr(notifyIDStr), 10, 64)
+		notifyID, err := parseRequiredID(toStr(notifyIDStr), "notifyId")
+		if err != nil {
+			c.JSON(http.StatusOK, model.Error(err.Error()))
+			return
+		}
 		enable := toIntI(req["enable"])
 		service.UpdateNotifyStatus(notifyID, enable)
 	} else if notify, ok := req["notify"]; ok {
@@ -64,7 +68,11 @@ func DeleteNotify(c *gin.Context) {
 		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
 		return
 	}
-	notifyID, _ := strconv.ParseInt(notifyIDStr, 10, 64)
+	notifyID, err := parseRequiredID(notifyIDStr, "notifyId")
+	if err != nil {
+		c.JSON(http.StatusOK, model.Error(err.Error()))
+		return
+	}
 	service.DeleteNotify(notifyID)
 	c.JSON(http.StatusOK, model.Success(nil))
 }

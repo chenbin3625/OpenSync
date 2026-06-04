@@ -35,14 +35,6 @@ func GetClientByID(alistID int64) *AlistClient {
 		return client
 	}
 
-	alistClientListMu.Lock()
-	defer alistClientListMu.Unlock()
-
-	// Double check
-	if client, ok := alistClientList[alistID]; ok {
-		return client
-	}
-
 	alist, err := mapper.GetAlistByID(alistID)
 	if err != nil {
 		panic(err.Error())
@@ -57,6 +49,12 @@ func GetClientByID(alistID int64) *AlistClient {
 		msg := i18n.G("add_alist_client_fail")
 		msg = strings.Replace(msg, "{}", err.Error(), 1)
 		panic(msg)
+	}
+
+	alistClientListMu.Lock()
+	defer alistClientListMu.Unlock()
+	if client, ok := alistClientList[alistID]; ok {
+		return client
 	}
 	alistClientList[alistID] = newClient
 	return newClient

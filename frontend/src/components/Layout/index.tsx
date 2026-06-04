@@ -21,7 +21,7 @@ const { Header, Sider, Content } = AntLayout;
 const { Text } = Typography;
 
 const menuItems = [
-  { key: '/home', icon: <HomeOutlined />, label: '作业管理' },
+  { key: '/home', icon: <HomeOutlined />, label: '任务管理' },
   { key: '/engine', icon: <CloudServerOutlined />, label: '引擎管理' },
   { key: '/notify', icon: <BellOutlined />, label: '通知配置' },
   { key: '/setting', icon: <SettingOutlined />, label: '系统设置' },

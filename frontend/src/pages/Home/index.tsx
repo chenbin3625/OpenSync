@@ -1,5 +1,5 @@
-import type React from 'react';
 import { useState, useEffect, useCallback } from 'react';
+import type { Key } from 'react';
 import {
   Card, Row, Col, Button, Tag, Space, Popconfirm, Pagination, App, Drawer, Select, Input, Form, Switch, InputNumber,
   Empty, Typography, Divider, TreeSelect, Spin, Descriptions, Tooltip,
@@ -14,6 +14,7 @@ import { alistGet, alistGetPath } from '../../api/alist';
 import TaskList from './TaskList';
 import TaskDetail from './TaskDetail';
 import dayjs from 'dayjs';
+import type { AlistItem, JobFormValues, JobItem, PathItem, TreeNode } from '../../types';
 
 const { Text } = Typography;
 
@@ -37,54 +38,54 @@ const cronFields = [
 
 export default function Home() {
   const { message } = App.useApp();
-  const [list, setList] = useState<any[]>([]);
+  const [list, setList] = useState<JobItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(12);
   const [loading, setLoading] = useState(false);
-  const [alistList, setAlistList] = useState<any[]>([]);
+  const [alistList, setAlistList] = useState<AlistItem[]>([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
-  const [editingJob, setEditingJob] = useState<any>(null);
+  const [editingJob, setEditingJob] = useState<JobItem | null>(null);
   const [taskDrawerJobId, setTaskDrawerJobId] = useState<string>('');
   const [taskDetailDrawerTaskId, setTaskDetailDrawerTaskId] = useState<string>('');
   const [form] = Form.useForm();
 
   // Directory tree state (fully controlled)
-  const [srcTreeData, setSrcTreeData] = useState<any[]>([]);
-  const [dstTreeData, setDstTreeData] = useState<any[]>([]);
-  const [srcLoadedKeys, setSrcLoadedKeys] = useState<React.Key[]>([]);
-  const [dstLoadedKeys, setDstLoadedKeys] = useState<React.Key[]>([]);
+  const [srcTreeData, setSrcTreeData] = useState<TreeNode[]>([]);
+  const [dstTreeData, setDstTreeData] = useState<TreeNode[]>([]);
+  const [srcLoadedKeys, setSrcLoadedKeys] = useState<Key[]>([]);
+  const [dstLoadedKeys, setDstLoadedKeys] = useState<Key[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
 
-  const fetchList = async (p = page, ps = pageSize) => {
+  const fetchList = useCallback(async (p = page, ps = pageSize) => {
     setLoading(true);
     try {
-      const res: any = await jobGetJob({ pageSize: ps, pageNum: p });
+      const res = await jobGetJob({ pageSize: ps, pageNum: p });
       setList(res.data?.dataList || []);
       setTotal(res.data?.count || 0);
     } catch { /* ignore */ }
     setLoading(false);
-  };
+  }, [page, pageSize]);
 
-  const fetchAlistList = async () => {
+  const fetchAlistList = useCallback(async () => {
     try {
-      const res: any = await alistGet();
+      const res = await alistGet();
       setAlistList(res.data || []);
     } catch { /* ignore */ }
-  };
+  }, []);
 
-  useEffect(() => { fetchList(); fetchAlistList(); }, []);
-  useEffect(() => { fetchList(); }, [page, pageSize]);
+  useEffect(() => { fetchAlistList(); }, [fetchAlistList]);
+  useEffect(() => { fetchList(); }, [fetchList]);
 
   // Load root directory when alistId changes
-  const selectedAlistId = Form.useWatch('alistId', form);
+  const selectedAlistId = Form.useWatch('alistId', form) as number | undefined;
 
-  const fetchDirChildren = useCallback(async (alistId: number, parentPath: string): Promise<any[]> => {
+  const fetchDirChildren = useCallback(async (alistId: number, parentPath: string): Promise<TreeNode[]> => {
     if (!alistId) return [];
     try {
-      const res: any = await alistGetPath(alistId, parentPath);
+      const res = await alistGetPath(alistId, parentPath);
       const items = res.data || [];
-      return (Array.isArray(items) ? items : []).map((item: any) => {
+      return (Array.isArray(items) ? items : []).map((item: PathItem) => {
         const name = item.path || item.name || '';
         const fullPath = parentPath === '/' ? `/${name}` : `${parentPath}/${name}`;
         return {
@@ -100,7 +101,7 @@ export default function Home() {
   }, []);
 
   // Helper to insert children into tree data at the correct parent node
-  const updateTreeChildren = (tree: any[], parentValue: string, children: any[]): any[] => {
+  const updateTreeChildren = (tree: TreeNode[], parentValue: string, children: TreeNode[]): TreeNode[] => {
     return tree.map((node) => {
       if (node.value === parentValue) {
         return { ...node, children };
@@ -131,14 +132,14 @@ export default function Home() {
     }
   }, [selectedAlistId, fetchDirChildren]);
 
-  const onLoadSrcData = async (node: any) => {
+  const onLoadSrcData = async (node: TreeNode) => {
     if (!selectedAlistId || srcLoadedKeys.includes(node.value)) return;
     const children = await fetchDirChildren(selectedAlistId, node.value);
     setSrcTreeData((prev) => updateTreeChildren(prev, node.value, children));
     setSrcLoadedKeys((prev) => [...prev, node.value]);
   };
 
-  const onLoadDstData = async (node: any) => {
+  const onLoadDstData = async (node: TreeNode) => {
     if (!selectedAlistId || dstLoadedKeys.includes(node.value)) return;
     const children = await fetchDirChildren(selectedAlistId, node.value);
     setDstTreeData((prev) => updateTreeChildren(prev, node.value, children));
@@ -171,7 +172,7 @@ export default function Home() {
     setDrawerVisible(true);
   };
 
-  const handleEdit = (job: any) => {
+  const handleEdit = (job: JobItem) => {
     setEditingJob(job);
     form.resetFields();
     form.setFieldsValue({
@@ -194,9 +195,9 @@ export default function Home() {
 
   const handleSubmit = async () => {
     try {
-      const values = await form.validateFields();
+      const values = await form.validateFields() as JobFormValues;
       const dstPaths = Array.isArray(values.dstPath) ? values.dstPath : [values.dstPath];
-      const jobData = {
+      const jobData: Record<string, unknown> = {
         ...(editingJob ? { id: editingJob.id } : {}),
         ...values,
         dstPath: dstPaths.filter(Boolean).join(':'),
@@ -219,7 +220,7 @@ export default function Home() {
     } catch { /* ignore */ }
   };
 
-  const handleToggle = async (job: any) => {
+  const handleToggle = async (job: JobItem) => {
     try {
       await jobPut({ id: String(job.id), pause: job.enable === 1 });
       message.success('操作成功');
@@ -238,7 +239,7 @@ export default function Home() {
   const handleRunAll = async () => {
     try {
       await jobPut({});
-      message.success('已提交执行所有作业');
+      message.success('已提交执行所有同步任务');
     } catch { /* ignore */ }
   };
 
@@ -253,12 +254,12 @@ export default function Home() {
   };
 
   const getAlistName = (alistId: number) => {
-    const a = alistList.find((x: any) => x.id === alistId);
+    const a = alistList.find((x) => x.id === alistId);
     if (!a) return `引擎 #${alistId}`;
     return a.remark ? `${a.userName} (${a.remark})` : a.userName;
   };
 
-  const formatSchedule = (job: any) => {
+  const formatSchedule = (job: JobItem) => {
     if (job.isCron === 0) return `每 ${job.interval} 分钟`;
     if (job.isCron === 1) {
       return `Cron: ${[job.second, job.minute, job.hour, job.day, job.month, job.day_of_week].map((v) => v || '*').join(' ')}`;
@@ -266,7 +267,7 @@ export default function Home() {
     return '仅手动触发';
   };
 
-  const formatCache = (useS: number, useT: number) => {
+  const formatCache = (useS: number | boolean, useT: number | boolean) => {
     const s = useS ? '源端✓' : '源端✗';
     const t = useT ? '目标✓' : '目标✗';
     return `${s} / ${t}`;
@@ -278,10 +279,10 @@ export default function Home() {
     <div>
       <Card>
         <div className="page-header">
-          <h2>作业管理</h2>
+          <h2>任务管理</h2>
           <Space>
             <Button icon={<PlayCircleOutlined />} onClick={handleRunAll}>执行全部</Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新建作业</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新建同步任务</Button>
           </Space>
         </div>
 
@@ -289,13 +290,13 @@ export default function Home() {
           <Empty
             image={<FolderOpenOutlined style={{ fontSize: 64, color: 'var(--ant-color-text-quaternary)' }} />}
             styles={{ image: { height: 80 } }}
-            description={<Text type="secondary">暂无作业，点击上方「新建作业」创建第一个同步任务</Text>}
+            description={<Text type="secondary">暂无同步任务，点击上方「新建同步任务」创建第一个同步任务</Text>}
             className="empty-state"
           />
         ) : (
           <>
             <Row gutter={[16, 16]}>
-              {list.map((job: any) => (
+              {list.map((job) => (
                 <Col xs={24} md={12} key={job.id}>
                   <Card
                     hoverable
@@ -315,7 +316,7 @@ export default function Home() {
                           style={job.enable === 1 ? { color: 'var(--ant-color-text-disabled)', cursor: 'not-allowed' } : undefined}
                         />
                       </Tooltip>,
-                      <Popconfirm title="确认删除此作业？" onConfirm={() => handleDelete(job.id)} key="del">
+                      <Popconfirm title="确认删除此同步任务？" onConfirm={() => handleDelete(job.id)} key="del">
                         <Tooltip title="删除">
                           <DeleteOutlined
                             onClick={(e) => e.stopPropagation()}
@@ -337,7 +338,7 @@ export default function Home() {
                       <div className="card-item-info" style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <Text strong style={{ fontSize: 15 }}>
-                            {job.remark || `作业 #${job.id}`}
+                            {job.remark || `同步任务 #${job.id}`}
                           </Text>
                           <Tag color={statusColors[job.enable] || 'default'} style={{ margin: 0, fontSize: 11 }}>
                             {statusLabels[job.enable] || '未知'}
@@ -398,7 +399,7 @@ export default function Home() {
       </Card>
 
       <Drawer
-        title={editingJob ? '编辑作业' : '新建作业'}
+        title={editingJob ? '编辑同步任务' : '新建同步任务'}
         open={drawerVisible}
         onClose={() => setDrawerVisible(false)}
         styles={{ wrapper: { width: 580 } }}
@@ -414,7 +415,7 @@ export default function Home() {
           <Form.Item name="alistId" label="引擎" rules={[{ required: true, message: '请选择引擎' }]}>
             <Select
               placeholder="选择引擎"
-              options={alistList.map((a: any) => ({
+              options={alistList.map((a) => ({
                 value: a.id,
                 label: `${a.userName} - ${a.url}${a.remark ? ` (${a.remark})` : ''}`,
               }))}
@@ -426,7 +427,7 @@ export default function Home() {
                 <TreeSelect
                   placeholder="选择源目录"
                   treeData={srcTreeData}
-                  loadData={onLoadSrcData as any}
+                  loadData={(node) => onLoadSrcData(node as TreeNode)}
                   treeDefaultExpandAll
                   showSearch
                   treeNodeFilterProp="title"
@@ -441,7 +442,7 @@ export default function Home() {
                 <TreeSelect
                   placeholder="选择目标目录"
                   treeData={dstTreeData}
-                  loadData={onLoadDstData as any}
+                  loadData={(node) => onLoadDstData(node as TreeNode)}
                   treeDefaultExpandAll
                   multiple
                   showSearch
@@ -548,7 +549,7 @@ export default function Home() {
       </Drawer>
 
       <Drawer
-        title={`任务列表 — 作业 #${taskDrawerJobId}`}
+        title={`任务列表 — 同步任务 #${taskDrawerJobId}`}
         open={!!taskDrawerJobId}
         onClose={closeTaskDrawer}
         styles={{ wrapper: { width: 'min(900px, 90vw)' } }}

@@ -109,14 +109,26 @@ func UpdateJob(c *gin.Context) {
 	if req.Pause == nil {
 		// Manual execution
 		if req.ID != nil {
-			id, _ := strconv.ParseInt(*req.ID, 10, 64)
+			id, err := parseRequiredID(*req.ID, "id")
+			if err != nil {
+				c.JSON(http.StatusOK, model.Error(err.Error()))
+				return
+			}
 			service.DoJobManual(id)
 		} else {
 			service.DoAllJobManual()
 		}
 	} else if *req.Pause {
 		// Disable or abort
-		id, _ := strconv.ParseInt(*req.ID, 10, 64)
+		if req.ID == nil {
+			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+			return
+		}
+		id, err := parseRequiredID(*req.ID, "id")
+		if err != nil {
+			c.JSON(http.StatusOK, model.Error(err.Error()))
+			return
+		}
 		if req.Abort != nil && *req.Abort {
 			service.AbortJob(id)
 		} else {
@@ -124,7 +136,15 @@ func UpdateJob(c *gin.Context) {
 		}
 	} else {
 		// Enable
-		id, _ := strconv.ParseInt(*req.ID, 10, 64)
+		if req.ID == nil {
+			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+			return
+		}
+		id, err := parseRequiredID(*req.ID, "id")
+		if err != nil {
+			c.JSON(http.StatusOK, model.Error(err.Error()))
+			return
+		}
 		service.ContinueJob(id)
 	}
 	c.JSON(http.StatusOK, model.Success(nil))
@@ -136,10 +156,18 @@ func DeleteJob(c *gin.Context) {
 	taskIDStr := c.Query("taskId")
 
 	if idStr != "" {
-		id, _ := strconv.ParseInt(idStr, 10, 64)
+		id, err := parseRequiredID(idStr, "id")
+		if err != nil {
+			c.JSON(http.StatusOK, model.Error(err.Error()))
+			return
+		}
 		service.RemoveJobClient(id)
 	} else if taskIDStr != "" {
-		taskID, _ := strconv.ParseInt(taskIDStr, 10, 64)
+		taskID, err := parseRequiredID(taskIDStr, "taskId")
+		if err != nil {
+			c.JSON(http.StatusOK, model.Error(err.Error()))
+			return
+		}
 		service.RemoveTask(taskID)
 	} else {
 		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))

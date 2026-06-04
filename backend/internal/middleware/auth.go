@@ -1,6 +1,9 @@
 package middleware
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,15 +26,8 @@ var sc *securecookie.SecureCookie
 // InitSecureCookie initializes the secure cookie encoder
 func InitSecureCookie() {
 	cfg := config.GetConfig()
-	// Use first 32 bytes of secret key as hash key, first 16 as block key
-	hashKey := []byte(cfg.Server.PasswdStr)
-	if len(hashKey) > 32 {
-		hashKey = hashKey[:32]
-	}
-	blockKey := []byte(cfg.Server.PasswdStr)
-	if len(blockKey) > 16 {
-		blockKey = blockKey[:16]
-	}
+	hashKey := deriveCookieKey(cfg.Server.PasswdStr, "hash", 32)
+	blockKey := deriveCookieKey(cfg.Server.PasswdStr, "block", 16)
 	sc = securecookie.New(hashKey, blockKey)
 }
 
@@ -39,17 +35,48 @@ func InitSecureCookie() {
 type CookieUser struct {
 	ID       int64  `json:"id"`
 	UserName string `json:"userName"`
-	Passwd   string `json:"passwd"`
+	Session  string `json:"session"`
+}
+
+func deriveCookieKey(secret, label string, size int) []byte {
+	sum := sha256.Sum256([]byte(label + ":" + secret))
+	return sum[:size]
+}
+
+func authSessionSignature(user map[string]interface{}) string {
+	cfg := config.GetConfig()
+	mac := hmac.New(sha256.New, []byte(cfg.Server.PasswdStr))
+	_, _ = mac.Write([]byte(fmt.Sprintf("%d|%s|%s",
+		toInt64(user["id"]),
+		fmt.Sprintf("%v", user["userName"]),
+		fmt.Sprintf("%v", user["passwd"]),
+	)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// NewCookieUser builds the non-sensitive auth payload for a user record.
+func NewCookieUser(user map[string]interface{}) CookieUser {
+	return CookieUser{
+		ID:       toInt64(user["id"]),
+		UserName: fmt.Sprintf("%v", user["userName"]),
+		Session:  authSessionSignature(user),
+	}
+}
+
+// CookieUserMatches verifies a cookie payload against the current user record.
+func CookieUserMatches(cookieUser CookieUser, user map[string]interface{}) bool {
+	if cookieUser.ID != toInt64(user["id"]) ||
+		cookieUser.UserName != fmt.Sprintf("%v", user["userName"]) {
+		return false
+	}
+	want := authSessionSignature(user)
+	return hmac.Equal([]byte(cookieUser.Session), []byte(want))
 }
 
 // SetAuthCookie sets the signed auth cookie
 func SetAuthCookie(c *gin.Context, user map[string]interface{}) {
 	cfg := config.GetConfig()
-	cookieData := CookieUser{
-		ID:       toInt64(user["id"]),
-		UserName: fmt.Sprintf("%v", user["userName"]),
-		Passwd:   fmt.Sprintf("%v", user["passwd"]),
-	}
+	cookieData := NewCookieUser(user)
 	jsonData, _ := json.Marshal(cookieData)
 	encoded, err := sc.Encode(cookieName, string(jsonData))
 	if err != nil {
@@ -58,21 +85,42 @@ func SetAuthCookie(c *gin.Context, user map[string]interface{}) {
 	}
 
 	expires := time.Now().Add(time.Duration(cfg.Server.Expires) * 24 * time.Hour)
-	c.SetCookie(cookieName, encoded, cfg.Server.Expires*86400, "/", "", false, false)
-	c.SetSameSite(http.SameSiteLaxMode)
-	// Also set with explicit expiry
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     cookieName,
 		Value:    encoded,
 		Path:     "/",
+		MaxAge:   cfg.Server.Expires * 86400,
 		Expires:  expires,
-		HttpOnly: false,
+		HttpOnly: true,
+		Secure:   isSecureRequest(c),
+		SameSite: http.SameSiteLaxMode,
 	})
 }
 
 // ClearAuthCookie removes the auth cookie
 func ClearAuthCookie(c *gin.Context) {
-	c.SetCookie(cookieName, "", -1, "/", "", false, false)
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     cookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   isSecureRequest(c),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func isSecureRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	if c.Request.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	return strings.EqualFold(c.GetHeader("X-Forwarded-Ssl"), "on")
 }
 
 // AuthRequired is the Gin middleware for authentication
@@ -122,8 +170,7 @@ func AuthRequired() gin.HandlerFunc {
 			return
 		}
 
-		if fmt.Sprintf("%v", trueUser["passwd"]) != cUser.Passwd ||
-			fmt.Sprintf("%v", trueUser["userName"]) != cUser.UserName {
+		if !CookieUserMatches(cUser, trueUser) {
 			ClearAuthCookie(c)
 			c.JSON(http.StatusOK, model.Unauthorized(i18n.G("login_expired")))
 			c.Abort()

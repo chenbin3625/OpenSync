@@ -253,10 +253,11 @@ func GetJobTaskCounts(taskID int64) map[string]interface{} {
 			COUNT(id) AS allNum,
 			COALESCE(SUM(CASE WHEN status=0 THEN 1 ELSE 0 END), 0) AS waitNum,
 			COALESCE(SUM(CASE WHEN status=1 THEN 1 ELSE 0 END), 0) AS runningNum,
-			COALESCE(SUM(CASE WHEN status=2 THEN 1 ELSE 0 END), 0) AS successNum,
-			COALESCE(SUM(CASE WHEN status=7 THEN 1 ELSE 0 END), 0) AS failNum,
-			COALESCE(SUM(CASE WHEN status NOT IN (0,1,2,7) THEN 1 ELSE 0 END), 0) AS otherNum
-		FROM job_task_item WHERE taskId=?`,
+				COALESCE(SUM(CASE WHEN status=2 THEN 1 ELSE 0 END), 0) AS successNum,
+				COALESCE(SUM(CASE WHEN status=7 THEN 1 ELSE 0 END), 0) AS failNum,
+				COALESCE(SUM(CASE WHEN status NOT IN (0,1,2,7) THEN 1 ELSE 0 END), 0) AS otherNum,
+				COALESCE(SUM(CASE WHEN status=2 AND type<>1 AND fileSize IS NOT NULL THEN fileSize ELSE 0 END), 0) AS sumSize
+			FROM job_task_item WHERE taskId=?`,
 		taskID,
 	)
 	if err != nil || len(rows) == 0 {
@@ -267,6 +268,7 @@ func GetJobTaskCounts(taskID int64) map[string]interface{} {
 			"failNum":    int64(0),
 			"otherNum":   int64(0),
 			"allNum":     int64(0),
+			"sumSize":    int64(0),
 		}
 	}
 	return rows[0]

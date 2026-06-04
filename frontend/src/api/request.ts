@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { message } from 'antd';
+import { useStore } from '../stores/useStore';
 
 const service = axios.create({
   baseURL: '/svr',
@@ -39,6 +40,8 @@ service.interceptors.response.use(
 
     if (code === 401) {
       // Clear auth state and redirect to login
+      useStore.getState().setUserInfo(null);
+      useStore.getState().setAuthChecked(true);
       window.location.hash = '#/login';
       return Promise.reject(new Error(msg));
     } else if (code === 500) {
@@ -56,6 +59,11 @@ service.interceptors.response.use(
       msg = 'Connection error';
     } else if (msg.includes('timeout')) {
       msg = 'Request timeout';
+    }
+    if (error.response?.status === 401) {
+      useStore.getState().setUserInfo(null);
+      useStore.getState().setAuthChecked(true);
+      window.location.hash = '#/login';
     }
     message.error(msg);
     return Promise.reject(error);

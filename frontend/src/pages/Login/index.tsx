@@ -9,7 +9,7 @@ const { Title, Text } = Typography;
 
 export default function Login() {
   const navigate = useNavigate();
-  const { setUserInfo } = useStore();
+  const { setUserInfo, setAuthChecked } = useStore();
   const { message } = App.useApp();
   const { token } = theme.useToken();
   const [loading, setLoading] = useState(false);
@@ -21,8 +21,9 @@ export default function Login() {
   const handleLogin = async (values: { userName: string; passwd: string }) => {
     setLoading(true);
     try {
-      const res = await login(values) as unknown as { data: { id: number; userName: string; createTime: number } };
+      const res = await login(values);
       setUserInfo(res.data);
+      setAuthChecked(true);
       message.success('登录成功');
       navigate('/home');
     } catch {
@@ -35,7 +36,7 @@ export default function Login() {
   const handleReset = async (values: { userName: string; key: string; passwd?: string }) => {
     setResetLoading(true);
     try {
-      const res = await resetPwd(values) as unknown as { data?: string };
+      const res = await resetPwd(values);
       if (res.data) {
         Modal.info({
           title: '重置成功',

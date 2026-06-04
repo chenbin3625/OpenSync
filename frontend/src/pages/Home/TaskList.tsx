@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Row, Col, Statistic, Empty, Typography, Tooltip, Divider, Spin } from 'antd';
-import { StopOutlined, UnorderedListOutlined, QuestionCircleOutlined, ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined } from '@ant-design/icons';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Row, Col, Statistic, Empty, Typography, Tooltip, Divider, Spin, Pagination } from 'antd';
+import { StopOutlined, UnorderedListOutlined, ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined } from '@ant-design/icons';
 import { jobGetTask, jobGetTaskCurrent, jobDeleteTask, jobPut } from '../../api/job';
 import dayjs from 'dayjs';
+import type { CurrentTaskData, CurrentTaskView, TaskItem, TaskRecord } from '../../types';
 
 const { Text } = Typography;
 
@@ -35,6 +36,7 @@ function formatSize(bytes: number): string {
 }
 
 const typeNames: Record<number, string> = { 0: '复制', 1: '删除', 2: '移动' };
+const TAB_TASK_PAGE_SIZE = 10;
 
 const statusColors: Record<number, string> = {
   0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
@@ -54,26 +56,35 @@ const statusTabs = [
   { key: -1, label: '其他', color: '#faad14', numKey: 'other' },
 ] as const;
 
+function getTaskCreateTime(task: TaskItem): number {
+  const createTime = Number(task.createTime);
+  return Number.isFinite(createTime) ? createTime : 0;
+}
+
+function isCurrentTaskData(data: CurrentTaskData | TaskItem[] | null): data is CurrentTaskData {
+  return !!data && !Array.isArray(data) && Array.isArray(data.doingTask);
+}
+
 export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTaskDetail?: (taskId: number) => void }) {
   const { message } = App.useApp();
-  const [list, setList] = useState<any[]>([]);
+  const [list, setList] = useState<TaskRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [loading, setLoading] = useState(false);
-  const [currentTask, setCurrentTask] = useState<any>(null);
-  const prevTaskRef = useRef<any>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [currentTask, setCurrentTask] = useState<CurrentTaskView | null>(null);
+  const prevTaskRef = useRef<CurrentTaskView | null>(null);
   const [activeTab, setActiveTab] = useState<number>(1);
-  const [tabTaskList, setTabTaskList] = useState<any[]>([]);
+  const [tabTaskList, setTabTaskList] = useState<TaskItem[]>([]);
   const [tabLoading, setTabLoading] = useState(false);
-  const tabTaskPage = useRef(1);
+  const [tabTaskPage, setTabTaskPage] = useState(1);
 
-  /** 计算速度和整体进度 */
-  const calcProgress = (cur: any) => {
+  /** 计算速度与剩余信息 */
+  const calcProgress = useCallback((cur: CurrentTaskData) => {
     const doingTask = cur.doingTask || [];
-    const doingSize = doingTask.reduce((sum: number, obj: any) => {
-      return sum + (obj.fileSize || 0) * (obj.progress || 0) / 100.0;
+    const doingSize = doingTask.reduce((sum, obj) => {
+      const progress = Number(obj.progress || 0);
+      return sum + (obj.fileSize || 0) * progress / 100.0;
     }, 0);
     const sizeMap = cur.size || {};
     const remainSize = (sizeMap.running || 0) - doingSize + (sizeMap.wait || 0);
@@ -99,30 +110,26 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
       remainTime = Math.ceil(remainSize / speedAvg);
     }
 
-    // 整体进度
-    const total = doneSize + remainSize;
-    const allProgress = total > 0 ? Math.min((doneSize / total) * 100, 100) : 0;
+    return { remainSize, doneSize, speed, speedAvg, remainTime };
+  }, []);
 
-    return { remainSize, doneSize, speed, speedAvg, remainTime, allProgress };
-  };
-
-  const fetchList = async () => {
+  const fetchList = useCallback(async () => {
     if (!jobId) return;
     setLoading(true);
     try {
-      const res: any = await jobGetTask({ id: jobId, pageSize, pageNum: page });
+      const res = await jobGetTask({ id: jobId, pageSize, pageNum: page });
       setList(res.data?.dataList || []);
       setTotal(res.data?.count || 0);
     } catch { /* ignore */ }
     setLoading(false);
-  };
+  }, [jobId, page, pageSize]);
 
-  const fetchCurrent = async () => {
+  const fetchCurrent = useCallback(async () => {
     if (!jobId) return;
     try {
-      const res: any = await jobGetTaskCurrent({ id: jobId });
+      const res = await jobGetTaskCurrent({ id: jobId });
       const data = res.data || null;
-      if (data) {
+      if (isCurrentTaskData(data)) {
         const progress = calcProgress(data);
         prevTaskRef.current = { ...data, ...progress };
         setCurrentTask({ ...data, ...progress });
@@ -131,45 +138,57 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
         prevTaskRef.current = null;
       }
     } catch { setCurrentTask(null); prevTaskRef.current = null; }
-  };
+  }, [calcProgress, jobId]);
 
   /** 获取 Tab 对应状态的任务列表 */
-  const fetchTabTasks = useCallback(async (status: number) => {
-    if (!jobId || !currentTask) return;
+  const fetchTabTasks = useCallback(async (status: number, task: CurrentTaskView | null) => {
+    if (!jobId || !task) return;
     // 运行中 Tab 直接用 doingTask，不请求后端
     if (status === 1) {
-      setTabTaskList(currentTask.doingTask || []);
+      setTabTaskList(task.doingTask || []);
       return;
     }
     setTabLoading(true);
     try {
-      const res: any = await jobGetTaskCurrent({ id: jobId, status });
+      const res = await jobGetTaskCurrent({ id: jobId, status });
       setTabTaskList(Array.isArray(res.data) ? res.data : []);
     } catch { setTabTaskList([]); }
     setTabLoading(false);
-  }, [jobId, currentTask]);
+  }, [jobId]);
 
   const handleTabChange = (status: number) => {
     if (status === activeTab) return;
     setActiveTab(status);
-    tabTaskPage.current = 1;
+    setTabTaskPage(1);
   };
 
-  useEffect(() => { fetchList(); }, [jobId, page, pageSize]);
+  const pagedTabTaskList = useMemo(() => {
+    const sortedList = [...tabTaskList].sort((a, b) => getTaskCreateTime(b) - getTaskCreateTime(a));
+    const start = (tabTaskPage - 1) * TAB_TASK_PAGE_SIZE;
+    return sortedList.slice(start, start + TAB_TASK_PAGE_SIZE);
+  }, [tabTaskList, tabTaskPage]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(tabTaskList.length / TAB_TASK_PAGE_SIZE));
+    if (tabTaskPage > maxPage) {
+      setTabTaskPage(maxPage);
+    }
+  }, [tabTaskList.length, tabTaskPage]);
+
+  useEffect(() => { fetchList(); }, [fetchList]);
   useEffect(() => {
     fetchCurrent();
-    pollRef.current = setInterval(fetchCurrent, 3000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [jobId]);
+    const pollID = setInterval(fetchCurrent, 3000);
+    return () => { clearInterval(pollID); };
+  }, [fetchCurrent]);
   // Tab 数据加载：currentTask 变化时更新运行中 Tab，切换 Tab 时加载对应数据
   useEffect(() => {
-    if (!currentTask) return;
-    if (activeTab === 1) {
-      setTabTaskList(currentTask.doingTask || []);
-    } else {
-      fetchTabTasks(activeTab);
+    if (!currentTask) {
+      setTabTaskList([]);
+      return;
     }
-  }, [activeTab, currentTask?.doingTask?.length]);
+    fetchTabTasks(activeTab, currentTask);
+  }, [activeTab, currentTask, fetchTabTasks]);
 
   const handleDeleteTask = async (taskId: number) => {
     try {
@@ -187,7 +206,6 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
   };
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     {
       title: '状态', dataIndex: 'status', key: 'status', width: 100,
       render: (s: number) => <Tag color={statusColors[s]}>{statusNames[s] || s}</Tag>,
@@ -207,7 +225,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     { title: '总计', dataIndex: 'allNum', key: 'allNum', width: 80 },
     {
       title: '操作', key: 'action', width: 120,
-      render: (_: unknown, record: any) => (
+      render: (_: unknown, record: TaskRecord) => (
         <Space>
           <Button size="small" onClick={() => onTaskDetail?.(record.id)}>详情</Button>
           <Popconfirm title="确认删除此任务？" onConfirm={() => handleDeleteTask(record.id)}>
@@ -240,25 +258,8 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <Text strong style={{ fontSize: 14 }}>实时进度</Text>
             <Tag color={currentTask.scanFinish ? 'success' : 'processing'}>
-              {currentTask.scanFinish ? '扫描完成，同步中' : '扫描进行中'}
+              {currentTask.scanFinish ? '扫描完成，同步中' : '进行中'}
             </Tag>
-          </div>
-
-          {/* 整体进度条 */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>整体进度</Text>
-              {!currentTask.scanFinish && (
-                <Tooltip title="扫描未完成前，进度仅供参考">
-                  <QuestionCircleOutlined style={{ fontSize: 12, color: 'var(--ant-color-text-quaternary)' }} />
-                </Tooltip>
-              )}
-            </div>
-            <Progress
-              percent={Number(currentTask.allProgress?.toFixed(1) || 0)}
-              strokeColor={{ '0%': '#1677ff', '100%': '#52c41a' }}
-              size="default"
-            />
           </div>
 
           {/* 统计指标 */}
@@ -364,7 +365,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
               />
             ) : (
               <div style={{ maxHeight: 240, overflowY: 'auto' }}>
-                {tabTaskList.map((t: any, i: number) => (
+                {pagedTabTaskList.map((t, i) => (
                   <div
                     key={t.fileName + '_' + i}
                     style={{
@@ -381,13 +382,13 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
                       color={t.type === 1 ? 'red' : t.type === 2 ? 'orange' : 'blue'}
                       style={{ margin: 0, fontSize: 11, minWidth: 36, textAlign: 'center' }}
                     >
-                      {typeNames[t.type] || '复制'}
+                      {typeNames[t.type ?? 0] || '复制'}
                     </Tag>
                     <Tooltip title={<div>{t.dstPath && <div>目标: {t.dstPath}</div>}{t.srcPath && <div>来源: {t.srcPath}</div>}</div>}>
                       {(() => {
                         // 优先使用 fileName，否则从 dstPath 或 srcPath 提取
-                        let name = t.fileName;
-                        let path = t.dstPath || t.srcPath || '';
+                          let name = t.fileName || '';
+                          const path = t.dstPath || t.srcPath || '';
 
                         // 如果 fileName 为空，从路径中提取文件名
                         if (!name && path) {
@@ -408,15 +409,15 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
                         );
                       })()}
                     </Tooltip>
-                    {t.fileSize > 0 && (
-                      <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>{formatSize(t.fileSize)}</Text>
+                    {(t.fileSize || 0) > 0 && (
+                      <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>{formatSize(t.fileSize || 0)}</Text>
                     )}
                     {activeTab === 1 && (
                       <Progress
-                        percent={Math.round(t.progress || 0)}
+                        percent={Math.round(Number(t.progress || 0))}
                         size="small"
                         style={{ width: 120, flexShrink: 0 }}
-                        strokeColor={(t.progress || 0) >= 100 ? '#52c41a' : '#1677ff'}
+                        strokeColor={Number(t.progress || 0) >= 100 ? '#52c41a' : '#1677ff'}
                       />
                     )}
                     {activeTab === 7 && t.errMsg && (
@@ -428,6 +429,18 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
                 ))}
               </div>
             )}
+            {tabTaskList.length > TAB_TASK_PAGE_SIZE && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 10 }}>
+                <Pagination
+                  current={tabTaskPage}
+                  pageSize={TAB_TASK_PAGE_SIZE}
+                  total={tabTaskList.length}
+                  onChange={setTabTaskPage}
+                  showSizeChanger={false}
+                  size="small"
+                />
+              </div>
+            )}
           </Spin>
         </Card>
       )}
@@ -436,7 +449,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
         <Empty
           image={<UnorderedListOutlined style={{ fontSize: 64, color: '#bbb' }} />}
           styles={{ image: { height: 80 } }}
-          description={<Text type="secondary">暂无任务记录，执行作业后将在此显示任务进度</Text>}
+          description={<Text type="secondary">暂无任务记录，执行同步任务后将在此显示任务进度</Text>}
           className="empty-state-compact"
         />
       ) : (

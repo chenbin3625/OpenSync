@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,9 +56,20 @@ func NewAlistClient(alistURL string, token string, alistID int64) (*AlistClient,
 }
 
 func (c *AlistClient) doRequest(method, apiPath string, data interface{}, params map[string]string) (json.RawMessage, error) {
+	return c.doRequestContext(context.Background(), method, apiPath, data, params)
+}
+
+func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath string, data interface{}, params map[string]string) (json.RawMessage, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var body io.Reader
 	if data != nil {
-		jsonData, _ := json.Marshal(data)
+		jsonData, err := json.Marshal(data)
+		if err != nil {
+			return nil, err
+		}
 		body = bytes.NewReader(jsonData)
 	}
 
@@ -70,7 +82,7 @@ func (c *AlistClient) doRequest(method, apiPath string, data interface{}, params
 		reqURL += "?" + q.Encode()
 	}
 
-	req, err := http.NewRequest(method, reqURL, body)
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return nil, errors.New(i18n.G("address_incorrect"))
 	}
@@ -81,6 +93,9 @@ func (c *AlistClient) doRequest(method, apiPath string, data interface{}, params
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") {
 			return nil, errors.New(i18n.G("alist_connect_fail"))
 		}
@@ -120,9 +135,17 @@ func (c *AlistClient) Post(apiPath string, data interface{}, params map[string]s
 	return c.doRequest("POST", apiPath, data, params)
 }
 
+func (c *AlistClient) PostContext(ctx context.Context, apiPath string, data interface{}, params map[string]string) (json.RawMessage, error) {
+	return c.doRequestContext(ctx, "POST", apiPath, data, params)
+}
+
 // Get sends a GET request
 func (c *AlistClient) Get(apiPath string, params map[string]string) (json.RawMessage, error) {
 	return c.doRequest("GET", apiPath, nil, params)
+}
+
+func (c *AlistClient) GetContext(ctx context.Context, apiPath string, params map[string]string) (json.RawMessage, error) {
+	return c.doRequestContext(ctx, "GET", apiPath, nil, params)
 }
 
 func (c *AlistClient) getUser() error {
@@ -142,8 +165,15 @@ func (c *AlistClient) getUser() error {
 
 // CheckWait checks if we need to wait based on scan interval
 func (c *AlistClient) CheckWait(path string, scanInterval int) {
+	_ = c.CheckWaitContext(context.Background(), path, scanInterval)
+}
+
+func (c *AlistClient) CheckWaitContext(ctx context.Context, path string, scanInterval int) error {
 	if scanInterval == 0 {
-		return
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	parts := strings.SplitN(path, "/", 3)
@@ -152,7 +182,7 @@ func (c *AlistClient) CheckWait(path string, scanInterval int) {
 		pathFirst = parts[1]
 	}
 	if pathFirst == "" {
-		return
+		return nil
 	}
 
 	now := float64(time.Now().UnixNano()) / float64(time.Second)
@@ -166,8 +196,15 @@ func (c *AlistClient) CheckWait(path string, scanInterval int) {
 	c.mu.Unlock()
 
 	if waitUntil > now {
-		time.Sleep(time.Duration((waitUntil - now) * float64(time.Second)))
+		timer := time.NewTimer(time.Duration((waitUntil - now) * float64(time.Second)))
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	return nil
 }
 
 // FileListResponse represents a file list entry
@@ -183,9 +220,15 @@ type FileListResult = map[string]interface{}
 
 // FileListApi gets directory listing
 func (c *AlistClient) FileListApi(path string, useCache int, scanInterval int) (FileListResult, error) {
-	c.CheckWait(path, scanInterval)
+	return c.FileListApiContext(context.Background(), path, useCache, scanInterval)
+}
 
-	data, err := c.Post("/api/fs/list", map[string]interface{}{
+func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCache int, scanInterval int) (FileListResult, error) {
+	if err := c.CheckWaitContext(ctx, path, scanInterval); err != nil {
+		return nil, err
+	}
+
+	data, err := c.PostContext(ctx, "/api/fs/list", map[string]interface{}{
 		"path":    path,
 		"refresh": useCache != 1,
 	}, nil)
@@ -246,8 +289,14 @@ func (c *AlistClient) FilePathList(path string) ([]map[string]string, error) {
 
 // Mkdir creates a directory
 func (c *AlistClient) Mkdir(path string, scanInterval int) error {
-	c.CheckWait(path, scanInterval)
-	_, err := c.Post("/api/fs/mkdir", map[string]interface{}{
+	return c.MkdirContext(context.Background(), path, scanInterval)
+}
+
+func (c *AlistClient) MkdirContext(ctx context.Context, path string, scanInterval int) error {
+	if err := c.CheckWaitContext(ctx, path, scanInterval); err != nil {
+		return err
+	}
+	_, err := c.PostContext(ctx, "/api/fs/mkdir", map[string]interface{}{
 		"path": path,
 	}, nil)
 	return err
@@ -255,8 +304,14 @@ func (c *AlistClient) Mkdir(path string, scanInterval int) error {
 
 // DeleteFile deletes files/directories
 func (c *AlistClient) DeleteFile(path string, names []string, scanInterval int) error {
-	c.CheckWait(path, scanInterval)
-	_, err := c.Post("/api/fs/remove", map[string]interface{}{
+	return c.DeleteFileContext(context.Background(), path, names, scanInterval)
+}
+
+func (c *AlistClient) DeleteFileContext(ctx context.Context, path string, names []string, scanInterval int) error {
+	if err := c.CheckWaitContext(ctx, path, scanInterval); err != nil {
+		return err
+	}
+	_, err := c.PostContext(ctx, "/api/fs/remove", map[string]interface{}{
 		"names": names,
 		"dir":   path,
 	}, nil)
@@ -265,7 +320,11 @@ func (c *AlistClient) DeleteFile(path string, names []string, scanInterval int) 
 
 // CopyFile copies a file and returns the task ID
 func (c *AlistClient) CopyFile(srcDir, dstDir, name string) (string, error) {
-	data, err := c.Post("/api/fs/copy", map[string]interface{}{
+	return c.CopyFileContext(context.Background(), srcDir, dstDir, name)
+}
+
+func (c *AlistClient) CopyFileContext(ctx context.Context, srcDir, dstDir, name string) (string, error) {
+	data, err := c.PostContext(ctx, "/api/fs/copy", map[string]interface{}{
 		"src_dir":   srcDir,
 		"dst_dir":   dstDir,
 		"overwrite": true,
@@ -315,7 +374,11 @@ func (c *AlistClient) MoveFile(srcDir, dstDir, name string) (string, error) {
 
 // TaskInfo gets task details
 func (c *AlistClient) TaskInfo(taskID string) (map[string]interface{}, error) {
-	data, err := c.Post("/api/admin/task/copy/info", nil, map[string]string{"tid": taskID})
+	return c.TaskInfoContext(context.Background(), taskID)
+}
+
+func (c *AlistClient) TaskInfoContext(ctx context.Context, taskID string) (map[string]interface{}, error) {
+	data, err := c.PostContext(ctx, "/api/admin/task/copy/info", nil, map[string]string{"tid": taskID})
 	if err != nil {
 		return nil, err
 	}
@@ -350,12 +413,20 @@ func (c *AlistClient) CopyTaskClearSucceeded() error {
 
 // CopyTaskDelete deletes a copy task record
 func (c *AlistClient) CopyTaskDelete(taskID string) error {
-	_, err := c.Post("/api/admin/task/copy/delete", nil, map[string]string{"tid": taskID})
+	return c.CopyTaskDeleteContext(context.Background(), taskID)
+}
+
+func (c *AlistClient) CopyTaskDeleteContext(ctx context.Context, taskID string) error {
+	_, err := c.PostContext(ctx, "/api/admin/task/copy/delete", nil, map[string]string{"tid": taskID})
 	return err
 }
 
 // CopyTaskCancel cancels a copy task
 func (c *AlistClient) CopyTaskCancel(taskID string) error {
-	_, err := c.Post("/api/admin/task/copy/cancel", nil, map[string]string{"tid": taskID})
+	return c.CopyTaskCancelContext(context.Background(), taskID)
+}
+
+func (c *AlistClient) CopyTaskCancelContext(ctx context.Context, taskID string) error {
+	_, err := c.PostContext(ctx, "/api/admin/task/copy/cancel", nil, map[string]string{"tid": taskID})
 	return err
 }

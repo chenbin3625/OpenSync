@@ -1,16 +1,13 @@
 import { create } from 'zustand';
-
-interface UserInfo {
-  id: number;
-  userName: string;
-  createTime: number;
-}
+import type { UserInfo } from '../types';
 
 interface AppState {
   userInfo: UserInfo | null;
+  authChecked: boolean;
   theme: 'dark' | 'light';
   leftIndex: string;
   setUserInfo: (user: UserInfo | null) => void;
+  setAuthChecked: (checked: boolean) => void;
   setTheme: (theme: 'dark' | 'light') => void;
   setLeftIndex: (index: string) => void;
 }
@@ -43,12 +40,14 @@ const saveLifeData = (key: string, value: unknown) => {
 
 export const useStore = create<AppState>((set) => ({
   userInfo: getInitialUser(),
+  authChecked: false,
   theme: getInitialTheme(),
   leftIndex: '/home',
   setUserInfo: (user) => {
     saveLifeData('vuex_userInfo', user);
     set({ userInfo: user });
   },
+  setAuthChecked: (checked) => set({ authChecked: checked }),
   setTheme: (theme) => {
     saveLifeData('vuex_theme', theme);
     set({ theme });

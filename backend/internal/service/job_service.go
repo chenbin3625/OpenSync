@@ -102,7 +102,7 @@ func EditJobClient(job map[string]interface{}) {
 	jobID := toInt64(job["id"])
 	CleanJobInput(job)
 	client := GetJobClientByID(jobID)
-	if toInt(client.Job["enable"]) == 1 && toInt(client.Job["isCron"]) != 2 {
+	if client.enabled() && toInt(client.Job["isCron"]) != 2 {
 		panic(i18n.G("disable_then_edit"))
 	}
 	client.StopJob(true)
@@ -124,7 +124,7 @@ func DoAllJobManual() {
 	}
 	for _, jobItem := range jobList {
 		client := GetJobClientByID(toInt64(jobItem["id"]))
-		if toInt(client.Job["enable"]) == 1 {
+		if client.enabled() {
 			client.DoManual()
 		}
 	}
@@ -133,7 +133,7 @@ func DoAllJobManual() {
 // DoJobManual executes a specific job manually
 func DoJobManual(jobID int64) {
 	client := GetJobClientByID(jobID)
-	if toInt(client.Job["enable"]) != 1 {
+	if !client.enabled() {
 		panic(i18n.G("disabled_job_cannot_run"))
 	}
 	client.DoManual()
@@ -182,7 +182,7 @@ func GetJobList(params map[string]interface{}) map[string]interface{} {
 // GetJobCurrent returns real-time task progress
 func GetJobCurrent(jobID int64, status *string) interface{} {
 	client := GetJobClientByID(jobID)
-	taskClient := client.CurrentJobTask
+	taskClient := client.currentTask()
 	if taskClient != nil {
 		if status == nil || *status == "" {
 			return taskClient.GetCurrent()

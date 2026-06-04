@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,12 +17,161 @@ import (
 	ignore "github.com/sabhiram/go-gitignore"
 )
 
-const maxScanConcurrency = 8
+const (
+	maxScanConcurrency       = 8
+	maxCopyConcurrency       = 20
+	maxQueuedCopyItems       = 5000
+	maxRealtimeFinishedItems = 2000
+)
 
 var errScanAborted = errors.New("scan aborted")
 
+var persistJobTaskItems = mapper.AddJobTaskItemMany
+
+type copyQueue struct {
+	mu       sync.Mutex
+	items    []*CopyItem
+	head     int
+	closed   bool
+	capacity int
+	notify   chan struct{}
+	space    chan struct{}
+}
+
+func newCopyQueue() *copyQueue {
+	return newCopyQueueWithCapacity(maxQueuedCopyItems)
+}
+
+func newCopyQueueWithCapacity(capacity int) *copyQueue {
+	return &copyQueue{
+		items:    make([]*CopyItem, 0),
+		capacity: capacity,
+		notify:   make(chan struct{}, 1),
+		space:    make(chan struct{}, 1),
+	}
+}
+
+func (q *copyQueue) push(item *CopyItem) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.closed || !q.hasCapacityLocked() {
+		return false
+	}
+	q.items = append(q.items, item)
+	q.signal()
+	return true
+}
+
+func (q *copyQueue) pushWait(ctx context.Context, item *CopyItem) bool {
+	for {
+		q.mu.Lock()
+		if q.closed {
+			q.mu.Unlock()
+			return false
+		}
+		if q.hasCapacityLocked() {
+			q.items = append(q.items, item)
+			q.signal()
+			q.mu.Unlock()
+			return true
+		}
+		space := q.space
+		q.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return false
+		case <-space:
+		}
+	}
+}
+
+func (q *copyQueue) pop() (*CopyItem, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.head >= len(q.items) {
+		q.compactLocked()
+		return nil, false
+	}
+
+	item := q.items[q.head]
+	q.items[q.head] = nil
+	q.head++
+	q.compactLocked()
+	q.signalSpace()
+	return item, true
+}
+
+func (q *copyQueue) len() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.items) - q.head
+}
+
+func (q *copyQueue) snapshot() []*CopyItem {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return append([]*CopyItem(nil), q.items[q.head:]...)
+}
+
+func (q *copyQueue) closeAndDrain() []*CopyItem {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.closed = true
+	items := append([]*CopyItem(nil), q.items[q.head:]...)
+	for i := q.head; i < len(q.items); i++ {
+		q.items[i] = nil
+	}
+	q.items = q.items[:0]
+	q.head = 0
+	q.signal()
+	q.signalSpace()
+	return items
+}
+
+func (q *copyQueue) waitCh() <-chan struct{} {
+	return q.notify
+}
+
+func (q *copyQueue) compactLocked() {
+	if q.head == 0 {
+		return
+	}
+	if q.head == len(q.items) {
+		q.items = q.items[:0]
+		q.head = 0
+		return
+	}
+	if q.head > len(q.items)/2 {
+		q.items = append([]*CopyItem(nil), q.items[q.head:]...)
+		q.head = 0
+	}
+}
+
+func (q *copyQueue) hasCapacityLocked() bool {
+	return q.capacity <= 0 || len(q.items)-q.head < q.capacity
+}
+
+func (q *copyQueue) signal() {
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (q *copyQueue) signalSpace() {
+	select {
+	case q.space <- struct{}{}:
+	default:
+	}
+}
+
 // CopyItem represents a single file copy operation
 type CopyItem struct {
+	mu          sync.RWMutex
 	SrcPath     string
 	DstPath     string
 	FileName    string
@@ -38,21 +188,83 @@ type CopyItem struct {
 	alistClient *AlistClient
 }
 
+func (ci *CopyItem) setStatus(status int) {
+	ci.mu.Lock()
+	ci.Status = status
+	ci.mu.Unlock()
+}
+
+func (ci *CopyItem) setTaskID(taskID string) {
+	ci.mu.Lock()
+	ci.AlistTaskID = taskID
+	ci.mu.Unlock()
+}
+
+func (ci *CopyItem) setFailure(err error) {
+	errMsg := err.Error()
+	ci.mu.Lock()
+	ci.Status = 7
+	ci.Progress = 0
+	ci.ErrMsg = &errMsg
+	ci.mu.Unlock()
+}
+
+func (ci *CopyItem) setProgress(status int, progress float64, errMsg *string) {
+	ci.mu.Lock()
+	ci.Status = status
+	ci.Progress = progress
+	ci.ErrMsg = errMsg
+	ci.mu.Unlock()
+}
+
+func (ci *CopyItem) status() int {
+	ci.mu.RLock()
+	defer ci.mu.RUnlock()
+	return ci.Status
+}
+
+func (ci *CopyItem) taskID() string {
+	ci.mu.RLock()
+	defer ci.mu.RUnlock()
+	return ci.AlistTaskID
+}
+
+func (ci *CopyItem) snapshotMap() map[string]interface{} {
+	ci.mu.RLock()
+	defer ci.mu.RUnlock()
+
+	return map[string]interface{}{
+		"srcPath":    ci.SrcPath,
+		"dstPath":    ci.DstPath,
+		"isPath":     0,
+		"fileName":   ci.FileName,
+		"fileSize":   ci.FileSize,
+		"status":     ci.Status,
+		"type":       ci.CopyType,
+		"progress":   ci.Progress,
+		"errMsg":     ci.ErrMsg,
+		"createTime": ci.CreateTime,
+	}
+}
+
 // DoIt executes the copy operation in a goroutine
 func (ci *CopyItem) DoIt() {
 	if ci.jobTask.isBreak() {
-		ci.Status = 4
+		ci.setStatus(4)
 	} else {
-		taskID, err := ci.alistClient.CopyFile(ci.SrcPath, ci.DstPath, ci.FileName)
+		ci.setStatus(1)
+		taskID, err := ci.alistClient.CopyFileContext(ci.jobTask.context(), ci.SrcPath, ci.DstPath, ci.FileName)
 		if err != nil {
-			errMsg := err.Error()
-			ci.ErrMsg = &errMsg
-			ci.Status = 7
+			if errors.Is(err, context.Canceled) && ci.jobTask.isBreak() {
+				ci.setStatus(4)
+			} else {
+				ci.setFailure(err)
+			}
 		} else {
-			ci.AlistTaskID = taskID
+			ci.setTaskID(taskID)
 			if taskID == "" {
-				ci.Status = 2
-			} else if ci.Status != 4 {
+				ci.setStatus(2)
+			} else if ci.status() != 4 {
 				ci.checkAndGetStatus()
 			}
 		}
@@ -63,34 +275,39 @@ func (ci *CopyItem) DoIt() {
 func (ci *CopyItem) checkAndGetStatus() {
 	for {
 		if ci.jobTask.isBreak() {
-			ci.Status = 4
-			if ci.AlistTaskID != "" {
-				if err := ci.alistClient.CopyTaskCancel(ci.AlistTaskID); err != nil {
-					errMsg := err.Error()
-					ci.Status = 7
-					ci.ErrMsg = &errMsg
+			ci.setStatus(4)
+			if taskID := ci.taskID(); taskID != "" {
+				ctx, cancel := ci.jobTask.cleanupContext()
+				if err := ci.alistClient.CopyTaskCancelContext(ctx, taskID); err != nil {
+					ci.setFailure(err)
 				}
-				ci.alistClient.CopyTaskDelete(ci.AlistTaskID)
+				_ = ci.alistClient.CopyTaskDeleteContext(ctx, taskID)
+				cancel()
 			}
 			break
 		}
 
 		cuTime := time.Now().Unix()
+		var sleepFor time.Duration
 		if cuTime-ci.jobTask.LastWatching.Load() < 3 {
-			time.Sleep(610 * time.Millisecond)
+			sleepFor = 610 * time.Millisecond
 		} else {
-			time.Sleep(2930 * time.Millisecond)
+			sleepFor = 2930 * time.Millisecond
+		}
+		if completed := ci.jobTask.waitForBreak(sleepFor); !completed {
+			continue
 		}
 
-		taskInfo, err := ci.alistClient.TaskInfo(ci.AlistTaskID)
+		taskInfo, err := ci.alistClient.TaskInfoContext(ci.jobTask.context(), ci.taskID())
 		if err != nil {
+			if errors.Is(err, context.Canceled) && ci.jobTask.isBreak() {
+				continue
+			}
 			eMsg := err.Error()
 			if strings.Contains(eMsg, "404") {
 				eMsg = i18n.G("task_may_delete")
 			}
-			ci.Status = 7
-			ci.Progress = 0
-			ci.ErrMsg = &eMsg
+			ci.setProgress(7, 0, &eMsg)
 			break
 		}
 
@@ -101,36 +318,42 @@ func (ci *CopyItem) checkAndGetStatus() {
 			errStr = fmt.Sprintf("%v", e)
 		}
 
-		if state == ci.Status && progress == ci.Progress {
+		ci.mu.RLock()
+		unchanged := state == ci.Status && progress == ci.Progress
+		ci.mu.RUnlock()
+		if unchanged {
 			continue
 		}
-		ci.Status = state
-		ci.Progress = progress
 		if errStr != "" {
-			ci.ErrMsg = &errStr
+			ci.setProgress(state, progress, &errStr)
 		} else {
-			ci.ErrMsg = nil
+			ci.setProgress(state, progress, nil)
 		}
 
 		if state == 2 || state == 4 || state == 7 {
-			ci.alistClient.CopyTaskDelete(ci.AlistTaskID)
+			ctx, cancel := ci.jobTask.cleanupContext()
+			_ = ci.alistClient.CopyTaskDeleteContext(ctx, ci.taskID())
+			cancel()
 			break
 		}
 	}
 }
 
 func (ci *CopyItem) endIt() {
-	if ci.CopyType == 2 && ci.Status == 2 {
+	if ci.CopyType == 2 && ci.status() == 2 {
 		scanIntervalS := toInt(ci.jobTask.Job["scanIntervalS"])
-		err := ci.alistClient.DeleteFile(ci.SrcPath, []string{ci.FileName}, scanIntervalS)
+		ctx, cancel := ci.jobTask.cleanupContext()
+		err := ci.alistClient.DeleteFileContext(ctx, ci.SrcPath, []string{ci.FileName}, scanIntervalS)
+		cancel()
 		if err != nil {
-			ci.Status = 7
 			errMsg := strings.Replace(i18n.G("copy_success_but_delete_fail"), "{}", err.Error(), 1)
-			ci.ErrMsg = &errMsg
+			ci.setProgress(7, ci.snapshotMap()["progress"].(float64), &errMsg)
 		}
 	}
+	ci.mu.RLock()
 	ci.jobTask.CopyHook(ci.SrcPath, ci.DstPath, ci.FileName, ci.FileSize, ci.AlistTaskID,
 		ci.Status, ci.ErrMsg, 0, ci.CopyType, ci.CreateTime)
+	ci.mu.RUnlock()
 	ci.jobTask.DoingMu.Lock()
 	delete(ci.jobTask.Doing, ci.DoingKey)
 	ci.jobTask.DoingMu.Unlock()
@@ -144,12 +367,13 @@ type JobTask struct {
 	AlistClient *AlistClient
 	CreateTime  float64
 
-	Finish    []map[string]interface{}
-	FinishMu  sync.Mutex
-	Doing     map[int64]*CopyItem
-	DoingMu   sync.Mutex
-	Waiting   []*CopyItem
-	WaitingMu sync.Mutex
+	Finish         []map[string]interface{}
+	FinishMu       sync.Mutex
+	FinishedCounts map[int]int
+	FinishedSizes  map[int]int64
+	Doing          map[int64]*CopyItem
+	DoingMu        sync.Mutex
+	Waiting        *copyQueue
 
 	LastWatching atomic.Int64
 	QueueNum     int64
@@ -157,6 +381,9 @@ type JobTask struct {
 	FirstSync    atomic.Int64
 	BreakFlag    atomic.Bool
 	scanSem      chan struct{}
+	ctx          context.Context
+	cancel       context.CancelFunc
+	copyWG       sync.WaitGroup
 
 	CurrentTasks map[int][]map[string]interface{}
 	CurrentMu    sync.RWMutex
@@ -164,24 +391,34 @@ type JobTask struct {
 
 // NewJobTask creates and starts a new task
 func NewJobTask(taskID int64, jc *JobClient) *JobTask {
-	jt := &JobTask{
-		TaskID:       taskID,
-		JobClient:    jc,
-		Job:          jc.Job,
-		AlistClient:  GetClientByID(toInt64(jc.Job["alistId"])),
-		CreateTime:   float64(time.Now().Unix()),
-		Finish:       make([]map[string]interface{}, 0),
-		Doing:        make(map[int64]*CopyItem),
-		Waiting:      make([]*CopyItem, 0),
-		QueueNum:     0,
-		scanSem:      make(chan struct{}, scanConcurrencyLimit()),
-		CurrentTasks: make(map[int][]map[string]interface{}),
-	}
+	jt := newJobTask(taskID, jc)
+	jt.Start()
+	return jt
+}
 
+func newJobTask(taskID int64, jc *JobClient) *JobTask {
+	jt := &JobTask{
+		TaskID:         taskID,
+		JobClient:      jc,
+		Job:            jc.Job,
+		AlistClient:    GetClientByID(toInt64(jc.Job["alistId"])),
+		CreateTime:     float64(time.Now().Unix()),
+		Finish:         make([]map[string]interface{}, 0),
+		FinishedCounts: make(map[int]int),
+		FinishedSizes:  make(map[int]int64),
+		Doing:          make(map[int64]*CopyItem),
+		Waiting:        newCopyQueue(),
+		QueueNum:       0,
+		scanSem:        make(chan struct{}, scanConcurrencyLimit()),
+		CurrentTasks:   make(map[int][]map[string]interface{}),
+	}
+	jt.ctx, jt.cancel = context.WithCancel(context.Background())
+	return jt
+}
+
+func (jt *JobTask) Start() {
 	go jt.sync()
 	go jt.taskSubmit()
-
-	return jt
 }
 
 func scanConcurrencyLimit() int {
@@ -195,12 +432,72 @@ func scanConcurrencyLimit() int {
 	return limit
 }
 
+func (jt *JobTask) initRuntime() {
+	if jt.Waiting == nil {
+		jt.Waiting = newCopyQueue()
+	}
+	if jt.Doing == nil {
+		jt.Doing = make(map[int64]*CopyItem)
+	}
+	if jt.Finish == nil {
+		jt.Finish = make([]map[string]interface{}, 0)
+	}
+	if jt.FinishedCounts == nil {
+		jt.FinishedCounts = make(map[int]int)
+	}
+	if jt.FinishedSizes == nil {
+		jt.FinishedSizes = make(map[int]int64)
+	}
+	if jt.scanSem == nil {
+		jt.scanSem = make(chan struct{}, scanConcurrencyLimit())
+	}
+	if jt.CurrentTasks == nil {
+		jt.CurrentTasks = make(map[int][]map[string]interface{})
+	}
+	if jt.ctx == nil || jt.cancel == nil {
+		jt.ctx, jt.cancel = context.WithCancel(context.Background())
+	}
+}
+
+func (jt *JobTask) context() context.Context {
+	jt.initRuntime()
+	return jt.ctx
+}
+
+func (jt *JobTask) cleanupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 30*time.Second)
+}
+
 func (jt *JobTask) isBreak() bool {
 	return jt.BreakFlag.Load()
 }
 
 func (jt *JobTask) requestBreak() {
-	jt.BreakFlag.Store(true)
+	jt.initRuntime()
+	if !jt.BreakFlag.Swap(true) && jt.cancel != nil {
+		jt.cancel()
+	}
+}
+
+func (jt *JobTask) waitForBreak(d time.Duration) bool {
+	jt.initRuntime()
+	if d <= 0 {
+		select {
+		case <-jt.ctx.Done():
+			return false
+		default:
+			return true
+		}
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-jt.ctx.Done():
+		return false
+	}
 }
 
 func (jt *JobTask) acquireScanSlot() bool {
@@ -215,7 +512,10 @@ func (jt *JobTask) acquireScanSlot() bool {
 				return false
 			}
 			return true
-		case <-time.After(50 * time.Millisecond):
+		default:
+			if completed := jt.waitForBreak(50 * time.Millisecond); !completed {
+				return false
+			}
 		}
 	}
 }
@@ -229,12 +529,11 @@ func (jt *JobTask) GetCurrent() map[string]interface{} {
 	now := time.Now().Unix()
 	jt.LastWatching.Store(now)
 
-	jt.WaitingMu.Lock()
-	waits := make([]map[string]interface{}, len(jt.Waiting))
-	for i, w := range jt.Waiting {
+	waitingItems := jt.Waiting.snapshot()
+	waits := make([]map[string]interface{}, len(waitingItems))
+	for i, w := range waitingItems {
 		waits[i] = jt.copyItemToMap(w)
 	}
-	jt.WaitingMu.Unlock()
 
 	jt.DoingMu.Lock()
 	dos := make([]map[string]interface{}, 0, len(jt.Doing))
@@ -299,14 +598,20 @@ func (jt *JobTask) GetCurrent() map[string]interface{} {
 	sizeMap := result["size"].(map[string]int64)
 	for key, val := range keyValSpace {
 		tasks := currentTasks[val]
-		numMap[key] = len(tasks)
-		var totalSize int64
-		for _, t := range tasks {
-			if t["fileSize"] != nil && t["type"].(int) != 1 {
-				totalSize += toInt64Val(t["fileSize"])
+		if val == 0 || val == 1 {
+			numMap[key] = len(tasks)
+			var totalSize int64
+			for _, t := range tasks {
+				if t["fileSize"] != nil && t["type"].(int) != 1 {
+					totalSize += toInt64Val(t["fileSize"])
+				}
 			}
+			sizeMap[key] = totalSize
+			continue
 		}
-		sizeMap[key] = totalSize
+		count, size := jt.finishedAggregateForStatus(val)
+		numMap[key] = count
+		sizeMap[key] = size
 	}
 	return result
 }
@@ -333,105 +638,109 @@ func (jt *JobTask) currentTasksSnapshot() map[int][]map[string]interface{} {
 }
 
 func (jt *JobTask) copyItemToMap(item *CopyItem) map[string]interface{} {
-	return map[string]interface{}{
-		"srcPath":    item.SrcPath,
-		"dstPath":    item.DstPath,
-		"isPath":     0,
-		"fileName":   item.FileName,
-		"fileSize":   item.FileSize,
-		"status":     item.Status,
-		"type":       item.CopyType,
-		"progress":   item.Progress,
-		"errMsg":     item.ErrMsg,
-		"createTime": item.CreateTime,
-	}
+	return item.snapshotMap()
 }
 
 func (jt *JobTask) taskSubmit() {
+	jt.initRuntime()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
 	for {
 		if jt.isBreak() {
+			jt.markWaitingAsAborted()
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
 
-		jt.DoingMu.Lock()
-		doingNums := len(jt.Doing)
-		jt.DoingMu.Unlock()
-
-		jt.WaitingMu.Lock()
-		waitingNums := len(jt.Waiting)
-		jt.WaitingMu.Unlock()
-
-		if !jt.ScanFinish.Load() || doingNums != 0 || waitingNums != 0 {
-			for doingNums < 20 {
-				if jt.isBreak() {
-					break
-				}
-				jt.WaitingMu.Lock()
-				if len(jt.Waiting) == 0 {
-					jt.WaitingMu.Unlock()
-					break
-				}
-				if jt.FirstSync.Load() == 0 {
-					jt.FirstSync.CompareAndSwap(0, time.Now().Unix())
-				}
-				jt.QueueNum++
-				item := jt.Waiting[0]
-				jt.Waiting[0] = nil
-				jt.Waiting = jt.Waiting[1:]
-				jt.WaitingMu.Unlock()
-
-				item.DoingKey = jt.QueueNum
-				jt.DoingMu.Lock()
-				jt.Doing[jt.QueueNum] = item
-				jt.DoingMu.Unlock()
-
-				go item.DoIt()
-
-				jt.DoingMu.Lock()
-				doingNums = len(jt.Doing)
-				jt.DoingMu.Unlock()
+		started := false
+		for jt.doingLen() < maxCopyConcurrency {
+			if jt.isBreak() {
+				jt.markWaitingAsAborted()
+				break
 			}
-		} else {
+
+			item, ok := jt.Waiting.pop()
+			if !ok {
+				break
+			}
+			jt.startCopyItem(item)
+			started = true
+		}
+
+		if jt.ScanFinish.Load() && jt.doingLen() == 0 && jt.Waiting.len() == 0 {
 			break
+		}
+
+		if started {
+			continue
+		}
+
+		select {
+		case <-jt.context().Done():
+			jt.markWaitingAsAborted()
+		case <-jt.Waiting.waitCh():
+		case <-ticker.C:
 		}
 	}
 
-	// Wait for remaining doing tasks
-	tryTime := 0
-	for {
-		jt.DoingMu.Lock()
-		dLen := len(jt.Doing)
-		jt.DoingMu.Unlock()
-		if dLen == 0 {
-			break
-		}
-		tryTime++
-		time.Sleep(500 * time.Millisecond)
-		if tryTime > 3 {
-			break
-		}
+	if jt.isBreak() {
+		jt.markWaitingAsAborted()
 	}
+	jt.copyWG.Wait()
 
 	// Batch save finish items
 	jt.FinishMu.Lock()
 	finish := append([]map[string]interface{}(nil), jt.Finish...)
 	jt.FinishMu.Unlock()
 	if len(finish) > 0 {
-		mapper.AddJobTaskItemMany(finish)
+		if err := persistJobTaskItems(finish); err != nil {
+			log.Printf("Failed to save task items for task %d: %v", jt.TaskID, err)
+		}
 	}
 
 	jt.updateTaskStatus()
-	jt.JobClient.JobDoing = false
-	jt.JobClient.CurrentJobTask = nil
+	jt.JobClient.markDone()
+	jt.JobClient.clearCurrentTask(jt)
+}
+
+func (jt *JobTask) doingLen() int {
+	jt.DoingMu.Lock()
+	defer jt.DoingMu.Unlock()
+	return len(jt.Doing)
+}
+
+func (jt *JobTask) startCopyItem(item *CopyItem) {
+	if jt.FirstSync.Load() == 0 {
+		jt.FirstSync.CompareAndSwap(0, time.Now().Unix())
+	}
+	jt.QueueNum++
+	item.DoingKey = jt.QueueNum
+
+	jt.DoingMu.Lock()
+	jt.Doing[jt.QueueNum] = item
+	jt.DoingMu.Unlock()
+
+	jt.copyWG.Add(1)
+	go func() {
+		defer jt.copyWG.Done()
+		item.DoIt()
+	}()
+}
+
+func (jt *JobTask) markWaitingAsAborted() {
+	for _, item := range jt.Waiting.closeAndDrain() {
+		item.setStatus(4)
+		item.mu.RLock()
+		jt.CopyHook(item.SrcPath, item.DstPath, item.FileName, item.FileSize, item.AlistTaskID,
+			4, item.ErrMsg, 0, item.CopyType, item.CreateTime)
+		item.mu.RUnlock()
+	}
 }
 
 // CopyHook is called when a copy operation completes
 func (jt *JobTask) CopyHook(srcPath, dstPath, fileName string, fileSize interface{},
 	alistTaskID string, status int, errMsg *string, isPath, copyType int, createTime int64) {
-	jt.FinishMu.Lock()
-	defer jt.FinishMu.Unlock()
-	jt.Finish = append(jt.Finish, map[string]interface{}{
+	jt.appendFinish(map[string]interface{}{
 		"taskId":      jt.TaskID,
 		"srcPath":     srcPath,
 		"dstPath":     dstPath,
@@ -448,9 +757,7 @@ func (jt *JobTask) CopyHook(srcPath, dstPath, fileName string, fileSize interfac
 
 // DelHook is called when a delete operation completes
 func (jt *JobTask) DelHook(dstPath, fileName string, fileSize interface{}, status int, errMsg *string, isPath int, createTime int64) {
-	jt.FinishMu.Lock()
-	defer jt.FinishMu.Unlock()
-	jt.Finish = append(jt.Finish, map[string]interface{}{
+	jt.appendFinish(map[string]interface{}{
 		"taskId":      jt.TaskID,
 		"srcPath":     nil,
 		"dstPath":     dstPath,
@@ -463,6 +770,46 @@ func (jt *JobTask) DelHook(dstPath, fileName string, fileSize interface{}, statu
 		"errMsg":      errMsg,
 		"createTime":  createTime,
 	})
+}
+
+func (jt *JobTask) appendFinish(item map[string]interface{}) {
+	jt.initRuntime()
+	var flush []map[string]interface{}
+	jt.FinishMu.Lock()
+	status := toInt(item["status"])
+	jt.FinishedCounts[status]++
+	if item["fileSize"] != nil && toInt(item["type"]) != 1 {
+		jt.FinishedSizes[status] += toInt64Val(item["fileSize"])
+	}
+	jt.Finish = append(jt.Finish, item)
+	if overflow := len(jt.Finish) - maxRealtimeFinishedItems; overflow > 0 {
+		flush = append([]map[string]interface{}(nil), jt.Finish[:overflow]...)
+		jt.Finish = append([]map[string]interface{}(nil), jt.Finish[overflow:]...)
+	}
+	jt.FinishMu.Unlock()
+
+	if len(flush) > 0 {
+		if err := persistJobTaskItems(flush); err != nil {
+			log.Printf("Failed to flush task items for task %d: %v", jt.TaskID, err)
+		}
+	}
+}
+
+func (jt *JobTask) finishedAggregateForStatus(status int) (int, int64) {
+	jt.FinishMu.Lock()
+	defer jt.FinishMu.Unlock()
+	if status != -1 {
+		return jt.FinishedCounts[status], jt.FinishedSizes[status]
+	}
+	count := 0
+	size := int64(0)
+	for s, c := range jt.FinishedCounts {
+		if s != 0 && s != 1 && s != 2 && s != 7 {
+			count += c
+			size += jt.FinishedSizes[s]
+		}
+	}
+	return count, size
 }
 
 func (jt *JobTask) sync() {
@@ -518,9 +865,11 @@ func (jt *JobTask) copyFile(srcPath, dstPath, fileName string, fileSize interfac
 		jobTask:     jt,
 		alistClient: jt.AlistClient,
 	}
-	jt.WaitingMu.Lock()
-	jt.Waiting = append(jt.Waiting, ci)
-	jt.WaitingMu.Unlock()
+	if !jt.Waiting.pushWait(jt.context(), ci) {
+		ci.setStatus(4)
+		jt.CopyHook(ci.SrcPath, ci.DstPath, ci.FileName, ci.FileSize, ci.AlistTaskID,
+			ci.Status, ci.ErrMsg, 0, ci.CopyType, ci.CreateTime)
+	}
 }
 
 func (jt *JobTask) delFile(path, fileName string, size interface{}) {
@@ -537,7 +886,7 @@ func (jt *JobTask) delFile(path, fileName string, size interface{}) {
 		name = fileName[:len(fileName)-1]
 	}
 	scanIntervalT := toInt(jt.Job["scanIntervalT"])
-	err := jt.AlistClient.DeleteFile(path, []string{name}, scanIntervalT)
+	err := jt.AlistClient.DeleteFileContext(jt.context(), path, []string{name}, scanIntervalT)
 	if err != nil {
 		status = 7
 		e := err.Error()
@@ -580,9 +929,13 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 	if !jt.acquireScanSlot() {
 		return nil, errScanAborted
 	}
-	result, err := jt.AlistClient.FileListApi(path, useCache, scanInterval)
-	jt.releaseScanSlot()
+	defer jt.releaseScanSlot()
+
+	result, err := jt.AlistClient.FileListApiContext(jt.context(), path, useCache, scanInterval)
 	if err != nil {
+		if jt.isBreak() && errors.Is(err, context.Canceled) {
+			return nil, err
+		}
 		srcOrDst := i18n.G("src")
 		if !isSrc {
 			srcOrDst = i18n.G("dst")
@@ -658,8 +1011,10 @@ func (jt *JobTask) syncWithHave(srcPath, dstPath string, spec *ignore.GitIgnore,
 		return
 	}
 
-	var wg sync.WaitGroup
 	for key, srcVal := range srcFiles {
+		if jt.isBreak() {
+			return
+		}
 		if !strings.HasSuffix(key, "/") {
 			// File
 			dstVal, exists := dstFiles[key]
@@ -669,21 +1024,12 @@ func (jt *JobTask) syncWithHave(srcPath, dstPath string, spec *ignore.GitIgnore,
 		} else {
 			// Directory
 			if _, exists := dstFiles[key]; !exists {
-				wg.Add(1)
-				go func(key string) {
-					defer wg.Done()
-					jt.syncWithoutHave(srcPath+key, dstPath+key, spec, srcRootPath, dstRootPath, firstDst)
-				}(key)
+				jt.syncWithoutHave(srcPath+key, dstPath+key, spec, srcRootPath, dstRootPath, firstDst)
 			} else {
-				wg.Add(1)
-				go func(key string) {
-					defer wg.Done()
-					jt.syncWithHave(srcPath+key, dstPath+key, spec, srcRootPath, dstRootPath, firstDst)
-				}(key)
+				jt.syncWithHave(srcPath+key, dstPath+key, spec, srcRootPath, dstRootPath, firstDst)
 			}
 		}
 	}
-	wg.Wait()
 
 	if toInt(jt.Job["method"]) == 1 {
 		for dstKey, dstVal := range dstFiles {
@@ -702,7 +1048,7 @@ func (jt *JobTask) syncWithoutHave(srcPath, dstPath string, spec *ignore.GitIgno
 	status := 2
 	var errMsg *string
 	scanIntervalT := toInt(jt.Job["scanIntervalT"])
-	err := jt.AlistClient.Mkdir(dstPath, scanIntervalT)
+	err := jt.AlistClient.MkdirContext(jt.context(), dstPath, scanIntervalT)
 	if err != nil {
 		status = 7
 		e := err.Error()
@@ -719,28 +1065,22 @@ func (jt *JobTask) syncWithoutHave(srcPath, dstPath string, spec *ignore.GitIgno
 		return
 	}
 
-	var wg sync.WaitGroup
 	for key := range srcFiles {
 		if jt.isBreak() {
 			break
 		}
 		if strings.HasSuffix(key, "/") {
-			wg.Add(1)
-			go func(key string) {
-				defer wg.Done()
-				jt.syncWithoutHave(srcPath+key, dstPath+key, spec, srcRootPath, dstRootPath, firstDst)
-			}(key)
+			jt.syncWithoutHave(srcPath+key, dstPath+key, spec, srcRootPath, dstRootPath, firstDst)
 		} else {
 			jt.copyFile(srcPath, dstPath, key, srcFiles[key])
 		}
 	}
-	wg.Wait()
 }
 
 func (jt *JobTask) updateTaskStatus() {
 	jt.GetCurrent()
-	currentTasks := jt.currentTasksSnapshot()
-	failOrOtherNum := len(currentTasks[7]) + len(currentTasks[-1])
+	taskNum := GetCuTaskNum(jt.TaskID)
+	failOrOtherNum := toInt(taskNum["failNum"]) + toInt(taskNum["otherNum"])
 	status := 2
 	if jt.isBreak() {
 		status = 7
@@ -748,7 +1088,7 @@ func (jt *JobTask) updateTaskStatus() {
 		status = 3
 	}
 
-	UpdateJobTaskStatusFinal(jt.TaskID, status, currentTasks, jt.CreateTime)
+	UpdateJobTaskStatusFinal(jt.TaskID, status, nil, jt.CreateTime)
 }
 
 // JobClient manages a single job's lifecycle
@@ -759,6 +1099,62 @@ type JobClient struct {
 	JobDoing       bool
 	CurrentJobTask *JobTask
 	mu             sync.Mutex
+}
+
+func (jc *JobClient) tryMarkDoing() bool {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	if jc.JobDoing {
+		return false
+	}
+	jc.JobDoing = true
+	return true
+}
+
+func (jc *JobClient) isDoing() bool {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return jc.JobDoing
+}
+
+func (jc *JobClient) markDone() {
+	jc.mu.Lock()
+	jc.JobDoing = false
+	jc.mu.Unlock()
+}
+
+func (jc *JobClient) setCurrentTask(task *JobTask) {
+	jc.mu.Lock()
+	jc.CurrentJobTask = task
+	jc.mu.Unlock()
+}
+
+func (jc *JobClient) currentTask() *JobTask {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return jc.CurrentJobTask
+}
+
+func (jc *JobClient) clearCurrentTask(task *JobTask) {
+	jc.mu.Lock()
+	if task == nil || jc.CurrentJobTask == task {
+		jc.CurrentJobTask = nil
+	}
+	jc.mu.Unlock()
+}
+
+func (jc *JobClient) setEnable(enable int) {
+	jc.mu.Lock()
+	if jc.Job != nil {
+		jc.Job["enable"] = enable
+	}
+	jc.mu.Unlock()
+}
+
+func (jc *JobClient) enabled() bool {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return jc.Job != nil && toInt(jc.Job["enable"]) == 1
 }
 
 // NewJobClient creates a new job client
@@ -808,24 +1204,18 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 
 // DoJob executes the job
 func (jc *JobClient) DoJob() {
-	jc.mu.Lock()
-	if jc.JobDoing {
-		jc.mu.Unlock()
-		for jc.JobDoing {
-			if toInt(jc.Job["enable"]) == 0 {
-				return
-			}
-			time.Sleep(10 * time.Second)
+	for !jc.tryMarkDoing() {
+		if !jc.enabled() {
+			return
 		}
-		jc.mu.Lock()
+		time.Sleep(10 * time.Second)
 	}
-	jc.JobDoing = true
-	jc.mu.Unlock()
 
 	taskID := int64(0)
 	defer func() {
 		if r := recover(); r != nil {
-			jc.JobDoing = false
+			jc.markDone()
+			jc.clearCurrentTask(nil)
 			errMsg := fmt.Sprintf("%v", r)
 			log.Printf("Job execution error: %s", errMsg)
 			if taskID > 0 {
@@ -839,15 +1229,17 @@ func (jc *JobClient) DoJob() {
 	if err != nil {
 		panic(err.Error())
 	}
-	if toInt(jc.Job["enable"]) == 0 {
+	if !jc.enabled() {
 		panic("abort")
 	}
-	jc.CurrentJobTask = NewJobTask(taskID, jc)
+	task := newJobTask(taskID, jc)
+	jc.setCurrentTask(task)
+	task.Start()
 }
 
 // DoManual triggers manual execution
 func (jc *JobClient) DoManual() {
-	if jc.JobDoing {
+	if jc.isDoing() {
 		panic(i18n.G("job_running"))
 	}
 	go jc.DoJob()
@@ -858,7 +1250,7 @@ func (jc *JobClient) ResumeJob() {
 	if toInt(jc.Job["isCron"]) == 2 {
 		// Manual only, just enable
 		mapper.UpdateJobEnable(jc.JobID, 1)
-		jc.Job["enable"] = 1
+		jc.setEnable(1)
 		return
 	}
 
@@ -867,21 +1259,21 @@ func (jc *JobClient) ResumeJob() {
 		panic(err.Error())
 	}
 	mapper.UpdateJobEnable(jc.JobID, 1)
-	jc.Job["enable"] = 1
+	jc.setEnable(1)
 }
 
 // AbortJob aborts the current running task
 func (jc *JobClient) AbortJob() {
-	if jc.CurrentJobTask != nil {
-		jc.CurrentJobTask.requestBreak()
+	if task := jc.currentTask(); task != nil {
+		task.requestBreak()
 	}
 }
 
 // StopJob stops the job (for disable or delete)
 func (jc *JobClient) StopJob(remove bool) {
-	jc.Job["enable"] = 0
-	if jc.CurrentJobTask != nil {
-		jc.CurrentJobTask.requestBreak()
+	jc.setEnable(0)
+	if task := jc.currentTask(); task != nil {
+		task.requestBreak()
 	}
 	if remove {
 		jc.Scheduler.Stop()
@@ -890,7 +1282,6 @@ func (jc *JobClient) StopJob(remove bool) {
 		mapper.UpdateJobEnable(jc.JobID, 0)
 		mapper.UpdateJobTaskStatusByStatusAndJobID(jc.JobID)
 	}
-	jc.JobDoing = false
 }
 
 // UpdateJobTaskStatusFinal updates task status after completion with notification
@@ -930,6 +1321,7 @@ func UpdateJobTaskStatusFinal(taskID int64, status int, currentTasks map[int][]m
 		}
 	} else {
 		taskNum = GetCuTaskNum(taskID)
+		taskNum["duration"] = duration
 	}
 
 	mapper.UpdateJobTaskStatus(taskID, status, errMsg)

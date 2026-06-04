@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Card, Row, Col, Button, Modal, Form, Input, Select, Switch, Space, Popconfirm, Tag, App, Empty, Typography, Descriptions, Tooltip,
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, BellOutlined, SendOutlined, PoweroffOutlined } from '@ant-design/icons';
 import { notifyGet, notifyPost, notifyPut, notifyDelete } from '../../api/notify';
 import dayjs from 'dayjs';
+import type { NotifyFormValues, NotifyItem } from '../../types';
 
 const { Text } = Typography;
 
@@ -24,7 +25,28 @@ const methodColors: Record<number, string[]> = {
   4: ['#52c41a', '#389e0d'],
 };
 
-const normalizeNotifyParams = (method: number, params: Record<string, any>) => {
+type NotifyParams = Record<string, string | number | boolean | null | undefined>;
+
+const asNotifyParams = (value: unknown): NotifyParams => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return value as NotifyParams;
+};
+
+const paramString = (params: NotifyParams, key: string): string => {
+  const value = params[key];
+  return value === undefined || value === null ? '' : String(value);
+};
+
+const paramsFromValues = (values: NotifyFormValues): NotifyParams => {
+  const params: NotifyParams = { ...values };
+  delete params.method;
+  delete params.enable;
+  return params;
+};
+
+const normalizeNotifyParams = (method: number, params: NotifyParams): NotifyParams => {
   const normalized = { ...params };
   if (method === 0) {
     normalized.method = normalized.method || normalized.httpMethod || 'POST';
@@ -53,23 +75,23 @@ const normalizeNotifyParams = (method: number, params: Record<string, any>) => {
 
 export default function Notify() {
   const { message } = App.useApp();
-  const [list, setList] = useState<any[]>([]);
+  const [list, setList] = useState<NotifyItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null);
+  const [editingItem, setEditingItem] = useState<NotifyItem | null>(null);
   const [form] = Form.useForm();
   const [method, setMethod] = useState(0);
 
-  const fetchList = async () => {
+  const fetchList = useCallback(async () => {
     setLoading(true);
     try {
-      const res: any = await notifyGet();
+      const res = await notifyGet();
       setList(res.data || []);
     } catch { /* ignore */ }
     setLoading(false);
-  };
+  }, []);
 
-  useEffect(() => { fetchList(); }, []);
+  useEffect(() => { fetchList(); }, [fetchList]);
 
   const handleAdd = () => {
     setEditingItem(null);
@@ -79,13 +101,13 @@ export default function Notify() {
     setModalVisible(true);
   };
 
-  const handleEdit = (item: any) => {
+  const handleEdit = (item: NotifyItem) => {
     setEditingItem(item);
-    let params: any = {};
-    try { params = JSON.parse(item.params || '{}'); } catch { /* ignore */ }
+    let params: NotifyParams = {};
+    try { params = asNotifyParams(JSON.parse(item.params || '{}')); } catch { /* ignore */ }
     params = normalizeNotifyParams(item.method, params);
     if (item.method === 0) {
-      params.httpMethod = params.method;
+      params.httpMethod = paramString(params, 'method');
     }
     form.setFieldsValue({ ...params, method: item.method, enable: item.enable === 1 });
     setMethod(item.method);
@@ -100,7 +122,7 @@ export default function Notify() {
     } catch { /* ignore */ }
   };
 
-  const handleToggleStatus = async (item: any) => {
+  const handleToggleStatus = async (item: NotifyItem) => {
     try {
       await notifyPut({ notifyId: item.id, enable: item.enable === 1 ? 0 : 1 });
       message.success('状态更新成功');
@@ -110,8 +132,9 @@ export default function Notify() {
 
   const handleTest = async () => {
     try {
-      const values = await form.validateFields();
-      const { method: m, enable: _, ...params } = values;
+      const values = await form.validateFields() as NotifyFormValues;
+      const m = values.method;
+      const params = paramsFromValues(values);
       await notifyPost({ notify: { method: m, params: JSON.stringify(normalizeNotifyParams(m, params)) } });
       message.success('测试消息已发送');
     } catch { /* ignore */ }
@@ -119,11 +142,12 @@ export default function Notify() {
 
   const handleSubmit = async () => {
     try {
-      const values = await form.validateFields();
-      const { method: m, enable: e, ...params } = values;
+      const values = await form.validateFields() as NotifyFormValues;
+      const m = values.method;
+      const params = paramsFromValues(values);
       const notifyData = {
         ...(editingItem ? { id: editingItem.id } : {}),
-        enable: e ? 1 : 0,
+        enable: values.enable ? 1 : 0,
         method: m,
         params: JSON.stringify(normalizeNotifyParams(m, params)),
       };
@@ -138,23 +162,26 @@ export default function Notify() {
     } catch { /* ignore */ }
   };
 
-  const parseParams = (item: any) => {
-    try { return JSON.parse(item.params || '{}'); } catch { return {}; }
+  const parseParams = (item: NotifyItem): NotifyParams => {
+    try { return asNotifyParams(JSON.parse(item.params || '{}')); } catch { return {}; }
   };
 
-  const getParamSummary = (item: any) => {
+  const getParamSummary = (item: NotifyItem) => {
     const p = parseParams(item);
     switch (item.method) {
-      case 0: return p.url || '—';
-      case 1: return p.sendKey ? `****${p.sendKey.slice(-4)}` : '—';
-      case 2: return p.url || p.webhook || '—';
-      case 3: return p.corpid || p.corpId || '—';
-      case 4: return p.url || p.webhook || '—';
+      case 0: return paramString(p, 'url') || '—';
+      case 1: {
+        const sendKey = paramString(p, 'sendKey');
+        return sendKey ? `****${sendKey.slice(-4)}` : '—';
+      }
+      case 2: return paramString(p, 'url') || paramString(p, 'webhook') || '—';
+      case 3: return paramString(p, 'corpid') || paramString(p, 'corpId') || '—';
+      case 4: return paramString(p, 'url') || paramString(p, 'webhook') || '—';
       default: return '—';
     }
   };
 
-  const handleTestSend = async (item: any) => {
+  const handleTestSend = async (item: NotifyItem) => {
     try {
       await notifyPost({ notify: { method: item.method, params: item.params } });
       message.success('测试消息已发送');
@@ -235,7 +262,7 @@ export default function Notify() {
         />
       ) : (
         <Row gutter={[16, 16]}>
-          {list.map((item: any) => {
+          {list.map((item) => {
             const params = parseParams(item);
             const colors = methodColors[item.method] || ['#8c8c8c', '#595959'];
             return (

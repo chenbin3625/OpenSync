@@ -1,33 +1,40 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Card, Row, Col, Button, Modal, Form, Input, Space, Popconfirm, App, Empty, Typography, Descriptions, Tooltip,
 } from 'antd';
 import {
-  PlusOutlined, EditOutlined, DeleteOutlined, CloudServerOutlined, ApiOutlined, EyeInvisibleOutlined,
+  PlusOutlined, EditOutlined, DeleteOutlined, CloudServerOutlined, ApiOutlined,
 } from '@ant-design/icons';
 import { alistGet, alistGetPath, alistPost, alistPut, alistDelete } from '../../api/alist';
 import dayjs from 'dayjs';
+import type { AlistItem } from '../../types';
 
 const { Text } = Typography;
 
+interface EngineFormValues {
+  url: string;
+  remark?: string;
+  token?: string;
+}
+
 export default function Engine() {
   const { message } = App.useApp();
-  const [list, setList] = useState<any[]>([]);
+  const [list, setList] = useState<AlistItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null);
+  const [editingItem, setEditingItem] = useState<AlistItem | null>(null);
   const [form] = Form.useForm();
 
-  const fetchList = async () => {
+  const fetchList = useCallback(async () => {
     setLoading(true);
     try {
-      const res: any = await alistGet();
+      const res = await alistGet();
       setList(res.data || []);
     } catch { /* ignore */ }
     setLoading(false);
-  };
+  }, []);
 
-  useEffect(() => { fetchList(); }, []);
+  useEffect(() => { fetchList(); }, [fetchList]);
 
   const handleAdd = () => {
     setEditingItem(null);
@@ -35,7 +42,7 @@ export default function Engine() {
     setModalVisible(true);
   };
 
-  const handleEdit = (item: any) => {
+  const handleEdit = (item: AlistItem) => {
     setEditingItem(item);
     form.setFieldsValue({ url: item.url, remark: item.remark || '' });
     setModalVisible(true);
@@ -49,9 +56,9 @@ export default function Engine() {
     } catch { /* ignore */ }
   };
 
-  const handleTest = async (item: any) => {
+  const handleTest = async (item: AlistItem) => {
     try {
-      const res: any = await alistGetPath(item.id, '/');
+      const res = await alistGetPath(item.id, '/');
       if (res.code === 200) {
         message.success('连接测试成功');
       } else {
@@ -62,15 +69,9 @@ export default function Engine() {
     }
   };
 
-  const maskToken = (token?: string) => {
-    if (!token) return '—';
-    if (token.length <= 4) return '****';
-    return '****' + token.slice(-4);
-  };
-
   const handleSubmit = async () => {
     try {
-      const values = await form.validateFields();
+      const values = await form.validateFields() as EngineFormValues;
       let url = values.url;
       if (!url.startsWith('http://') && !url.startsWith('https://')) {
         url = 'http://' + url;
@@ -104,7 +105,7 @@ export default function Engine() {
         />
       ) : (
         <Row gutter={[16, 16]}>
-          {list.map((item: any) => (
+          {list.map((item) => (
             <Col xs={24} md={12} key={item.id}>
               <Card
                 hoverable
@@ -144,12 +145,6 @@ export default function Engine() {
                 <Descriptions column={1} size="small" styles={{ label: { color: 'var(--ant-color-text-secondary)', width: 70 }, content: { fontSize: 13 } }}>
                   <Descriptions.Item label="地址">
                     <Text copyable style={{ fontSize: 13 }}>{item.url}</Text>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="令牌">
-                    <Space size={4}>
-                      <EyeInvisibleOutlined style={{ color: 'var(--ant-color-text-quaternary)' }} />
-                      <Text type="secondary" style={{ fontSize: 13 }}>{maskToken(item.token)}</Text>
-                    </Space>
                   </Descriptions.Item>
                   <Descriptions.Item label="添加时间">
                     <Text type="secondary" className="desc-text-sm">
