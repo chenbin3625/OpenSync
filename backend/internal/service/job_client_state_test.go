@@ -1,6 +1,9 @@
 package service
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestJobClientDoingStateIsSerialized(t *testing.T) {
 	client := &JobClient{}
@@ -76,5 +79,41 @@ func TestDoScheduledSkipsWhenJobAlreadyRunning(t *testing.T) {
 	}
 	if !client.isDoing() {
 		t.Fatalf("DoScheduled() changed running state, want still running")
+	}
+}
+
+func TestWaitUntilIdleWaitsForTaskCleanup(t *testing.T) {
+	client := &JobClient{}
+	task := &JobTask{TaskID: 99}
+	client.setCurrentTask(task)
+	if !client.tryMarkDoing() {
+		t.Fatalf("tryMarkDoing() = false, want true")
+	}
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		client.markDone()
+		client.clearCurrentTask(task)
+	}()
+
+	if !client.waitUntilIdle(time.Second) {
+		t.Fatalf("waitUntilIdle() = false, want true after task cleanup")
+	}
+}
+
+func TestWaitUntilIdleTimesOutWhileTaskStillRunning(t *testing.T) {
+	client := &JobClient{}
+	task := &JobTask{TaskID: 99}
+	client.setCurrentTask(task)
+	if !client.tryMarkDoing() {
+		t.Fatalf("tryMarkDoing() = false, want true")
+	}
+	defer func() {
+		client.markDone()
+		client.clearCurrentTask(task)
+	}()
+
+	if client.waitUntilIdle(20 * time.Millisecond) {
+		t.Fatalf("waitUntilIdle() = true, want false while task is still running")
 	}
 }

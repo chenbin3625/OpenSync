@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
 	"opensync/internal/model"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"

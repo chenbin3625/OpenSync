@@ -2,8 +2,8 @@ package handler
 
 import (
 	"errors"
-	"strconv"
 	"opensync/internal/i18n"
+	"strconv"
 )
 
 func parseRequiredID(value, field string) (int64, error) {

@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -9,22 +10,17 @@ import (
 func ConvertBytes(val int64) string {
 	units := []string{"B", "KB", "MB", "GB", "TB"}
 	i := 0
-	fVal := float64(val)
-	for i < len(units) {
+	size := float64(val)
+	absSize := math.Abs(size)
+	for absSize >= 1024 && i < len(units)-1 {
+		size /= 1024
+		absSize /= 1024
 		i++
-		if fVal < float64(pow1024(i+1)) {
-			return fmt.Sprintf("%.2f %s", fVal/float64(pow1024(i)), units[i])
-		}
 	}
-	return fmt.Sprintf("%.2f %s", fVal/float64(pow1024(i-1)), units[i-1])
-}
-
-func pow1024(n int) int64 {
-	var result int64 = 1
-	for j := 0; j < n; j++ {
-		result *= 1024
+	if i == 0 {
+		return fmt.Sprintf("%d %s", val, units[i])
 	}
-	return result
+	return fmt.Sprintf("%.2f %s", size, units[i])
 }
 
 // ConvertSeconds converts seconds to hours, minutes, seconds

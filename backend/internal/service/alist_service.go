@@ -3,10 +3,10 @@ package service
 import (
 	"fmt"
 	"log"
-	"strings"
-	"sync"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
+	"strings"
+	"sync"
 )
 
 var (
@@ -166,10 +166,20 @@ func AddClient(alist map[string]interface{}) {
 
 // RemoveClient removes an AList client
 func RemoveClient(alistID int64) {
+	count, err := mapper.CountJobsByAlistID(alistID)
+	if err != nil {
+		panic(err.Error())
+	}
+	if count > 0 {
+		panic(i18n.G("alist_in_use"))
+	}
+
 	alistClientListMu.Lock()
 	delete(alistClientList, alistID)
 	alistClientListMu.Unlock()
-	mapper.RemoveAlist(alistID)
+	if err := mapper.RemoveAlist(alistID); err != nil {
+		panic(err.Error())
+	}
 }
 
 // GetChildPath gets child directory paths for path selector

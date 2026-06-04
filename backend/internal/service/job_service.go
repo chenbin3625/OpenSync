@@ -99,12 +99,10 @@ func CleanJobInput(job map[string]interface{}) {
 	}
 	if job["exclude"] != nil {
 		excludeStr := fmt.Sprintf("%v", job["exclude"])
-		parts := strings.Split(excludeStr, ":")
-		cleaned := make([]string, len(parts))
-		for i, p := range parts {
-			cleaned[i] = strings.TrimSpace(p)
-		}
-		job["exclude"] = strings.Join(cleaned, ":")
+		job["exclude"] = normalizeExclude(excludeStr)
+	}
+	if job["dstPath"] != nil {
+		job["dstPath"] = normalizeDstPathForStorage(job["dstPath"])
 	}
 }
 
@@ -165,11 +163,13 @@ func DoJobManual(jobID int64) {
 // RemoveJobClient deletes a job
 func RemoveJobClient(jobID int64) {
 	client := GetJobClientByID(jobID)
-	client.AbortJob()
+	client.StopJob(true)
+	if !client.waitUntilIdle(2 * time.Minute) {
+		panic(i18n.G("job_delete_wait_timeout"))
+	}
 	if err := mapper.DeleteJob(jobID); err != nil {
 		panic(err.Error())
 	}
-	client.StopJob(true)
 	jobClientListMu.Lock()
 	delete(jobClientList, jobID)
 	jobClientListMu.Unlock()

@@ -7,7 +7,7 @@ import {
 import {
   PlusOutlined, PlayCircleOutlined, DeleteOutlined,
   CaretRightOutlined, FolderOpenOutlined, FolderOutlined,
-  ClockCircleOutlined, CloudServerOutlined, EditOutlined,
+  ClockCircleOutlined, CloudServerOutlined, EditOutlined, QuestionCircleOutlined,
 } from '@ant-design/icons';
 import { jobGetJob, jobPost, jobPut, jobDelete } from '../../api/job';
 import { alistGet, alistGetPath } from '../../api/alist';
@@ -25,7 +25,21 @@ const statusColors: Record<number, string> = {
 const statusLabels: Record<number, string> = {
   0: '禁用', 1: '启用',
 };
-const methodNames = ['仅新增', '全同步', '移动模式'];
+const methodOptions = [
+  {
+    name: '仅新增',
+    description: '复制源目录中目标端不存在或内容变化的文件，不删除目标端多余文件，适合增量备份。',
+  },
+  {
+    name: '全同步',
+    description: '目标目录尽量与源目录保持一致，会复制新增/变更文件，并删除目标端源目录已不存在的文件。',
+  },
+  {
+    name: '移动模式',
+    description: '按移动任务处理新增/变更文件，适合把文件从源端迁移到目标端，用于归档或腾挪空间。',
+  },
+];
+const methodNames = methodOptions.map((method) => method.name);
 const cronTypeNames = ['间隔(分钟)', 'Cron', '仅手动'];
 const cronFields = [
   { name: 'second', label: '秒', placeholder: '0' },
@@ -35,6 +49,181 @@ const cronFields = [
   { name: 'month', label: '月', placeholder: '*' },
   { name: 'day_of_week', label: '周', placeholder: '*' },
 ];
+const defaultCronFields = {
+  second: '0',
+  minute: '0',
+  hour: '2',
+  day: '*',
+  month: '*',
+  day_of_week: '*',
+};
+
+type ScheduleValues = {
+  isCron?: number;
+  interval?: number;
+  second?: string | null;
+  minute?: string | null;
+  hour?: string | null;
+  day?: string | null;
+  month?: string | null;
+  day_of_week?: string | null;
+};
+
+const cronValue = (value?: string | null, fallback = '*') => {
+  const normalized = String(value ?? '').trim();
+  return normalized || fallback;
+};
+
+const formatTime = (hour?: string | null, minute?: string | null, second?: string | null) => {
+  const h = cronValue(hour);
+  const m = cronValue(minute);
+  const s = cronValue(second, '0');
+  if (/^\d+$/.test(h) && /^\d+$/.test(m) && /^\d+$/.test(s)) {
+    return `${h.padStart(2, '0')}:${m.padStart(2, '0')}:${s.padStart(2, '0')}`;
+  }
+  return `${h}:${m}:${s}`;
+};
+
+const describeCronPlan = (values: ScheduleValues) => {
+  const second = cronValue(values.second, '0');
+  const minute = cronValue(values.minute);
+  const hour = cronValue(values.hour);
+  const day = cronValue(values.day);
+  const month = cronValue(values.month);
+  const dayOfWeek = cronValue(values.day_of_week);
+  const time = formatTime(hour, minute, second);
+
+  if (day === '*' && month === '*' && dayOfWeek === '*' && hour !== '*' && minute !== '*') {
+    return `每天 ${time} 执行`;
+  }
+  if (day !== '*' && month === '*' && dayOfWeek === '*' && hour !== '*' && minute !== '*') {
+    return `每月 ${day} 日 ${time} 执行`;
+  }
+  if (day === '*' && month === '*' && dayOfWeek !== '*' && hour !== '*' && minute !== '*') {
+    return `每周 ${dayOfWeek} 的 ${time} 执行`;
+  }
+  return `按 Cron 表达式 ${[second, minute, hour, day, month, dayOfWeek].join(' ')} 执行`;
+};
+
+const formatSchedulePlan = (values: ScheduleValues) => {
+  if (values.isCron === 0) return `每 ${values.interval || 0} 分钟执行一次`;
+  if (values.isCron === 1) return describeCronPlan(values);
+  return '不自动执行，只能手动触发';
+};
+const compactItemStyle = { marginBottom: 12 };
+const compactDividerStyle = { margin: '8px 0 12px' };
+
+const parseJobDstPaths = (value: unknown): string[] => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => String(item).trim()).filter(Boolean);
+    }
+  } catch {
+    // Legacy jobs used colon-separated target paths.
+  }
+  return raw.split(':').map((item) => item.trim()).filter(Boolean);
+};
+
+const encodeJobDstPaths = (paths: string[]) => JSON.stringify(paths.map((item) => item.trim()).filter(Boolean));
+
+const formatJobDstPaths = (value: unknown) => {
+  const paths = parseJobDstPaths(value);
+  return paths.length > 0 ? paths.join(' → ') : '';
+};
+
+const defaultExclude = `# macOS
+.DS_Store
+._*
+.AppleDouble/
+.LSOverride
+.Spotlight-V100/
+.Trashes/
+.TemporaryItems/
+.fseventsd/
+.DocumentRevisions-V100/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+RECYCLER/
+System Volume Information/
+
+# Linux / NAS
+lost+found/
+@eaDir/
+#recycle/
+@Recycle/
+.Recycle/
+.Trash-*/
+.Trash/
+
+# 临时文件 / 下载未完成文件
+*.tmp
+*.temp
+*.log
+*.bak
+*.old
+*.orig
+*.part
+*.crdownload
+*.download
+*.swp
+*.swo
+*.swn
+*~
+~*
+~$*
+*.lock
+.~lock.*#
+
+# 缓存目录
+.cache/
+cache/
+tmp/
+temp/
+logs/
+log/
+
+# 开发相关缓存 / 依赖
+node_modules/
+.npm/
+.yarn/
+.pnpm-store/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+*.iml
+
+# 版本控制目录
+.git/
+.svn/
+.hg/
+
+# 构建产物
+.sass-cache/
+.gradle/
+build/
+dist/
+target/
+coverage/
+.next/
+.nuxt/
+.turbo/`;
 
 export default function Home() {
   const { message } = App.useApp();
@@ -152,18 +341,14 @@ export default function Home() {
     form.setFieldsValue({
       enable: true,
       method: 0,
-      isCron: 0,
+      isCron: 1,
       interval: 1440,
       useCacheS: false,
       useCacheT: false,
       scanIntervalS: 0,
       scanIntervalT: 0,
-      second: '0',
-      minute: '*',
-      hour: '*',
-      day: '*',
-      month: '*',
-      day_of_week: '*',
+      ...defaultCronFields,
+      exclude: defaultExclude,
     });
     setSrcTreeData([]);
     setDstTreeData([]);
@@ -180,13 +365,13 @@ export default function Home() {
       enable: job.enable === 1,
       useCacheS: job.useCacheS === 1 || job.useCacheS === true,
       useCacheT: job.useCacheT === 1 || job.useCacheT === true,
-      dstPath: String(job.dstPath || '').split(':').filter(Boolean),
-      second: job.second || '0',
-      minute: job.minute || '*',
-      hour: job.hour || '*',
-      day: job.day || '*',
-      month: job.month || '*',
-      day_of_week: job.day_of_week || '*',
+      dstPath: parseJobDstPaths(job.dstPath),
+      second: job.second || defaultCronFields.second,
+      minute: job.minute || defaultCronFields.minute,
+      hour: job.hour || defaultCronFields.hour,
+      day: job.day || defaultCronFields.day,
+      month: job.month || defaultCronFields.month,
+      day_of_week: job.day_of_week || defaultCronFields.day_of_week,
     });
     setSrcLoadedKeys([]);
     setDstLoadedKeys([]);
@@ -200,7 +385,7 @@ export default function Home() {
       const jobData: Record<string, unknown> = {
         ...(editingJob ? { id: editingJob.id } : {}),
         ...values,
-        dstPath: dstPaths.filter(Boolean).join(':'),
+        dstPath: encodeJobDstPaths(dstPaths.filter(Boolean)),
         enable: values.enable ? 1 : 0,
         useCacheS: values.useCacheS ? 1 : 0,
         useCacheT: values.useCacheT ? 1 : 0,
@@ -262,7 +447,7 @@ export default function Home() {
   const formatSchedule = (job: JobItem) => {
     if (job.isCron === 0) return `每 ${job.interval} 分钟`;
     if (job.isCron === 1) {
-      return `Cron: ${[job.second, job.minute, job.hour, job.day, job.month, job.day_of_week].map((v) => v || '*').join(' ')}`;
+      return describeCronPlan(job);
     }
     return '仅手动触发';
   };
@@ -273,7 +458,25 @@ export default function Home() {
     return `${s} / ${t}`;
   };
 
-  const isCronValue = Form.useWatch('isCron', form);
+  const isCronValue = Form.useWatch('isCron', form) as number | undefined;
+  const intervalValue = Form.useWatch('interval', form) as number | undefined;
+  const secondValue = Form.useWatch('second', form) as string | undefined;
+  const minuteValue = Form.useWatch('minute', form) as string | undefined;
+  const hourValue = Form.useWatch('hour', form) as string | undefined;
+  const dayValue = Form.useWatch('day', form) as string | undefined;
+  const monthValue = Form.useWatch('month', form) as string | undefined;
+  const dayOfWeekValue = Form.useWatch('day_of_week', form) as string | undefined;
+  const scheduleValues: ScheduleValues = {
+    isCron: isCronValue ?? 1,
+    interval: intervalValue,
+    second: secondValue,
+    minute: minuteValue,
+    hour: hourValue,
+    day: dayValue,
+    month: monthValue,
+    day_of_week: dayOfWeekValue,
+  };
+  const schedulePlan = formatSchedulePlan(scheduleValues);
 
   return (
     <div>
@@ -302,12 +505,14 @@ export default function Home() {
                       <Space>
                         <Tag color={statusColors[job.enable] || 'default'}>{statusLabels[job.enable] || '未知'}</Tag>
                         <Tag>{methodNames[job.method] || job.method}</Tag>
-                        <Switch
-                          checked={job.enable === 1}
-                          onChange={(_, e) => { e.stopPropagation(); handleToggle(job); }}
-                          onClick={(_, e) => e.stopPropagation()}
-                          size="small"
-                        />
+                        {job.isCron !== 2 && (
+                          <Switch
+                            checked={job.enable === 1}
+                            onChange={(_, e) => { e.stopPropagation(); handleToggle(job); }}
+                            onClick={(_, e) => e.stopPropagation()}
+                            size="small"
+                          />
+                        )}
                       </Space>
                     }
                     onClick={() => openTaskDrawer(job.id)}
@@ -339,8 +544,8 @@ export default function Home() {
                         <Text ellipsis={{ tooltip: job.srcPath }}>{job.srcPath}</Text>
                       </Descriptions.Item>
                       <Descriptions.Item label={<><FolderOpenOutlined /> 目标</>}>
-                        <Text ellipsis={{ tooltip: job.dstPath }}>
-                          {String(job.dstPath).replace(/:/g, ' → ')}
+                        <Text ellipsis={{ tooltip: formatJobDstPaths(job.dstPath) }}>
+                          {formatJobDstPaths(job.dstPath)}
                         </Text>
                       </Descriptions.Item>
                       <Descriptions.Item label={<><ClockCircleOutlined /> 调度</>}>
@@ -377,7 +582,7 @@ export default function Home() {
         title={editingJob ? '编辑同步任务' : '新建同步任务'}
         open={drawerVisible}
         onClose={() => setDrawerVisible(false)}
-        styles={{ wrapper: { width: 580 } }}
+        styles={{ wrapper: { width: 580 }, body: { padding: 16 } }}
         destroyOnClose
         extra={
           <Space>
@@ -387,7 +592,7 @@ export default function Home() {
         }
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="alistId" label="引擎" rules={[{ required: true, message: '请选择引擎' }]}>
+          <Form.Item name="alistId" label="引擎" rules={[{ required: true, message: '请选择引擎' }]} style={compactItemStyle}>
             <Select
               placeholder="选择引擎"
               options={alistList.map((a) => ({
@@ -396,9 +601,9 @@ export default function Home() {
               }))}
             />
           </Form.Item>
-          <Row gutter={16}>
+          <Row gutter={12}>
             <Col span={12}>
-              <Form.Item name="srcPath" label="源目录" rules={[{ required: true, message: '请选择源目录' }]}>
+              <Form.Item name="srcPath" label="源目录" rules={[{ required: true, message: '请选择源目录' }]} style={compactItemStyle}>
                 <TreeSelect
                   placeholder="选择源目录"
                   treeData={srcTreeData}
@@ -413,7 +618,7 @@ export default function Home() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="dstPath" label="目标目录" rules={[{ required: true, message: '请选择目标目录' }]}>
+              <Form.Item name="dstPath" label="目标目录" rules={[{ required: true, message: '请选择目标目录' }]} style={compactItemStyle}>
                 <TreeSelect
                   placeholder="选择目标目录"
                   treeData={dstTreeData}
@@ -429,50 +634,82 @@ export default function Home() {
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item name="remark" label="备注">
+          <Form.Item name="remark" label="备注" style={compactItemStyle}>
             <Input placeholder="可选备注" />
           </Form.Item>
 
-          <Divider>同步配置</Divider>
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item name="method" label="同步方式">
+          <Divider style={compactDividerStyle}>同步配置</Divider>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item
+                name="method"
+                style={compactItemStyle}
+                label={(
+                  <Space size={4}>
+                    同步方式
+                    <Tooltip
+                      title={(
+                        <Space direction="vertical" size={2}>
+                          {methodOptions.map((method) => (
+                            <span key={method.name}>
+                              <strong>{method.name}：</strong>{method.description}
+                            </span>
+                          ))}
+                        </Space>
+                      )}
+                    >
+                      <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                    </Tooltip>
+                  </Space>
+                )}
+              >
                 <Select options={methodNames.map((n, i) => ({ value: i, label: n }))} />
               </Form.Item>
             </Col>
-            <Col span={8}>
-              <Form.Item name="isCron" label="调度方式">
+            <Col span={12}>
+              <Form.Item
+                name="isCron"
+                style={compactItemStyle}
+                label={(
+                  <Space size={4}>
+                    调度方式
+                    <Tooltip title={`预计执行计划：${schedulePlan}`}>
+                      <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                    </Tooltip>
+                  </Space>
+                )}
+              >
                 <Select
                   options={cronTypeNames.map((n, i) => ({ value: i, label: n }))}
                   onChange={(value) => {
                     if (value === 0) form.setFieldsValue({ interval: 1440 });
                     if (value === 1) {
                       form.setFieldsValue({
-                        second: form.getFieldValue('second') || '0',
-                        minute: form.getFieldValue('minute') || '*',
-                        hour: form.getFieldValue('hour') || '*',
-                        day: form.getFieldValue('day') || '*',
-                        month: form.getFieldValue('month') || '*',
-                        day_of_week: form.getFieldValue('day_of_week') || '*',
+                        second: form.getFieldValue('second') || defaultCronFields.second,
+                        minute: form.getFieldValue('minute') === '*' ? defaultCronFields.minute : form.getFieldValue('minute') || defaultCronFields.minute,
+                        hour: form.getFieldValue('hour') === '*' ? defaultCronFields.hour : form.getFieldValue('hour') || defaultCronFields.hour,
+                        day: form.getFieldValue('day') || defaultCronFields.day,
+                        month: form.getFieldValue('month') || defaultCronFields.month,
+                        day_of_week: form.getFieldValue('day_of_week') || defaultCronFields.day_of_week,
                       });
                     }
                   }}
                 />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col span={12}>
               {isCronValue === 0 && (
-                <Form.Item name="interval" label="间隔(分钟)" rules={[{ required: true, message: '请输入' }]}>
+                <Form.Item name="interval" label="间隔(分钟)" rules={[{ required: true, message: '请输入' }]} style={compactItemStyle}>
                   <InputNumber min={1} style={{ width: '100%' }} />
                 </Form.Item>
               )}
             </Col>
           </Row>
           {isCronValue === 1 && (
-            <Row gutter={12}>
+            <Row gutter={8}>
               {cronFields.map((field) => (
-                <Col span={8} key={field.name}>
-                  <Form.Item name={field.name} label={field.label} rules={[{ required: true, message: '请输入' }]}>
+                <Col span={4} key={field.name}>
+                  <Form.Item name={field.name} label={field.label} rules={[{ required: true, message: '请输入' }]} style={compactItemStyle}>
                     <Input placeholder={field.placeholder} />
                   </Form.Item>
                 </Col>
@@ -480,42 +717,38 @@ export default function Home() {
             </Row>
           )}
 
-          <Divider>缓存与扫描</Divider>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Card title="源端" size="small">
-                <Space orientation="vertical" style={{ width: '100%' }} size={12}>
-                  <Form.Item name="useCacheS" label="缓存" valuePropName="checked">
-                    <Switch checkedChildren="使用" unCheckedChildren="不使用" />
-                  </Form.Item>
-                  <Form.Item name="scanIntervalS" label="扫描间隔(秒)">
-                    <InputNumber min={0} style={{ width: '100%' }} placeholder="0 表示默认" />
-                  </Form.Item>
-                </Space>
-              </Card>
+          <Divider style={compactDividerStyle}>缓存与扫描</Divider>
+          <Row gutter={12}>
+            <Col span={6}>
+              <Form.Item name="useCacheS" label="源端缓存" valuePropName="checked" style={compactItemStyle}>
+                <Switch checkedChildren="使用" unCheckedChildren="不使用" />
+              </Form.Item>
             </Col>
-            <Col span={12}>
-              <Card title="目标端" size="small">
-                <Space orientation="vertical" style={{ width: '100%' }} size={12}>
-                  <Form.Item name="useCacheT" label="缓存" valuePropName="checked">
-                    <Switch checkedChildren="使用" unCheckedChildren="不使用" />
-                  </Form.Item>
-                  <Form.Item name="scanIntervalT" label="扫描间隔(秒)">
-                    <InputNumber min={0} style={{ width: '100%' }} placeholder="0 表示默认" />
-                  </Form.Item>
-                </Space>
-              </Card>
+            <Col span={6}>
+              <Form.Item name="scanIntervalS" label="源端扫描(秒)" style={compactItemStyle}>
+                <InputNumber min={0} style={{ width: '100%' }} placeholder="0 默认" />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="useCacheT" label="目标缓存" valuePropName="checked" style={compactItemStyle}>
+                <Switch checkedChildren="使用" unCheckedChildren="不使用" />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="scanIntervalT" label="目标扫描(秒)" style={compactItemStyle}>
+                <InputNumber min={0} style={{ width: '100%' }} placeholder="0 默认" />
+              </Form.Item>
             </Col>
           </Row>
 
-          <div style={{ marginTop: 16 }}>
-            <Form.Item name="exclude" label="排除项" tooltip="gitignore 语法，多个用冒号分隔">
-              <Input.TextArea placeholder="如 *.tmp : .git/" rows={2} />
+          <div style={{ marginTop: 4 }}>
+            <Form.Item name="exclude" label="排除项" tooltip="gitignore 语法，每行一条" style={compactItemStyle}>
+              <Input.TextArea placeholder={'如\n*.tmp\n.git/'} rows={8} />
             </Form.Item>
           </div>
 
-          <Divider />
-          <Form.Item name="enable" label="启用" valuePropName="checked">
+          <Divider style={compactDividerStyle} />
+          <Form.Item name="enable" label="启用" valuePropName="checked" style={compactItemStyle}>
             <Switch />
           </Form.Item>
         </Form>

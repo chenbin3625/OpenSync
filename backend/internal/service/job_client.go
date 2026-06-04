@@ -855,12 +855,12 @@ func (jt *JobTask) sync() {
 	if jobExclude != nil {
 		excludeStr := fmt.Sprintf("%v", jobExclude)
 		if excludeStr != "" {
-			patterns := strings.Split(excludeStr, ":")
+			patterns := parseExcludePatterns(excludeStr)
 			spec = ignore.CompileIgnoreLines(patterns...)
 		}
 	}
 
-	dstPaths := strings.Split(fmt.Sprintf("%v", jt.Job["dstPath"]), ":")
+	dstPaths := parseDstPaths(jt.Job["dstPath"])
 	for i, dstItem := range dstPaths {
 		dstItem = normalizeDirPath(dstItem)
 		jt.syncWithHave(srcPath, dstItem, spec, srcPath, dstItem, i == 0)
@@ -1214,6 +1214,28 @@ func (jc *JobClient) clearCurrentTask(task *JobTask) {
 		jc.CurrentJobTask = nil
 	}
 	jc.mu.Unlock()
+}
+
+func (jc *JobClient) waitUntilIdle(timeout time.Duration) bool {
+	if timeout <= 0 {
+		return !jc.isDoing() && jc.currentTask() == nil
+	}
+
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if !jc.isDoing() && jc.currentTask() == nil {
+			return true
+		}
+		select {
+		case <-deadline.C:
+			return !jc.isDoing() && jc.currentTask() == nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func (jc *JobClient) setEnable(enable int) {

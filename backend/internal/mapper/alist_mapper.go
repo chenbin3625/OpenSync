@@ -22,6 +22,15 @@ func GetAlistByID(alistID int64) (map[string]interface{}, error) {
 	return rst[0], nil
 }
 
+// CountJobsByAlistID counts jobs that still reference an AList engine.
+func CountJobsByAlistID(alistID int64) (int64, error) {
+	val, err := FetchFirstVal("SELECT COUNT(*) FROM job WHERE alistId=?", alistID)
+	if err != nil {
+		return 0, err
+	}
+	return toInt64(val), nil
+}
+
 // AddAlist inserts a new alist entry
 func AddAlist(remark, url, userName, token string) (int64, error) {
 	return ExecuteInsert(

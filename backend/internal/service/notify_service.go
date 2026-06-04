@@ -8,10 +8,10 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
 	"opensync/pkg/util"
+	"strings"
 	"time"
 )
 

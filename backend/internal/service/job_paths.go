@@ -1,0 +1,61 @@
+package service
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+func parseDstPaths(value interface{}) []string {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case string:
+		raw := strings.TrimSpace(v)
+		if raw == "" {
+			return nil
+		}
+		if strings.HasPrefix(raw, "[") {
+			var paths []string
+			if err := json.Unmarshal([]byte(raw), &paths); err == nil {
+				return cleanPathList(paths)
+			}
+		}
+		return cleanPathList(strings.Split(raw, ":"))
+	case []string:
+		return cleanPathList(v)
+	case []interface{}:
+		paths := make([]string, 0, len(v))
+		for _, item := range v {
+			paths = append(paths, fmt.Sprintf("%v", item))
+		}
+		return cleanPathList(paths)
+	default:
+		return cleanPathList([]string{fmt.Sprintf("%v", v)})
+	}
+}
+
+func encodeDstPaths(paths []string) string {
+	cleaned := cleanPathList(paths)
+	data, err := json.Marshal(cleaned)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+func normalizeDstPathForStorage(value interface{}) string {
+	return encodeDstPaths(parseDstPaths(value))
+}
+
+func cleanPathList(paths []string) []string {
+	cleaned := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		cleaned = append(cleaned, path)
+	}
+	return cleaned
+}

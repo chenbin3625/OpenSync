@@ -1,8 +1,21 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+const webGitkeepPath = fileURLToPath(new URL('../backend/cmd/server/web/.gitkeep', import.meta.url))
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'preserve-go-embed-placeholder',
+      closeBundle() {
+        mkdirSync(fileURLToPath(new URL('../backend/cmd/server/web', import.meta.url)), { recursive: true })
+        writeFileSync(webGitkeepPath, '')
+      },
+    },
+  ],
   server: {
     port: 3000,
     proxy: {

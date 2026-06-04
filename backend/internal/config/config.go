@@ -63,25 +63,25 @@ func GetConfig() *Config {
 		iniMap := readINI("data/config.ini")
 		if opensync, ok := iniMap["opensync"]; ok {
 			if v, ok := opensync["port"]; ok {
-				sCfg.Port, _ = strconv.Atoi(v)
+				sCfg.Port = intConfigValue(v, sCfg.Port, "port")
 			}
 			if v, ok := opensync["expires"]; ok {
-				sCfg.Expires, _ = strconv.Atoi(v)
+				sCfg.Expires = intConfigValue(v, sCfg.Expires, "expires")
 			}
 			if v, ok := opensync["log_level"]; ok {
-				sCfg.LogLevel, _ = strconv.Atoi(v)
+				sCfg.LogLevel = intConfigValue(v, sCfg.LogLevel, "log_level")
 			}
 			if v, ok := opensync["console_level"]; ok {
-				sCfg.ConsoleLevel, _ = strconv.Atoi(v)
+				sCfg.ConsoleLevel = intConfigValue(v, sCfg.ConsoleLevel, "console_level")
 			}
 			if v, ok := opensync["log_save"]; ok {
-				sCfg.LogSave, _ = strconv.Atoi(v)
+				sCfg.LogSave = intConfigValue(v, sCfg.LogSave, "log_save")
 			}
 			if v, ok := opensync["task_save"]; ok {
-				sCfg.TaskSave, _ = strconv.Atoi(v)
+				sCfg.TaskSave = intConfigValue(v, sCfg.TaskSave, "task_save")
 			}
 			if v, ok := opensync["task_timeout"]; ok {
-				sCfg.Timeout, _ = strconv.Atoi(v)
+				sCfg.Timeout = intConfigValue(v, sCfg.Timeout, "task_timeout")
 			}
 		}
 	} else {
@@ -128,6 +128,15 @@ func GetConfig() *Config {
 		Server: sCfg,
 	}
 	return sysConfig
+}
+
+func intConfigValue(value string, fallback int, key string) int {
+	i, err := strconv.Atoi(value)
+	if err != nil {
+		log.Printf("配置项 %s=%q 不是有效整数，将使用默认值 %d", key, value, fallback)
+		return fallback
+	}
+	return i
 }
 
 // readINI parses a simple INI file

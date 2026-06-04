@@ -6,13 +6,13 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"os"
 	"opensync/internal/config"
 	"opensync/internal/handler"
 	"opensync/internal/mapper"
 	"opensync/internal/middleware"
 	"opensync/internal/model"
 	"opensync/internal/service"
+	"os"
 
 	"github.com/gin-gonic/gin"
 )

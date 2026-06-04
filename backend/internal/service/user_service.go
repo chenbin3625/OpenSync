@@ -2,12 +2,12 @@ package service
 
 import (
 	"fmt"
-	"sync"
-	"time"
 	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
 	"opensync/pkg/crypto"
+	"sync"
+	"time"
 )
 
 var (
