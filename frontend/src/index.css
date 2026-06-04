@@ -41,6 +41,211 @@ body,
   margin: 0;
 }
 
+.sync-job-card {
+  height: 100%;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+}
+
+.sync-job-card .ant-card-head {
+  min-height: 46px;
+  padding: 0 14px;
+  border-bottom-color: rgba(15, 23, 42, 0.06);
+}
+
+.sync-job-card .ant-card-head-title {
+  min-width: 0;
+  padding: 11px 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-job-card .ant-card-extra {
+  padding: 10px 0;
+}
+
+.sync-job-card .ant-card-extra .ant-space {
+  gap: 6px !important;
+}
+
+.sync-job-card .ant-tag {
+  margin-inline-end: 0;
+  border-radius: 4px;
+}
+
+.sync-job-card .ant-card-body {
+  padding: 12px 14px;
+}
+
+.sync-job-card .ant-card-actions {
+  border-top-color: rgba(15, 23, 42, 0.06);
+}
+
+.sync-job-card .ant-card-actions > li {
+  margin: 8px 0;
+}
+
+.sync-job-card .ant-card-actions .anticon {
+  color: rgba(15, 23, 42, 0.62);
+  font-size: 16px;
+}
+
+.sync-job-card .ant-card-actions .anticon:hover {
+  color: #1677ff;
+}
+
+.sync-job-descriptions .ant-descriptions-item {
+  padding-bottom: 7px;
+}
+
+.sync-job-descriptions .ant-descriptions-item-label {
+  width: 56px;
+  color: rgba(15, 23, 42, 0.52);
+  white-space: nowrap;
+}
+
+.sync-job-descriptions .ant-descriptions-item-content {
+  min-width: 0;
+  color: rgba(15, 23, 42, 0.76);
+}
+
+.sync-job-descriptions .ant-typography {
+  max-width: 100%;
+}
+
+.task-progress-card .ant-card-head {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.task-progress-card .ant-card-head-title {
+  padding: 8px 0;
+  font-size: 14px;
+}
+
+.task-progress-card .ant-card-extra {
+  padding: 6px 0;
+}
+
+.task-progress-card .ant-card-body {
+  padding: 10px 12px 8px;
+}
+
+.task-progress-card .ant-progress {
+  margin-bottom: 0;
+}
+
+.task-progress-scan {
+  margin-bottom: 8px;
+}
+
+.task-progress-scan-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.task-progress-scan-title,
+.task-progress-metric-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.task-progress-scan-title {
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.task-progress-scan-counts {
+  justify-content: flex-end;
+  font-size: 12px;
+}
+
+.task-progress-metrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin-bottom: 4px;
+}
+
+.task-progress-metric {
+  min-width: 0;
+}
+
+.task-progress-metric-label {
+  margin-bottom: 1px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.task-progress-metric-value {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-progress-tabs {
+  margin-top: 2px;
+}
+
+.task-progress-tabs .ant-tabs-nav {
+  margin-bottom: 4px;
+}
+
+.task-progress-tabs .ant-tabs-tab {
+  padding: 6px 0;
+}
+
+.task-progress-list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.task-progress-file-list .ant-list-item {
+  gap: 8px;
+  padding: 5px 0;
+}
+
+.task-progress-file-list .ant-list-item-meta {
+  align-items: center;
+  min-width: 0;
+}
+
+.task-progress-file-list .ant-list-item-meta-title {
+  margin-bottom: 0;
+  line-height: 20px;
+}
+
+.task-progress-file-list .ant-list-item-meta-description {
+  line-height: 18px;
+}
+
+.task-progress-file-list .ant-tag {
+  margin-inline-end: 0;
+}
+
+.task-progress-pagination {
+  margin-top: 4px;
+  text-align: right;
+}
+
+.task-progress-start-time {
+  font-size: 12px;
+}
+
 .app-logo-mark {
   width: 28px;
   height: 28px;
@@ -155,6 +360,28 @@ body,
   .page-header .ant-space {
     width: 100%;
     flex-wrap: wrap;
+  }
+
+  .task-progress-scan-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .task-progress-scan-counts {
+    justify-content: flex-start;
+  }
+
+  .task-progress-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .task-progress-file-list .ant-list-item {
+    align-items: flex-start;
+  }
+
+  .task-progress-file-list .ant-progress {
+    width: 88px !important;
   }
 
   .ant-drawer-content-wrapper {

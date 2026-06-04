@@ -9,6 +9,7 @@ import (
 	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
+	"path"
 	"runtime"
 	"strings"
 	"sync"
@@ -188,6 +189,23 @@ type CopyItem struct {
 
 	jobTask     *JobTask
 	alistClient *AlistClient
+}
+
+type scanWorkMode int
+
+const (
+	scanWorkCompare scanWorkMode = iota
+	scanWorkMissingDst
+)
+
+type scanWork struct {
+	SrcPath     string
+	DstPath     string
+	SrcRootPath string
+	DstRootPath string
+	FirstDst    bool
+	Mode        scanWorkMode
+	Counted     bool
 }
 
 func (ci *CopyItem) setStatus(status int) {
@@ -378,15 +396,18 @@ type JobTask struct {
 	DoingMu        sync.Mutex
 	Waiting        *copyQueue
 
-	LastWatching atomic.Int64
-	QueueNum     int64
-	ScanFinish   atomic.Bool
-	FirstSync    atomic.Int64
-	BreakFlag    atomic.Bool
-	scanSem      chan struct{}
-	ctx          context.Context
-	cancel       context.CancelFunc
-	copyWG       sync.WaitGroup
+	LastWatching  atomic.Int64
+	QueueNum      int64
+	ScanFinish    atomic.Bool
+	FirstSync     atomic.Int64
+	BreakFlag     atomic.Bool
+	scanSem       chan struct{}
+	scanBranchSem chan struct{}
+	ctx           context.Context
+	cancel        context.CancelFunc
+	copyWG        sync.WaitGroup
+	ScanTotalDirs atomic.Int64
+	ScanDoneDirs  atomic.Int64
 
 	CurrentTasks map[int][]map[string]interface{}
 	CurrentMu    sync.RWMutex
@@ -414,6 +435,7 @@ func newJobTask(taskID int64, jc *JobClient) *JobTask {
 		Waiting:        newCopyQueue(),
 		QueueNum:       0,
 		scanSem:        make(chan struct{}, scanConcurrencyLimit()),
+		scanBranchSem:  make(chan struct{}, scanConcurrencyLimit()),
 		CurrentTasks:   make(map[int][]map[string]interface{}),
 	}
 	jt.ctx, jt.cancel = newTaskContext(config.GetConfig().Server.Timeout)
@@ -464,6 +486,9 @@ func (jt *JobTask) initRuntime() {
 	}
 	if jt.scanSem == nil {
 		jt.scanSem = make(chan struct{}, scanConcurrencyLimit())
+	}
+	if jt.scanBranchSem == nil {
+		jt.scanBranchSem = make(chan struct{}, scanConcurrencyLimit())
 	}
 	if jt.CurrentTasks == nil {
 		jt.CurrentTasks = make(map[int][]map[string]interface{})
@@ -538,6 +563,53 @@ func (jt *JobTask) releaseScanSlot() {
 	<-jt.scanSem
 }
 
+func (jt *JobTask) tryAcquireScanBranchSlot() bool {
+	jt.initRuntime()
+	if jt.isBreak() {
+		return false
+	}
+	select {
+	case jt.scanBranchSem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (jt *JobTask) releaseScanBranchSlot() {
+	<-jt.scanBranchSem
+}
+
+func (jt *JobTask) beginScanWork(work scanWork) {
+	if !work.Counted {
+		jt.ScanTotalDirs.Add(1)
+	}
+}
+
+func (jt *JobTask) addChildScanWork(children *[]scanWork, work scanWork) {
+	work.Counted = true
+	jt.ScanTotalDirs.Add(1)
+	*children = append(*children, work)
+}
+
+func (jt *JobTask) finishScanWork() {
+	jt.ScanDoneDirs.Add(1)
+}
+
+func (jt *JobTask) scanProgress() map[string]int64 {
+	total := jt.ScanTotalDirs.Load()
+	scanned := jt.ScanDoneDirs.Load()
+	remaining := total - scanned
+	if remaining < 0 {
+		remaining = 0
+	}
+	return map[string]int64{
+		"scannedDirs":   scanned,
+		"remainingDirs": remaining,
+		"totalDirs":     total,
+	}
+}
+
 // GetCurrent returns real-time task progress
 func (jt *JobTask) GetCurrent() map[string]interface{} {
 	now := time.Now().Unix()
@@ -597,6 +669,7 @@ func (jt *JobTask) GetCurrent() map[string]interface{} {
 
 	result := map[string]interface{}{
 		"scanFinish": jt.ScanFinish.Load(),
+		"scan":       jt.scanProgress(),
 		"doingTask":  currentTasks[1],
 		"createTime": int(jt.CreateTime),
 		"duration":   int(float64(now) - jt.CreateTime),
@@ -848,7 +921,7 @@ func (jt *JobTask) finishedAggregateForStatus(status int) (int, int64) {
 }
 
 func (jt *JobTask) sync() {
-	srcPath := normalizeDirPath(fmt.Sprintf("%v", jt.Job["srcPath"]))
+	srcPaths := parseSrcPaths(jt.Job["srcPath"])
 	jobExclude := jt.Job["exclude"]
 
 	var spec *ignore.GitIgnore
@@ -861,11 +934,36 @@ func (jt *JobTask) sync() {
 	}
 
 	dstPaths := parseDstPaths(jt.Job["dstPath"])
-	for i, dstItem := range dstPaths {
-		dstItem = normalizeDirPath(dstItem)
-		jt.syncWithHave(srcPath, dstItem, spec, srcPath, dstItem, i == 0)
+	hasMultipleSrc := len(srcPaths) > 1
+	for _, srcItem := range srcPaths {
+		srcItem = normalizeDirPath(srcItem)
+		for i, dstItem := range dstPaths {
+			dstItem = normalizeDirPath(dstItem)
+			resolvedDstPath := dstPathForSrcSelection(dstItem, srcItem, hasMultipleSrc)
+			jt.runScanWork(scanWork{
+				SrcPath:     srcItem,
+				DstPath:     resolvedDstPath,
+				SrcRootPath: srcItem,
+				DstRootPath: resolvedDstPath,
+				FirstDst:    i == 0,
+				Mode:        scanWorkCompare,
+			}, spec)
+		}
 	}
 	jt.ScanFinish.Store(true)
+}
+
+func dstPathForSrcSelection(dstPath, srcPath string, hasMultipleSrc bool) string {
+	dstPath = normalizeDirPath(dstPath)
+	if !hasMultipleSrc {
+		return dstPath
+	}
+
+	base := path.Base(strings.TrimSuffix(srcPath, "/"))
+	if base == "." || base == "/" || base == "" {
+		return dstPath
+	}
+	return normalizeDirPath(dstPath + base)
 }
 
 func normalizeDirPath(path string) string {
@@ -1036,80 +1134,150 @@ func (jt *JobTask) listSrcAndDst(srcPath, dstPath string, spec *ignore.GitIgnore
 	return srcFiles, dstFiles, nil
 }
 
-func (jt *JobTask) syncWithHave(srcPath, dstPath string, spec *ignore.GitIgnore, srcRootPath, dstRootPath string, firstDst bool) {
+func (jt *JobTask) runScanWork(work scanWork, spec *ignore.GitIgnore) {
+	if work.Mode == scanWorkMissingDst {
+		jt.syncWithoutHave(work, spec)
+		return
+	}
+	jt.syncWithHave(work, spec)
+}
+
+func (jt *JobTask) runChildScanWorks(children []scanWork, spec *ignore.GitIgnore) {
+	if len(children) == 0 {
+		return
+	}
+
+	var wg sync.WaitGroup
+	for _, child := range children {
+		child := child
+		if jt.tryAcquireScanBranchSlot() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer jt.releaseScanBranchSlot()
+				jt.runScanWork(child, spec)
+			}()
+			continue
+		}
+		jt.runScanWork(child, spec)
+	}
+	wg.Wait()
+}
+
+func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
+	jt.beginScanWork(work)
 	if jt.isBreak() {
+		jt.finishScanWork()
 		return
 	}
 
-	srcFiles, dstFiles, err := jt.listSrcAndDst(srcPath, dstPath, spec, srcRootPath, dstRootPath, firstDst)
+	srcFiles, dstFiles, err := jt.listSrcAndDst(work.SrcPath, work.DstPath, spec, work.SrcRootPath, work.DstRootPath, work.FirstDst)
 	if err != nil {
+		jt.finishScanWork()
 		return
 	}
 
+	children := make([]scanWork, 0)
 	for key, srcVal := range srcFiles {
 		if jt.isBreak() {
-			return
+			break
 		}
 		if !strings.HasSuffix(key, "/") {
 			// File
 			dstVal, exists := dstFiles[key]
 			if !exists || fileChanged(srcVal, dstVal) {
-				jt.copyFile(srcPath, dstPath, key, fileSize(srcVal))
+				jt.copyFile(work.SrcPath, work.DstPath, key, fileSize(srcVal))
 			}
 		} else {
 			// Directory
 			if _, exists := dstFiles[key]; !exists {
-				jt.syncWithoutHave(srcPath+key, dstPath+key, spec, srcRootPath, dstRootPath, firstDst)
+				jt.addChildScanWork(&children, scanWork{
+					SrcPath:     work.SrcPath + key,
+					DstPath:     work.DstPath + key,
+					SrcRootPath: work.SrcRootPath,
+					DstRootPath: work.DstRootPath,
+					FirstDst:    work.FirstDst,
+					Mode:        scanWorkMissingDst,
+				})
 			} else {
-				jt.syncWithHave(srcPath+key, dstPath+key, spec, srcRootPath, dstRootPath, firstDst)
+				jt.addChildScanWork(&children, scanWork{
+					SrcPath:     work.SrcPath + key,
+					DstPath:     work.DstPath + key,
+					SrcRootPath: work.SrcRootPath,
+					DstRootPath: work.DstRootPath,
+					FirstDst:    work.FirstDst,
+					Mode:        scanWorkCompare,
+				})
 			}
 		}
+	}
+
+	if jt.isBreak() {
+		jt.finishScanWork()
+		jt.runChildScanWorks(children, spec)
+		return
 	}
 
 	if toInt(jt.Job["method"]) == 1 {
 		for dstKey, dstVal := range dstFiles {
 			if _, exists := srcFiles[dstKey]; !exists {
-				jt.delFile(dstPath, dstKey, fileSize(dstVal))
+				jt.delFile(work.DstPath, dstKey, fileSize(dstVal))
 			}
 		}
 	}
+	jt.finishScanWork()
+	jt.runChildScanWorks(children, spec)
 }
 
-func (jt *JobTask) syncWithoutHave(srcPath, dstPath string, spec *ignore.GitIgnore, srcRootPath, dstRootPath string, firstDst bool) {
+func (jt *JobTask) syncWithoutHave(work scanWork, spec *ignore.GitIgnore) {
+	jt.beginScanWork(work)
 	if jt.isBreak() {
+		jt.finishScanWork()
 		return
 	}
 
 	status := 2
 	var errMsg *string
 	scanIntervalT := toInt(jt.Job["scanIntervalT"])
-	err := jt.AlistClient.MkdirContext(jt.context(), dstPath, scanIntervalT)
+	err := jt.AlistClient.MkdirContext(jt.context(), work.DstPath, scanIntervalT)
 	if err != nil {
 		status = 7
 		e := err.Error()
 		errMsg = &e
 	}
 
-	jt.CopyHook(srcPath, dstPath, "", nil, "", status, errMsg, 1, 0, time.Now().Unix())
+	jt.CopyHook(work.SrcPath, work.DstPath, "", nil, "", status, errMsg, 1, 0, time.Now().Unix())
 	if status != 2 {
+		jt.finishScanWork()
 		return
 	}
 
-	srcFiles, err := jt.listDir(srcPath, firstDst, spec, srcRootPath, true)
+	srcFiles, err := jt.listDir(work.SrcPath, work.FirstDst, spec, work.SrcRootPath, true)
 	if err != nil {
+		jt.finishScanWork()
 		return
 	}
 
+	children := make([]scanWork, 0)
 	for key := range srcFiles {
 		if jt.isBreak() {
 			break
 		}
 		if strings.HasSuffix(key, "/") {
-			jt.syncWithoutHave(srcPath+key, dstPath+key, spec, srcRootPath, dstRootPath, firstDst)
+			jt.addChildScanWork(&children, scanWork{
+				SrcPath:     work.SrcPath + key,
+				DstPath:     work.DstPath + key,
+				SrcRootPath: work.SrcRootPath,
+				DstRootPath: work.DstRootPath,
+				FirstDst:    work.FirstDst,
+				Mode:        scanWorkMissingDst,
+			})
 		} else {
-			jt.copyFile(srcPath, dstPath, key, fileSize(srcFiles[key]))
+			jt.copyFile(work.SrcPath, work.DstPath, key, fileSize(srcFiles[key]))
 		}
 	}
+	jt.finishScanWork()
+	jt.runChildScanWorks(children, spec)
 }
 
 func fileChanged(srcVal, dstVal interface{}) bool {

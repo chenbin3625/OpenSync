@@ -101,6 +101,9 @@ func CleanJobInput(job map[string]interface{}) {
 		excludeStr := fmt.Sprintf("%v", job["exclude"])
 		job["exclude"] = normalizeExclude(excludeStr)
 	}
+	if job["srcPath"] != nil {
+		job["srcPath"] = normalizeSrcPathForStorage(job["srcPath"])
+	}
 	if job["dstPath"] != nil {
 		job["dstPath"] = normalizeDstPathForStorage(job["dstPath"])
 	}

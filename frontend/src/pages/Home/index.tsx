@@ -6,8 +6,7 @@ import {
 } from 'antd';
 import {
   PlusOutlined, PlayCircleOutlined, DeleteOutlined,
-  CaretRightOutlined, FolderOpenOutlined, FolderOutlined,
-  ClockCircleOutlined, CloudServerOutlined, EditOutlined, QuestionCircleOutlined,
+  CaretRightOutlined, EditOutlined, QuestionCircleOutlined,
 } from '@ant-design/icons';
 import { jobGetJob, jobPost, jobPut, jobDelete } from '../../api/job';
 import { alistGet, alistGetPath } from '../../api/alist';
@@ -113,7 +112,10 @@ const formatSchedulePlan = (values: ScheduleValues) => {
 const compactItemStyle = { marginBottom: 12 };
 const compactDividerStyle = { margin: '8px 0 12px' };
 
-const parseJobDstPaths = (value: unknown): string[] => {
+const parseJobPathList = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
   const raw = String(value ?? '').trim();
   if (!raw) return [];
   try {
@@ -121,17 +123,21 @@ const parseJobDstPaths = (value: unknown): string[] => {
     if (Array.isArray(parsed)) {
       return parsed.map((item) => String(item).trim()).filter(Boolean);
     }
-  } catch {
-    // Legacy jobs used colon-separated target paths.
-  }
-  return raw.split(':').map((item) => item.trim()).filter(Boolean);
+  } catch { /* plain single path */ }
+  return [raw];
 };
 
-const encodeJobDstPaths = (paths: string[]) => JSON.stringify(paths.map((item) => item.trim()).filter(Boolean));
+const normalizeFormPaths = (value: string | string[] | undefined): string[] => {
+  const paths = Array.isArray(value) ? value : [value];
+  return paths.map((item) => String(item ?? '').trim()).filter(Boolean);
+};
 
-const formatJobDstPaths = (value: unknown) => {
-  const paths = parseJobDstPaths(value);
-  return paths.length > 0 ? paths.join(' → ') : '';
+const parseJobSrcPaths = parseJobPathList;
+const parseJobDstPaths = parseJobPathList;
+
+const formatJobPaths = (value: unknown, separator = '、') => {
+  const paths = parseJobPathList(value);
+  return paths.length > 0 ? paths.join(separator) : '';
 };
 
 const defaultExclude = `# macOS
@@ -365,6 +371,7 @@ export default function Home() {
       enable: job.enable === 1,
       useCacheS: job.useCacheS === 1 || job.useCacheS === true,
       useCacheT: job.useCacheT === 1 || job.useCacheT === true,
+      srcPath: parseJobSrcPaths(job.srcPath),
       dstPath: parseJobDstPaths(job.dstPath),
       second: job.second || defaultCronFields.second,
       minute: job.minute || defaultCronFields.minute,
@@ -381,11 +388,13 @@ export default function Home() {
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields() as JobFormValues;
-      const dstPaths = Array.isArray(values.dstPath) ? values.dstPath : [values.dstPath];
+      const srcPaths = normalizeFormPaths(values.srcPath);
+      const dstPaths = normalizeFormPaths(values.dstPath);
       const jobData: Record<string, unknown> = {
         ...(editingJob ? { id: editingJob.id } : {}),
         ...values,
-        dstPath: encodeJobDstPaths(dstPaths.filter(Boolean)),
+        srcPath: srcPaths,
+        dstPath: dstPaths,
         enable: values.enable ? 1 : 0,
         useCacheS: values.useCacheS ? 1 : 0,
         useCacheT: values.useCacheT ? 1 : 0,
@@ -500,6 +509,7 @@ export default function Home() {
                 <Col xs={24} md={12} key={job.id}>
                   <Card
                     hoverable
+                    className="sync-job-card"
                     title={job.remark || `同步任务 #${job.id}`}
                     extra={
                       <Space>
@@ -536,19 +546,19 @@ export default function Home() {
                       </Popconfirm>,
                     ]}
                   >
-                    <Descriptions column={1} size="small">
-                      <Descriptions.Item label={<><CloudServerOutlined /> 引擎</>}>
+                    <Descriptions className="sync-job-descriptions" column={1} size="small">
+                      <Descriptions.Item label="引擎">
                         <Text type="secondary">{getAlistName(job.alistId)}</Text>
                       </Descriptions.Item>
-                      <Descriptions.Item label={<><FolderOutlined /> 源目录</>}>
-                        <Text ellipsis={{ tooltip: job.srcPath }}>{job.srcPath}</Text>
+                      <Descriptions.Item label="源目录">
+                        <Text ellipsis={{ tooltip: formatJobPaths(job.srcPath) }}>{formatJobPaths(job.srcPath)}</Text>
                       </Descriptions.Item>
-                      <Descriptions.Item label={<><FolderOpenOutlined /> 目标</>}>
-                        <Text ellipsis={{ tooltip: formatJobDstPaths(job.dstPath) }}>
-                          {formatJobDstPaths(job.dstPath)}
+                      <Descriptions.Item label="目标">
+                        <Text ellipsis={{ tooltip: formatJobPaths(job.dstPath, ' → ') }}>
+                          {formatJobPaths(job.dstPath, ' → ')}
                         </Text>
                       </Descriptions.Item>
-                      <Descriptions.Item label={<><ClockCircleOutlined /> 调度</>}>
+                      <Descriptions.Item label="调度">
                         <Text type="secondary">{formatSchedule(job)}</Text>
                       </Descriptions.Item>
                       <Descriptions.Item label="缓存">
@@ -609,6 +619,11 @@ export default function Home() {
                   treeData={srcTreeData}
                   loadData={(node) => onLoadSrcData(node as TreeNode)}
                   treeDefaultExpandAll
+                  multiple
+                  treeCheckable
+                  showCheckedStrategy={TreeSelect.SHOW_PARENT}
+                  maxTagCount="responsive"
+                  allowClear
                   showSearch
                   treeNodeFilterProp="title"
                   styles={{ popup: { root: { maxHeight: 300, overflow: 'auto' } } }}
@@ -625,6 +640,8 @@ export default function Home() {
                   loadData={(node) => onLoadDstData(node as TreeNode)}
                   treeDefaultExpandAll
                   multiple
+                  maxTagCount="responsive"
+                  allowClear
                   showSearch
                   treeNodeFilterProp="title"
                   styles={{ popup: { root: { maxHeight: 300, overflow: 'auto' } } }}

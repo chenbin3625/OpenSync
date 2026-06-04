@@ -255,3 +255,42 @@ func TestFinalTaskStatusKeepsManualBreakAsStopped(t *testing.T) {
 		t.Fatalf("finalTaskStatus() = %d, want stopped status 7", status)
 	}
 }
+
+func TestScanProgressTracksDiscoveredAndFinishedDirectories(t *testing.T) {
+	jt := &JobTask{}
+
+	jt.beginScanWork(scanWork{})
+	progress := jt.scanProgress()
+	if progress["totalDirs"] != 1 || progress["scannedDirs"] != 0 || progress["remainingDirs"] != 1 {
+		t.Fatalf("scanProgress after root start = %#v, want total=1 scanned=0 remaining=1", progress)
+	}
+
+	children := make([]scanWork, 0)
+	jt.addChildScanWork(&children, scanWork{Mode: scanWorkCompare})
+	progress = jt.scanProgress()
+	if progress["totalDirs"] != 2 || progress["scannedDirs"] != 0 || progress["remainingDirs"] != 2 {
+		t.Fatalf("scanProgress after child discovery = %#v, want total=2 scanned=0 remaining=2", progress)
+	}
+
+	jt.finishScanWork()
+	progress = jt.scanProgress()
+	if progress["totalDirs"] != 2 || progress["scannedDirs"] != 1 || progress["remainingDirs"] != 1 {
+		t.Fatalf("scanProgress after root finish = %#v, want total=2 scanned=1 remaining=1", progress)
+	}
+}
+
+func TestRunChildScanWorksFinishesCountedChildrenAfterBreak(t *testing.T) {
+	jt := &JobTask{}
+	jt.initRuntime()
+
+	children := make([]scanWork, 0)
+	jt.addChildScanWork(&children, scanWork{Mode: scanWorkCompare})
+	jt.requestBreak()
+
+	jt.runChildScanWorks(children, nil)
+
+	progress := jt.scanProgress()
+	if progress["totalDirs"] != 1 || progress["scannedDirs"] != 1 || progress["remainingDirs"] != 0 {
+		t.Fatalf("scanProgress after break child finish = %#v, want total=1 scanned=1 remaining=0", progress)
+	}
+}

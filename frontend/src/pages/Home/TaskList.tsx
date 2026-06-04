@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Row, Col, Statistic, Empty, Typography, Tooltip, Spin, Pagination, Tabs, List } from 'antd';
-import { StopOutlined, ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined } from '@ant-design/icons';
+import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typography, Tooltip, Spin, Pagination, Tabs, List } from 'antd';
+import { StopOutlined, ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { jobGetTask, jobGetTaskCurrent, jobDeleteTask, jobPut } from '../../api/job';
 import dayjs from 'dayjs';
 import type { CurrentTaskData, CurrentTaskView, TaskItem, TaskRecord } from '../../types';
@@ -252,8 +252,9 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
           description={<Text type="secondary">暂无{statusTabs.find(t => t.key === activeTab)?.label}任务</Text>}
         />
       ) : (
-        <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+        <div className="task-progress-list">
           <List
+            className="task-progress-file-list"
             size="small"
             dataSource={pagedTabTaskList}
             renderItem={(t, i) => {
@@ -306,6 +307,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
       )}
       {tabTaskList.length > TAB_TASK_PAGE_SIZE && (
         <Pagination
+          className="task-progress-pagination"
           current={tabTaskPage}
           pageSize={TAB_TASK_PAGE_SIZE}
           total={tabTaskList.length}
@@ -320,6 +322,42 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
   const displayDuration = currentTask
     ? Math.max(currentTask.duration || 0, currentTask.createTime ? nowTick - currentTask.createTime : 0)
     : 0;
+  const scanProgress = currentTask?.scan;
+  const progressMetrics = currentTask ? [
+    {
+      key: 'duration',
+      label: '耗时',
+      icon: <ClockCircleOutlined />,
+      value: formatDuration(displayDuration),
+    },
+    {
+      key: 'speedAvg',
+      label: '平均速度',
+      icon: <DashboardOutlined />,
+      value: currentTask.speedAvg > 0 ? `${formatSize(currentTask.speedAvg)}/s` : '--',
+    },
+    {
+      key: 'speed',
+      label: '瞬时速度',
+      icon: <ThunderboltOutlined />,
+      value: currentTask.speed > 0 ? `${formatSize(currentTask.speed)}/s` : '--',
+    },
+    {
+      key: 'remainTime',
+      label: '预计剩余',
+      value: currentTask.remainTime > 0 ? formatDuration(currentTask.remainTime) : '--',
+    },
+    {
+      key: 'doneSize',
+      label: '已传输',
+      value: formatSize(currentTask.doneSize || 0),
+    },
+    {
+      key: 'remainSize',
+      label: '剩余',
+      value: formatSize(currentTask.remainSize || 0),
+    },
+  ] : [];
 
   return (
     <div>
@@ -333,6 +371,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
 
       {currentTask && (
         <Card
+          className="task-progress-card"
           size="small"
           title="实时进度"
           extra={(
@@ -340,50 +379,34 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
               {currentTask.scanFinish ? '扫描完成，同步中' : '进行中'}
             </Tag>
           )}
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 12 }}
         >
-          <Row gutter={[16, 12]}>
-            <Col xs={8} sm={4}>
-              <Statistic
-                title={<Space size={4}><ClockCircleOutlined />耗时</Space>}
-                value={formatDuration(displayDuration)}
-              />
-            </Col>
-            <Col xs={8} sm={4}>
-              <Statistic
-                title={<Space size={4}><DashboardOutlined />平均速度</Space>}
-                value={currentTask.speedAvg > 0 ? formatSize(currentTask.speedAvg) : '--'}
-                suffix={currentTask.speedAvg > 0 ? '/s' : ''}
-              />
-            </Col>
-            <Col xs={8} sm={4}>
-              <Statistic
-                title={<Space size={4}><ThunderboltOutlined />瞬时速度</Space>}
-                value={currentTask.speed > 0 ? formatSize(currentTask.speed) : '--'}
-                suffix={currentTask.speed > 0 ? '/s' : ''}
-              />
-            </Col>
-            <Col xs={8} sm={4}>
-              <Statistic
-                title="预计剩余"
-                value={currentTask.remainTime > 0 ? formatDuration(currentTask.remainTime) : '--'}
-              />
-            </Col>
-            <Col xs={8} sm={4}>
-              <Statistic
-                title="已传输"
-                value={formatSize(currentTask.doneSize || 0)}
-              />
-            </Col>
-            <Col xs={8} sm={4}>
-              <Statistic
-                title="剩余"
-                value={formatSize(currentTask.remainSize || 0)}
-              />
-            </Col>
-          </Row>
+          {scanProgress && (
+            <div className="task-progress-scan">
+              <div className="task-progress-scan-header">
+                <Text strong className="task-progress-scan-title"><FolderOpenOutlined /> 目录扫描</Text>
+                <Space size={10} wrap className="task-progress-scan-counts">
+                  <Text type="secondary">{scanProgress.totalDirs} 个目录</Text>
+                </Space>
+              </div>
+            </div>
+          )}
+
+          <div className="task-progress-metrics">
+            {progressMetrics.map((item) => (
+              <div className="task-progress-metric" key={item.key}>
+                <Text type="secondary" className="task-progress-metric-label">
+                  {item.icon}
+                  {item.label}
+                </Text>
+                <Text strong className="task-progress-metric-value">{item.value}</Text>
+              </div>
+            ))}
+          </div>
 
           <Tabs
+            className="task-progress-tabs"
+            size="small"
             activeKey={String(activeTab)}
             onChange={(key) => handleTabChange(Number(key))}
             items={statusTabs.map((tab) => ({
@@ -392,7 +415,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
               children: renderCurrentTaskItems(),
             }))}
           />
-          <Text type="secondary">
+          <Text type="secondary" className="task-progress-start-time">
             开始: {currentTask.createTime ? dayjs.unix(currentTask.createTime).format('HH:mm:ss') : '--'}
           </Text>
         </Card>

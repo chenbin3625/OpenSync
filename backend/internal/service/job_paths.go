@@ -6,7 +6,15 @@ import (
 	"strings"
 )
 
+func parseSrcPaths(value interface{}) []string {
+	return parsePathList(value)
+}
+
 func parseDstPaths(value interface{}) []string {
+	return parsePathList(value)
+}
+
+func parsePathList(value interface{}) []string {
 	switch v := value.(type) {
 	case nil:
 		return nil
@@ -21,7 +29,7 @@ func parseDstPaths(value interface{}) []string {
 				return cleanPathList(paths)
 			}
 		}
-		return cleanPathList(strings.Split(raw, ":"))
+		return cleanPathList([]string{raw})
 	case []string:
 		return cleanPathList(v)
 	case []interface{}:
@@ -35,7 +43,7 @@ func parseDstPaths(value interface{}) []string {
 	}
 }
 
-func encodeDstPaths(paths []string) string {
+func encodePathList(paths []string) string {
 	cleaned := cleanPathList(paths)
 	data, err := json.Marshal(cleaned)
 	if err != nil {
@@ -44,8 +52,12 @@ func encodeDstPaths(paths []string) string {
 	return string(data)
 }
 
+func normalizeSrcPathForStorage(value interface{}) string {
+	return encodePathList(parseSrcPaths(value))
+}
+
 func normalizeDstPathForStorage(value interface{}) string {
-	return encodeDstPaths(parseDstPaths(value))
+	return encodePathList(parseDstPaths(value))
 }
 
 func cleanPathList(paths []string) []string {

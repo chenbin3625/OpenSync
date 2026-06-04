@@ -58,7 +58,7 @@ export interface JobItem {
 
 export interface JobFormValues {
   alistId: number;
-  srcPath: string;
+  srcPath: string | string[];
   dstPath: string | string[];
   remark?: string | null;
   method: number;
@@ -114,8 +114,15 @@ export interface TaskItem {
 
 export type TaskNumKey = 'wait' | 'running' | 'success' | 'fail' | 'other';
 
+export interface ScanProgress {
+  scannedDirs: number;
+  remainingDirs: number;
+  totalDirs: number;
+}
+
 export interface CurrentTaskData {
   scanFinish: boolean;
+  scan?: ScanProgress;
   doingTask: TaskItem[];
   createTime: number;
   duration: number;
