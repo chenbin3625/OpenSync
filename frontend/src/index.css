@@ -41,6 +41,20 @@ body,
   margin: 0;
 }
 
+.task-detail-filters {
+  flex: 1 1 720px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.task-detail-title {
+  flex: 0 0 auto;
+}
+
+.task-detail-title h2 {
+  white-space: nowrap;
+}
+
 .sync-job-card {
   height: 100%;
   border: 1px solid rgba(15, 23, 42, 0.08);
@@ -210,35 +224,60 @@ body,
 }
 
 .task-progress-list {
-  max-height: 180px;
-  overflow-y: auto;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
-.task-progress-file-list .ant-list-item {
-  gap: 8px;
-  padding: 5px 0;
+.task-progress-file-rows {
+  min-width: 860px;
 }
 
-.task-progress-file-list .ant-list-item-meta {
+.task-progress-file-row {
+  display: grid;
+  grid-template-columns: 64px minmax(150px, 1.1fr) minmax(150px, 1fr) minmax(150px, 1fr) 86px 128px;
   align-items: center;
+  gap: 8px;
   min-width: 0;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
 }
 
-.task-progress-file-list .ant-list-item-meta-title {
-  margin-bottom: 0;
-  line-height: 20px;
+.task-progress-file-row:last-child {
+  border-bottom: 0;
 }
 
-.task-progress-file-list .ant-list-item-meta-description {
-  line-height: 18px;
-}
-
-.task-progress-file-list .ant-tag {
+.task-progress-file-row .ant-tag {
+  width: max-content;
+  max-width: 60px;
   margin-inline-end: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-progress-file-name,
+.task-progress-file-path,
+.task-progress-file-error,
+.task-progress-file-size,
+.task-progress-file-state {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-progress-file-name {
+  font-weight: 500;
+}
+
+.task-progress-file-state .ant-progress {
+  width: 118px;
 }
 
 .task-progress-pagination {
-  margin-top: 4px;
+  margin-top: 6px;
   text-align: right;
 }
 
@@ -362,6 +401,16 @@ body,
     flex-wrap: wrap;
   }
 
+  .task-detail-filters {
+    justify-content: flex-start;
+  }
+
+  .task-detail-filters .ant-input-search,
+  .task-detail-filters .ant-select {
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+
   .task-progress-scan-header {
     align-items: flex-start;
     flex-direction: column;
@@ -376,11 +425,16 @@ body,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .task-progress-file-list .ant-list-item {
-    align-items: flex-start;
+  .task-progress-file-rows {
+    min-width: 760px;
   }
 
-  .task-progress-file-list .ant-progress {
+  .task-progress-file-row {
+    grid-template-columns: 56px minmax(130px, 1fr) minmax(120px, 1fr) minmax(120px, 1fr) 74px 96px;
+    gap: 6px;
+  }
+
+  .task-progress-file-state .ant-progress {
     width: 88px !important;
   }
 

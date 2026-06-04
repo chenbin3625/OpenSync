@@ -52,6 +52,9 @@ func GetJob(c *gin.Context) {
 			"pageNum":  c.Query("pageNum"),
 			"status":   c.Query("status"),
 			"type":     c.Query("type"),
+			"isPath":   c.Query("isPath"),
+			"hasError": c.Query("hasError"),
+			"keyword":  c.Query("keyword"),
 		}
 		// Remove empty params
 		for k, v := range req {

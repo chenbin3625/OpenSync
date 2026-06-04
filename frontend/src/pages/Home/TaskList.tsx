@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typography, Tooltip, Spin, Pagination, Tabs, List } from 'antd';
+import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
+import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typography, Tooltip, Spin, Pagination, Tabs } from 'antd';
 import { StopOutlined, ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { jobGetTask, jobGetTaskCurrent, jobDeleteTask, jobPut } from '../../api/job';
 import dayjs from 'dayjs';
@@ -36,7 +36,7 @@ function formatSize(bytes: number): string {
 }
 
 const typeNames: Record<number, string> = { 0: '复制', 1: '删除', 2: '移动' };
-const TAB_TASK_PAGE_SIZE = 10;
+const TAB_TASK_PAGE_SIZE = 20;
 
 const statusColors: Record<number, string> = {
   0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
@@ -61,6 +61,41 @@ function getTaskCreateTime(task: TaskItem): number {
   return Number.isFinite(createTime) ? createTime : 0;
 }
 
+function displayText(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '--';
+  return String(value);
+}
+
+function getTaskDisplayName(task: TaskItem): string {
+  if (task.fileName) return task.fileName;
+  const path = task.dstPath || task.srcPath || '';
+  if (!path) return '--';
+  const cleanPath = path.replace(/\/+$/, '');
+  return cleanPath.split('/').pop() || cleanPath;
+}
+
+function TaskInlineText({
+  value,
+  tooltip,
+  type,
+  className,
+}: {
+  value: string | number | null | undefined;
+  tooltip?: ReactNode;
+  type?: 'secondary' | 'danger';
+  className?: string;
+}) {
+  const text = displayText(value);
+  if (text === '--') return <Text type="secondary" className={className}>--</Text>;
+  return (
+    <Tooltip title={tooltip || text}>
+      <Text type={type} ellipsis className={className}>
+        {text}
+      </Text>
+    </Tooltip>
+  );
+}
+
 function isCurrentTaskData(data: CurrentTaskData | TaskItem[] | null): data is CurrentTaskData {
   return !!data && !Array.isArray(data) && Array.isArray(data.doingTask);
 }
@@ -70,7 +105,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
   const [list, setList] = useState<TaskRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [currentTask, setCurrentTask] = useState<CurrentTaskView | null>(null);
   const prevTaskRef = useRef<CurrentTaskView | null>(null);
@@ -79,6 +114,13 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
   const [tabLoading, setTabLoading] = useState(false);
   const [tabTaskPage, setTabTaskPage] = useState(1);
   const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
+  const activeTabRef = useRef(activeTab);
+  const tabRequestRef = useRef(0);
+  const lastLoadedTabRef = useRef<{ status: number; taskCreateTime?: number } | null>(null);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
 
   /** 计算速度与剩余信息 */
   const calcProgress = useCallback((cur: CurrentTaskData) => {
@@ -138,23 +180,38 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
         setCurrentTask(null);
         prevTaskRef.current = null;
       }
-    } catch { setCurrentTask(null); prevTaskRef.current = null; }
+    } catch { /* keep the last visible realtime snapshot on transient polling errors */ }
   }, [calcProgress, jobId]);
 
   /** 获取 Tab 对应状态的任务列表 */
-  const fetchTabTasks = useCallback(async (status: number, task: CurrentTaskView | null) => {
+  const fetchTabTasks = useCallback(async (status: number, task: CurrentTaskView | null, showLoading = false) => {
     if (!jobId || !task) return;
+    const requestID = ++tabRequestRef.current;
+    if (showLoading) {
+      setTabTaskList([]);
+      setTabLoading(true);
+    }
     // 运行中 Tab 直接用 doingTask，不请求后端
     if (status === 1) {
-      setTabTaskList(task.doingTask || []);
+      if (activeTabRef.current === status) {
+        setTabTaskList(task.doingTask || []);
+        setTabLoading(false);
+      }
       return;
     }
-    setTabLoading(true);
     try {
       const res = await jobGetTaskCurrent({ id: jobId, status });
-      setTabTaskList(Array.isArray(res.data) ? res.data : []);
-    } catch { setTabTaskList([]); }
-    setTabLoading(false);
+      if (activeTabRef.current === status && requestID === tabRequestRef.current) {
+        setTabTaskList(Array.isArray(res.data) ? res.data : []);
+      }
+    } catch {
+      if (showLoading && activeTabRef.current === status && requestID === tabRequestRef.current) {
+        setTabTaskList([]);
+      }
+    }
+    if (activeTabRef.current === status && requestID === tabRequestRef.current) {
+      setTabLoading(false);
+    }
   }, [jobId]);
 
   const handleTabChange = (status: number) => {
@@ -193,9 +250,19 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
   useEffect(() => {
     if (!currentTask) {
       setTabTaskList([]);
+      setTabLoading(false);
+      lastLoadedTabRef.current = null;
       return;
     }
-    fetchTabTasks(activeTab, currentTask);
+    const lastLoadedTab = lastLoadedTabRef.current;
+    const showLoading = !lastLoadedTab ||
+      lastLoadedTab.status !== activeTab ||
+      lastLoadedTab.taskCreateTime !== currentTask.createTime;
+    lastLoadedTabRef.current = {
+      status: activeTab,
+      taskCreateTime: currentTask.createTime,
+    };
+    fetchTabTasks(activeTab, currentTask, showLoading);
   }, [activeTab, currentTask, fetchTabTasks]);
 
   const handleDeleteTask = async (taskId: number) => {
@@ -245,7 +312,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
   ];
 
   const renderCurrentTaskItems = () => (
-    <Spin spinning={tabLoading} size="small">
+    <Spin spinning={tabLoading && tabTaskList.length === 0} size="small">
       {tabTaskList.length === 0 && !tabLoading ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -253,65 +320,63 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
         />
       ) : (
         <div className="task-progress-list">
-          <List
-            className="task-progress-file-list"
-            size="small"
-            dataSource={pagedTabTaskList}
-            renderItem={(t, i) => {
-              let name = t.fileName || '';
-              const path = t.dstPath || t.srcPath || '';
-              if (!name && path) {
-                const cleanPath = path.replace(/\/+$/, '');
-                name = cleanPath.split('/').pop() || cleanPath;
-              }
+          <div className="task-progress-file-rows">
+            {pagedTabTaskList.map((t, i) => {
+              const name = getTaskDisplayName(t);
+              const srcPath = displayText(t.srcPath);
+              const dstPath = displayText(t.dstPath);
+              const tooltip = (
+                <div>
+                  <div>文件: {name}</div>
+                  <div>来源: {srcPath}</div>
+                  <div>目标: {dstPath}</div>
+                </div>
+              );
+              const rowKey = `${t.id || t.fileName || t.dstPath || t.srcPath || 'task'}_${i}`;
 
               return (
-                <List.Item key={t.fileName + '_' + i}>
-                  <List.Item.Meta
-                    title={(
-                      <Space>
-                        <Tag color={t.type === 1 ? 'red' : t.type === 2 ? 'orange' : 'blue'}>
-                          {typeNames[t.type ?? 0] || '复制'}
-                        </Tag>
-                        <Tooltip title={<div>{t.dstPath && <div>目标: {t.dstPath}</div>}{t.srcPath && <div>来源: {t.srcPath}</div>}</div>}>
-                          <Text ellipsis>{name || '--'}</Text>
-                        </Tooltip>
-                      </Space>
-                    )}
-                    description={path && (
-                      <Tooltip title={path}>
-                        <Text type="secondary" ellipsis>{path}</Text>
-                      </Tooltip>
-                    )}
-                  />
-                  <Space>
-                    {(t.fileSize || 0) > 0 && <Text type="secondary">{formatSize(t.fileSize || 0)}</Text>}
+                <div className="task-progress-file-row" key={rowKey}>
+                  <Tag color={t.type === 1 ? 'red' : t.type === 2 ? 'orange' : 'blue'}>
+                    {typeNames[t.type ?? 0] || '复制'}
+                  </Tag>
+                  <TaskInlineText className="task-progress-file-name" value={name} tooltip={tooltip} />
+                  <TaskInlineText className="task-progress-file-path" value={t.srcPath} tooltip={srcPath} type="secondary" />
+                  <TaskInlineText className="task-progress-file-path" value={t.dstPath} tooltip={dstPath} type="secondary" />
+                  <Text type="secondary" className="task-progress-file-size">
+                    {formatSize(t.fileSize || 0)}
+                  </Text>
+                  <span className="task-progress-file-state">
                     {activeTab === 1 && (
                       <Progress
                         percent={Math.round(Number(t.progress || 0))}
                         size="small"
-                        style={{ width: 120 }}
                       />
                     )}
                     {activeTab === 7 && t.errMsg && (
                       <Tooltip title={t.errMsg}>
-                        <Text type="danger" ellipsis>失败原因</Text>
+                        <Text type="danger" ellipsis className="task-progress-file-error">失败原因</Text>
                       </Tooltip>
                     )}
-                  </Space>
-                </List.Item>
+                    {activeTab !== 1 && !(activeTab === 7 && t.errMsg) && (
+                      <Text type="secondary">
+                        {t.createTime ? dayjs.unix(t.createTime).format('HH:mm:ss') : '--'}
+                      </Text>
+                    )}
+                  </span>
+                </div>
               );
-            }}
-          />
+            })}
+          </div>
         </div>
       )}
-      {tabTaskList.length > TAB_TASK_PAGE_SIZE && (
+      {tabTaskList.length > 0 && (
         <Pagination
           className="task-progress-pagination"
           current={tabTaskPage}
           pageSize={TAB_TASK_PAGE_SIZE}
           total={tabTaskList.length}
           onChange={setTabTaskPage}
+          showTotal={(t) => `共 ${t} 条`}
           showSizeChanger={false}
           size="small"
         />
@@ -412,7 +477,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
             items={statusTabs.map((tab) => ({
               key: String(tab.key),
               label: `${tab.label} (${currentTask.num?.[tab.numKey] || 0})`,
-              children: renderCurrentTaskItems(),
+              children: tab.key === activeTab ? renderCurrentTaskItems() : null,
             }))}
           />
           <Text type="secondary" className="task-progress-start-time">

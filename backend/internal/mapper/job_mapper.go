@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"opensync/internal/i18n"
+	"strings"
 )
 
 // GetJobList gets paginated job list
@@ -230,6 +231,25 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 		where += " AND type=?"
 		args = append(args, typ)
 	}
+	if isPath, ok := params["isPath"]; ok {
+		where += " AND isPath=?"
+		args = append(args, isPath)
+	}
+	if hasError, ok := params["hasError"]; ok {
+		if toInt(hasError) == 1 {
+			where += " AND errMsg IS NOT NULL AND errMsg<>''"
+		} else {
+			where += " AND (errMsg IS NULL OR errMsg='')"
+		}
+	}
+	if keyword, ok := params["keyword"]; ok {
+		kw := strings.TrimSpace(fmt.Sprintf("%v", keyword))
+		if kw != "" {
+			where += " AND (fileName LIKE ? ESCAPE '\\' OR srcPath LIKE ? ESCAPE '\\' OR dstPath LIKE ? ESCAPE '\\' OR alistTaskId LIKE ? ESCAPE '\\' OR errMsg LIKE ? ESCAPE '\\')"
+			like := "%" + escapeLike(kw) + "%"
+			args = append(args, like, like, like, like, like)
+		}
+	}
 
 	baseSQL := fmt.Sprintf("SELECT * FROM job_task_item %s ORDER BY createTime DESC", where)
 
@@ -316,4 +336,11 @@ func GetJobTaskCounts(taskID int64) map[string]interface{} {
 		}
 	}
 	return rows[0]
+}
+
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }

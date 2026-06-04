@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Table, Tag, Button, Space, Select, Popover, Progress, Empty, Typography, Card } from 'antd';
+import { Table, Tag, Button, Space, Select, Progress, Empty, Typography, Card, Tooltip, Input } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { jobGetTaskItem } from '../../api/job';
@@ -22,9 +22,22 @@ const typeNames: Record<number, string> = {
   0: '复制', 1: '删除', 2: '移动',
 };
 
-const statusFilterOptions = [
-  { label: '成功', value: 2 },
-  { label: '失败', value: 7 },
+const statusFilterOptions = taskItemStatusList.map((label, value) => ({ label, value }));
+
+const typeFilterOptions = [
+  { label: '复制/创建', value: 0 },
+  { label: '删除', value: 1 },
+  { label: '移动', value: 2 },
+];
+
+const objectFilterOptions = [
+  { label: '文件', value: 0 },
+  { label: '目录', value: 1 },
+];
+
+const errorFilterOptions = [
+  { label: '有错误信息', value: 1 },
+  { label: '无错误信息', value: 0 },
 ];
 
 function formatSize(val: number | null): string {
@@ -38,6 +51,39 @@ function formatSize(val: number | null): string {
     i++;
   }
   return `${size.toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
+}
+
+function displayText(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '--';
+  return String(value);
+}
+
+function pathFallback(record: TaskItem): string {
+  return displayText(record.fileName || record.dstPath || record.srcPath);
+}
+
+function LongText({
+  value,
+  maxWidth = 260,
+  type,
+}: {
+  value: string | number | null | undefined;
+  maxWidth?: number;
+  type?: 'secondary' | 'danger';
+}) {
+  const text = displayText(value);
+  if (text === '--') return <Text type="secondary">--</Text>;
+  return (
+    <Tooltip title={text}>
+      <Text
+        type={type}
+        ellipsis
+        style={{ display: 'inline-block', maxWidth, verticalAlign: 'bottom' }}
+      >
+        {text}
+      </Text>
+    </Tooltip>
+  );
 }
 
 type TaskDetailProps = {
@@ -58,6 +104,11 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
   const [pageSize, setPageSize] = useState(10);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<number | undefined>(undefined);
+  const [typeFilter, setTypeFilter] = useState<number | undefined>(undefined);
+  const [objectFilter, setObjectFilter] = useState<number | undefined>(undefined);
+  const [errorFilter, setErrorFilter] = useState<number | undefined>(undefined);
+  const [keywordInput, setKeywordInput] = useState('');
+  const [keywordFilter, setKeywordFilter] = useState('');
 
   const fetchData = useCallback(async () => {
     if (!taskId) return;
@@ -69,6 +120,10 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
         pageNum: page,
       };
       if (statusFilter !== undefined) params.status = statusFilter;
+      if (typeFilter !== undefined) params.type = typeFilter;
+      if (objectFilter !== undefined) params.isPath = objectFilter;
+      if (errorFilter !== undefined) params.hasError = errorFilter;
+      if (keywordFilter.trim()) params.keyword = keywordFilter.trim();
       const res = await jobGetTaskItem(params);
       const data = res.data;
       const items = (data?.dataList || []).map((item) => {
@@ -81,7 +136,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       /* ignore */
     }
     setLoading(false);
-  }, [page, pageSize, statusFilter, taskId]);
+  }, [errorFilter, keywordFilter, objectFilter, page, pageSize, statusFilter, taskId, typeFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -90,8 +145,23 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       title: '文件名/目录',
       dataIndex: 'fileName',
       key: 'fileName',
+      width: 220,
       render: (_: unknown, record: TaskItem) =>
-        record.fileName || record.dstPath || '--',
+        <LongText value={pathFallback(record)} maxWidth={200} />,
+    },
+    {
+      title: '来源目录',
+      dataIndex: 'srcPath',
+      key: 'srcPath',
+      width: 260,
+      render: (val: string | null) => <LongText value={val} maxWidth={240} />,
+    },
+    {
+      title: '目标目录',
+      dataIndex: 'dstPath',
+      key: 'dstPath',
+      width: 260,
+      render: (val: string | null) => <LongText value={val} maxWidth={240} />,
     },
     {
       title: '文件大小',
@@ -106,25 +176,32 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       key: 'type',
       width: 100,
       render: (val: number, record: TaskItem) => {
-        if (val === 0) return record.isPath ? '创建' : '复制';
-        return typeNames[val] || String(val);
+        const label = val === 0 && record.isPath ? '创建' : (typeNames[val] || String(val));
+        const color = val === 1 ? 'red' : val === 2 ? 'orange' : 'blue';
+        return <Tag color={color}>{label}</Tag>;
       },
+    },
+    {
+      title: '对象',
+      dataIndex: 'isPath',
+      key: 'isPath',
+      width: 80,
+      render: (val: number | undefined) => (
+        <Tag color={val ? 'cyan' : 'default'}>{val ? '目录' : '文件'}</Tag>
+      ),
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 140,
+      width: 170,
       render: (status: number, record: TaskItem) => {
         if (status === 1) {
           const pct = Number(record.progress || 0);
-          return <Progress percent={pct} size="small" />;
-        }
-        if (status === 7 && record.errMsg) {
           return (
-            <Popover title="错误原因" content={record.errMsg} trigger="hover">
-              <Tag color={statusColors[status]}>失败，原因</Tag>
-            </Popover>
+            <Tooltip title={`进行中 ${pct}%`}>
+              <Progress percent={pct} size="small" />
+            </Tooltip>
           );
         }
         return (
@@ -134,51 +211,109 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
         );
       },
     },
+    {
+      title: 'AList任务ID',
+      dataIndex: 'alistTaskId',
+      key: 'alistTaskId',
+      width: 150,
+      render: (val: string | null) => <LongText value={val} maxWidth={130} />,
+    },
+    {
+      title: '错误信息',
+      dataIndex: 'errMsg',
+      key: 'errMsg',
+      width: 240,
+      render: (val: string | null) => <LongText value={val} maxWidth={220} type="danger" />,
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'createTime',
+      key: 'createTime',
+      width: 170,
+      render: (val: number | undefined) => (
+        val ? dayjs.unix(val).format('YYYY-MM-DD HH:mm:ss') : '--'
+      ),
+    },
+    {
+      title: '明细ID',
+      dataIndex: 'id',
+      key: 'id',
+      width: 90,
+      render: (val: number | string | undefined) => displayText(val),
+    },
   ];
 
-  const expandedRowRender = (record: TaskItem) => (
-    <div style={{ padding: '8px 0' }}>
-      {record.type !== 1 && (
-        <div style={{ marginBottom: 8 }}>
-          <Text strong>来源目录：</Text>
-          <Text style={{ wordBreak: 'break-all' }}>{record.srcPath || '--'}</Text>
-        </div>
-      )}
-      <div style={{ marginBottom: 8 }}>
-        <Text strong>目标目录：</Text>
-        <Text style={{ wordBreak: 'break-all' }}>{record.dstPath || '--'}</Text>
-      </div>
-      <div>
-        <Text strong>创建时间：</Text>
-        <Text>
-          {record.createTime
-            ? dayjs.unix(record.createTime).format('YYYY-MM-DD HH:mm:ss')
-            : '--'}
-        </Text>
-      </div>
-    </div>
-  );
+  const handleKeywordSearch = (value: string) => {
+    setKeywordFilter(value.trim());
+    setPage(1);
+  };
+
+  const resetFilters = () => {
+    setStatusFilter(undefined);
+    setTypeFilter(undefined);
+    setObjectFilter(undefined);
+    setErrorFilter(undefined);
+    setKeywordInput('');
+    setKeywordFilter('');
+    setPage(1);
+  };
 
   const content = (
     <>
-      <div className="page-header">
+      <div className="page-header task-detail-header">
         {embedded ? (
           <span />
         ) : (
-          <Space>
+          <Space className="task-detail-title">
             <Button icon={<ArrowLeftOutlined />} onClick={() => (onBack ? onBack() : navigate(-1 as never))}>返回</Button>
             <h2>任务详情</h2>
           </Space>
         )}
-        <Space>
+        <Space wrap className="task-detail-filters">
+          <Input.Search
+            placeholder="文件 / 路径 / 错误"
+            allowClear
+            style={{ width: 200 }}
+            value={keywordInput}
+            onChange={(e) => {
+              setKeywordInput(e.target.value);
+              if (!e.target.value) handleKeywordSearch('');
+            }}
+            onSearch={handleKeywordSearch}
+          />
           <Select
             placeholder="筛选状态"
             allowClear
-            style={{ width: 160 }}
+            style={{ width: 140 }}
             value={statusFilter}
             onChange={(v) => { setStatusFilter(v); setPage(1); }}
             options={statusFilterOptions}
           />
+          <Select
+            placeholder="操作类型"
+            allowClear
+            style={{ width: 130 }}
+            value={typeFilter}
+            onChange={(v) => { setTypeFilter(v); setPage(1); }}
+            options={typeFilterOptions}
+          />
+          <Select
+            placeholder="文件/目录"
+            allowClear
+            style={{ width: 120 }}
+            value={objectFilter}
+            onChange={(v) => { setObjectFilter(v); setPage(1); }}
+            options={objectFilterOptions}
+          />
+          <Select
+            placeholder="错误信息"
+            allowClear
+            style={{ width: 130 }}
+            value={errorFilter}
+            onChange={(v) => { setErrorFilter(v); setPage(1); }}
+            options={errorFilterOptions}
+          />
+          <Button onClick={resetFilters}>重置</Button>
         </Space>
       </div>
 
@@ -192,9 +327,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
           columns={columns}
           rowKey="id"
           loading={loading}
-          expandable={{
-            expandedRowRender,
-          }}
+          scroll={{ x: 1680 }}
           pagination={{
             current: page,
             pageSize,
