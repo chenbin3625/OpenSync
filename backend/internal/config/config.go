@@ -3,10 +3,10 @@ package config
 import (
 	"bufio"
 	"log"
+	"opensync/pkg/crypto"
 	"os"
 	"strconv"
 	"strings"
-	"taosync/pkg/crypto"
 )
 
 // ServerConfig holds server configuration
@@ -45,7 +45,7 @@ func GetConfig() *Config {
 		return sysConfig
 	}
 	passwdStr := GetPasswordStr()
-	dbname := "data/taoSync.db"
+	dbname := "data/openSync.db"
 
 	sCfg := ServerConfig{
 		Port:         8023,
@@ -61,62 +61,62 @@ func GetConfig() *Config {
 	if _, err := os.Stat("data/config.ini"); err == nil {
 		// Read config.ini
 		iniMap := readINI("data/config.ini")
-		if tao, ok := iniMap["tao"]; ok {
-			if v, ok := tao["port"]; ok {
+		if opensync, ok := iniMap["opensync"]; ok {
+			if v, ok := opensync["port"]; ok {
 				sCfg.Port, _ = strconv.Atoi(v)
 			}
-			if v, ok := tao["expires"]; ok {
+			if v, ok := opensync["expires"]; ok {
 				sCfg.Expires, _ = strconv.Atoi(v)
 			}
-			if v, ok := tao["log_level"]; ok {
+			if v, ok := opensync["log_level"]; ok {
 				sCfg.LogLevel, _ = strconv.Atoi(v)
 			}
-			if v, ok := tao["console_level"]; ok {
+			if v, ok := opensync["console_level"]; ok {
 				sCfg.ConsoleLevel, _ = strconv.Atoi(v)
 			}
-			if v, ok := tao["log_save"]; ok {
+			if v, ok := opensync["log_save"]; ok {
 				sCfg.LogSave, _ = strconv.Atoi(v)
 			}
-			if v, ok := tao["task_save"]; ok {
+			if v, ok := opensync["task_save"]; ok {
 				sCfg.TaskSave, _ = strconv.Atoi(v)
 			}
-			if v, ok := tao["task_timeout"]; ok {
+			if v, ok := opensync["task_timeout"]; ok {
 				sCfg.Timeout, _ = strconv.Atoi(v)
 			}
 		}
 	} else {
 		// Read from environment variables
-		if v := os.Getenv("TAO_PORT"); v != "" {
+		if v := os.Getenv("OPENSYNC_PORT"); v != "" {
 			if i, err := strconv.Atoi(v); err == nil {
 				sCfg.Port = i
 			}
 		}
-		if v := os.Getenv("TAO_EXPIRES"); v != "" {
+		if v := os.Getenv("OPENSYNC_EXPIRES"); v != "" {
 			if i, err := strconv.Atoi(v); err == nil {
 				sCfg.Expires = i
 			}
 		}
-		if v := os.Getenv("TAO_LOG_LEVEL"); v != "" {
+		if v := os.Getenv("OPENSYNC_LOG_LEVEL"); v != "" {
 			if i, err := strconv.Atoi(v); err == nil {
 				sCfg.LogLevel = i
 			}
 		}
-		if v := os.Getenv("TAO_CONSOLE_LEVEL"); v != "" {
+		if v := os.Getenv("OPENSYNC_CONSOLE_LEVEL"); v != "" {
 			if i, err := strconv.Atoi(v); err == nil {
 				sCfg.ConsoleLevel = i
 			}
 		}
-		if v := os.Getenv("TAO_LOG_SAVE"); v != "" {
+		if v := os.Getenv("OPENSYNC_LOG_SAVE"); v != "" {
 			if i, err := strconv.Atoi(v); err == nil {
 				sCfg.LogSave = i
 			}
 		}
-		if v := os.Getenv("TAO_TASK_SAVE"); v != "" {
+		if v := os.Getenv("OPENSYNC_TASK_SAVE"); v != "" {
 			if i, err := strconv.Atoi(v); err == nil {
 				sCfg.TaskSave = i
 			}
 		}
-		if v := os.Getenv("TAO_TASK_TIMEOUT"); v != "" {
+		if v := os.Getenv("OPENSYNC_TASK_TIMEOUT"); v != "" {
 			if i, err := strconv.Atoi(v); err == nil {
 				sCfg.Timeout = i
 			}

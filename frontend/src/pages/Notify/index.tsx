@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Card, Row, Col, Button, Modal, Form, Input, Select, Switch, Space, Popconfirm, Tag, App, Empty, Typography, Descriptions, Tooltip,
 } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, BellOutlined, SendOutlined, PoweroffOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons';
 import { notifyGet, notifyPost, notifyPut, notifyDelete } from '../../api/notify';
 import dayjs from 'dayjs';
 import type { NotifyFormValues, NotifyItem } from '../../types';
@@ -15,14 +15,6 @@ const methodNames: Record<number, string> = {
 
 const methodIcons: Record<number, string> = {
   0: '🔗', 1: '🐿️', 2: '💬', 3: '🏢', 4: '🐦',
-};
-
-const methodColors: Record<number, string[]> = {
-  0: ['#722ed1', '#531dab'],
-  1: ['#fa541c', '#d4380d'],
-  2: ['#1677ff', '#0958d9'],
-  3: ['#13c2c2', '#08979c'],
-  4: ['#52c41a', '#389e0d'],
 };
 
 type NotifyParams = Record<string, string | number | boolean | null | undefined>;
@@ -122,9 +114,9 @@ export default function Notify() {
     } catch { /* ignore */ }
   };
 
-  const handleToggleStatus = async (item: NotifyItem) => {
+  const handleToggleStatus = async (item: NotifyItem, checked: boolean) => {
     try {
-      await notifyPut({ notifyId: item.id, enable: item.enable === 1 ? 0 : 1 });
+      await notifyPut({ notifyId: item.id, enable: checked ? 1 : 0 });
       message.success('状态更新成功');
       fetchList();
     } catch { /* ignore */ }
@@ -245,7 +237,7 @@ export default function Notify() {
   };
 
   return (
-    <Card>
+    <Card className="page-card">
       <div className="page-header">
         <h2>通知配置</h2>
         <Space>
@@ -255,68 +247,50 @@ export default function Notify() {
 
       {list.length === 0 && !loading ? (
         <Empty
-          image={<BellOutlined style={{ fontSize: 64, color: 'var(--ant-color-text-quaternary)' }} />}
-          styles={{ image: { height: 80 } }}
           description={<Text type="secondary">暂无通知渠道配置，添加后可在任务完成时接收通知</Text>}
-          className="empty-state"
         />
       ) : (
         <Row gutter={[16, 16]}>
           {list.map((item) => {
             const params = parseParams(item);
-            const colors = methodColors[item.method] || ['#8c8c8c', '#595959'];
             return (
               <Col xs={24} md={12} key={item.id}>
                 <Card
                   hoverable
-                  styles={{ body: { padding: '20px 24px' } }}
+                  title={`${methodIcons[item.method] || '📢'} ${methodNames[item.method] || `方式${item.method}`}`}
+                  extra={(
+                    <Space>
+                      <Tag color={item.enable === 1 ? 'success' : 'default'}>{item.enable === 1 ? '已启用' : '已禁用'}</Tag>
+                      <Switch
+                        checked={item.enable === 1}
+                        onChange={(checked) => handleToggleStatus(item, checked)}
+                        size="small"
+                      />
+                    </Space>
+                  )}
                   actions={[
                     <Tooltip title="测试发送" key="test">
-                      <SendOutlined onClick={() => handleTestSend(item)} style={{ color: '#1677ff' }} />
+                      <SendOutlined onClick={() => handleTestSend(item)} />
                     </Tooltip>,
                     <Tooltip title="编辑" key="edit">
                       <EditOutlined onClick={() => handleEdit(item)} />
                     </Tooltip>,
-                    <Popconfirm title={item.enable === 1 ? '确认禁用？' : '确认启用？'} onConfirm={() => handleToggleStatus(item)} key="toggle">
-                      <Tooltip title={item.enable === 1 ? '禁用' : '启用'}>
-                        <PoweroffOutlined style={{ color: item.enable === 1 ? '#faad14' : '#52c41a' }} />
-                      </Tooltip>
-                    </Popconfirm>,
                     <Popconfirm title="确认删除此通知？" onConfirm={() => handleDelete(item.id)} key="del">
                       <Tooltip title="删除">
-                        <DeleteOutlined style={{ color: '#ff4d4f' }} />
+                        <DeleteOutlined />
                       </Tooltip>
                     </Popconfirm>,
                   ]}
                 >
-                  <div className="card-item-header">
-                    <div className="card-item-icon" style={{
-                      background: `linear-gradient(135deg, ${colors[0]} 0%, ${colors[1]} 100%)`,
-                      fontSize: 22,
-                    }}>
-                      {methodIcons[item.method] || '📢'}
-                    </div>
-                    <div className="card-item-info">
-                      <div className="card-item-title">
-                        {methodNames[item.method] || `方式${item.method}`}
-                      </div>
-                      <div style={{ marginTop: 3 }}>
-                        <Tag color={item.enable === 1 ? 'success' : 'default'} style={{ margin: 0, fontSize: 11 }}>
-                          {item.enable === 1 ? '已启用' : '已禁用'}
-                        </Tag>
-                      </div>
-                    </div>
-                  </div>
-
-                  <Descriptions column={1} size="small" styles={{ label: { color: 'var(--ant-color-text-secondary)', width: 70 }, content: { fontSize: 13 } }}>
+                  <Descriptions column={1} size="small">
                     <Descriptions.Item label="配置">
-                      <Text type="secondary" ellipsis style={{ fontSize: 13, maxWidth: 200 }}>{getParamSummary(item)}</Text>
+                      <Text type="secondary" ellipsis>{getParamSummary(item)}</Text>
                     </Descriptions.Item>
                     <Descriptions.Item label="静默通知">
-                      <Text type="secondary" className="desc-text-sm">{params.notSendNull ? '无需同步时不发送' : '始终发送'}</Text>
+                      <Text type="secondary">{params.notSendNull ? '无需同步时不发送' : '始终发送'}</Text>
                     </Descriptions.Item>
                     <Descriptions.Item label="添加时间">
-                      <Text type="secondary" className="desc-text-sm">
+                      <Text type="secondary">
                         {item.createTime ? dayjs.unix(item.createTime).format('YYYY-MM-DD HH:mm') : '—'}
                       </Text>
                     </Descriptions.Item>
@@ -343,7 +317,7 @@ export default function Notify() {
           </Space>
         )}
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+        <Form form={form} layout="vertical">
           <Form.Item name="method" label="通知方式" rules={[{ required: true }]}>
             <Select onChange={(v) => setMethod(v)} options={Object.entries(methodNames).map(([k, v]) => ({ value: Number(k), label: v }))} />
           </Form.Item>

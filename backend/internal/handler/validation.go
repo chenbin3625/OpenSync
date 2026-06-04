@@ -3,7 +3,7 @@ package handler
 import (
 	"errors"
 	"strconv"
-	"taosync/internal/i18n"
+	"opensync/internal/i18n"
 )
 
 func parseRequiredID(value, field string) (int64, error) {

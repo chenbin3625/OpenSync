@@ -9,17 +9,17 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"taosync/internal/config"
-	"taosync/internal/i18n"
-	"taosync/internal/mapper"
-	"taosync/internal/model"
+	"opensync/internal/config"
+	"opensync/internal/i18n"
+	"opensync/internal/mapper"
+	"opensync/internal/model"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/securecookie"
 )
 
-const cookieName = "tao_sync"
+const cookieName = "open_sync"
 
 var sc *securecookie.SecureCookie
 

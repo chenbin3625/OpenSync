@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Table, Tag, Button, Space, Select, Popover, Progress, Empty, Typography, Card } from 'antd';
-import { ArrowLeftOutlined, FileSearchOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { jobGetTaskItem } from '../../api/job';
 import dayjs from 'dayjs';
@@ -123,7 +123,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
         if (status === 7 && record.errMsg) {
           return (
             <Popover title="错误原因" content={record.errMsg} trigger="hover">
-              <Tag color={statusColors[status]}>失败，<span style={{ color: '#1677ff', cursor: 'pointer' }}>原因</span></Tag>
+              <Tag color={statusColors[status]}>失败，原因</Tag>
             </Popover>
           );
         }
@@ -184,10 +184,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
 
       {list.length === 0 && !loading ? (
         <Empty
-          image={<FileSearchOutlined style={{ fontSize: 64, color: '#bbb' }} />}
-          styles={{ image: { height: 80 } }}
           description={<Text type="secondary">暂无文件详情记录</Text>}
-          className="empty-state-compact"
         />
       ) : (
         <Table
@@ -218,7 +215,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
   }
 
   return (
-    <Card>
+    <Card className="page-card">
       {content}
     </Card>
   );

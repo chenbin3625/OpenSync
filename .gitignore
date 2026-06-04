@@ -20,9 +20,8 @@ frontend/.eslintcache
 data/
 backend/data/*
 !backend/data/.gitkeep
-backend/taosync
-backend/server
 backend/opensync
+backend/server
 backend/*.db
 backend/*.db-shm
 backend/*.db-wal

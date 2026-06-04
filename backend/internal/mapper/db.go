@@ -7,8 +7,8 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"taosync/internal/config"
-	"taosync/internal/i18n"
+	"opensync/internal/config"
+	"opensync/internal/i18n"
 
 	_ "modernc.org/sqlite"
 )

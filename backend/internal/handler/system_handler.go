@@ -2,10 +2,10 @@ package handler
 
 import (
 	"net/http"
-	"taosync/internal/i18n"
-	"taosync/internal/middleware"
-	"taosync/internal/model"
-	"taosync/internal/service"
+	"opensync/internal/i18n"
+	"opensync/internal/middleware"
+	"opensync/internal/model"
+	"opensync/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

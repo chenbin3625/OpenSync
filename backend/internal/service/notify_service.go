@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"taosync/internal/i18n"
-	"taosync/internal/mapper"
-	"taosync/pkg/util"
+	"opensync/internal/i18n"
+	"opensync/internal/mapper"
+	"opensync/pkg/util"
 	"time"
 )
 
@@ -68,7 +68,7 @@ func DeleteNotify(notifyID int64) {
 // TestNotify sends a test notification
 func TestNotify(notify map[string]interface{}) {
 	msg := i18n.G("notify_test_msg")
-	sendNotify(notify, "TaoSync Test", msg, false)
+	sendNotify(notify, "OpenSync Test", msg, false)
 }
 
 // SendTaskNotification sends notification after task completion
@@ -109,7 +109,7 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 		statusName = remark + ": " + statusName
 	}
 
-	title := fmt.Sprintf("TaoSync - %s", statusName)
+	title := fmt.Sprintf("OpenSync - %s", statusName)
 
 	successNum := toInt(taskNum["successNum"])
 	failNum := toInt(taskNum["failNum"])

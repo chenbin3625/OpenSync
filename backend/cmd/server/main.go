@@ -7,12 +7,12 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"taosync/internal/config"
-	"taosync/internal/handler"
-	"taosync/internal/mapper"
-	"taosync/internal/middleware"
-	"taosync/internal/model"
-	"taosync/internal/service"
+	"opensync/internal/config"
+	"opensync/internal/handler"
+	"opensync/internal/mapper"
+	"opensync/internal/middleware"
+	"opensync/internal/model"
+	"opensync/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

@@ -1,7 +1,7 @@
 package i18n
 
 import (
-	"taosync/pkg/crypto"
+	"opensync/pkg/crypto"
 )
 
 var sysLanguage string
@@ -52,7 +52,7 @@ var allLng = map[string]map[string]interface{}{
 		"key_wrong":              "加密秘钥错误",
 		"passwd_wrong_max_time":  "5分钟内密码错误超过3次，请稍后再试",
 		"notify_error":           "发送通知过程中失败，原因为：{}",
-		"notify_test_msg":        "这是一条由您自己发送的TaoSync测试消息，当你看到这条消息，说明你的配置是正确可用的。",
+		"notify_test_msg":        "这是一条由您自己发送的OpenSync测试消息，当你看到这条消息，说明你的配置是正确可用的。",
 	},
 	"eng": {
 		"success":                "success",
@@ -99,7 +99,7 @@ var allLng = map[string]map[string]interface{}{
 		"key_wrong":              "Wrong key",
 		"passwd_wrong_max_time":  "The password was incorrect more than 3 times within 5 minutes. Please try again later",
 		"notify_error":           "Failed to send notification due to: {}",
-		"notify_test_msg":        "This is a TaoSync test message sent by yourself. When you see this message, it means your configuration is correct and available.",
+		"notify_test_msg":        "This is a OpenSync test message sent by yourself. When you see this message, it means your configuration is correct and available.",
 	},
 }
 

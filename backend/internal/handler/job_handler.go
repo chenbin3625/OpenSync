@@ -3,9 +3,9 @@ package handler
 import (
 	"net/http"
 	"strconv"
-	"taosync/internal/i18n"
-	"taosync/internal/model"
-	"taosync/internal/service"
+	"opensync/internal/i18n"
+	"opensync/internal/model"
+	"opensync/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

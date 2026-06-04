@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"sync"
 	"time"
-	"taosync/internal/config"
-	"taosync/internal/i18n"
-	"taosync/internal/mapper"
-	"taosync/pkg/crypto"
+	"opensync/internal/config"
+	"opensync/internal/i18n"
+	"opensync/internal/mapper"
+	"opensync/pkg/crypto"
 )
 
 var (

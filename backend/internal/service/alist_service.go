@@ -5,8 +5,8 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"taosync/internal/i18n"
-	"taosync/internal/mapper"
+	"opensync/internal/i18n"
+	"opensync/internal/mapper"
 )
 
 var (

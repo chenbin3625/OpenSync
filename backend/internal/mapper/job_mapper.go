@@ -3,7 +3,7 @@ package mapper
 import (
 	"errors"
 	"fmt"
-	"taosync/internal/i18n"
+	"opensync/internal/i18n"
 )
 
 // GetJobList gets paginated job list

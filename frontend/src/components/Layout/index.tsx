@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useState, useEffect } from 'react';
-import { Layout as AntLayout, Menu, Button, theme, Typography, Popconfirm } from 'antd';
+import { Layout as AntLayout, Menu, Button, Typography, Popconfirm, Space, theme } from 'antd';
 import {
   HomeOutlined,
   CloudServerOutlined,
@@ -11,7 +11,6 @@ import {
   LogoutOutlined,
   BulbOutlined,
   BulbFilled,
-  SyncOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../../stores/useStore';
@@ -57,12 +56,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AntLayout style={{ minHeight: '100vh' }}>
+    <AntLayout className="app-shell" style={{ minHeight: '100vh' }}>
       <Sider
+        className="app-sider"
         trigger={null}
         collapsible
         collapsed={collapsed}
-        width={220}
+        width={168}
+        theme={themeMode}
         style={{
           background: token.colorBgContainer,
           borderRight: `1px solid ${token.colorBorderSecondary}`,
@@ -70,30 +71,25 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         }}
       >
         <div
+          className="app-logo"
           style={{
             height: 56,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             gap: 8,
+            background: token.colorBgContainer,
             borderBottom: `1px solid ${token.colorBorderSecondary}`,
             cursor: 'pointer',
           }}
           onClick={() => navigate('/home')}
         >
-          <SyncOutlined
-            style={{
-              fontSize: collapsed ? 18 : 22,
-              color: token.colorPrimary,
-            }}
-            spin={!collapsed}
-          />
+          <img className="app-logo-mark" src="/favicon.svg" alt="OpenSync" />
           {!collapsed && (
             <Text
               strong
               style={{
-                fontSize: 17,
-                color: token.colorPrimary,
+                color: token.colorText,
                 whiteSpace: 'nowrap',
               }}
             >
@@ -103,17 +99,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
         <Menu
           mode="inline"
+          theme={themeMode}
           selectedKeys={[leftIndex || selectedKey]}
           items={menuItems}
           onClick={handleMenuClick}
           style={{
+            background: token.colorBgContainer,
             border: 'none',
-            padding: '8px 0',
+            color: token.colorText,
           }}
         />
       </Sider>
       <AntLayout>
         <Header
+          className="app-header"
           style={{
             padding: '0 20px',
             display: 'flex',
@@ -129,9 +128,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             type="text"
             icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
             onClick={() => setCollapsed(!collapsed)}
-            style={{ fontSize: 16 }}
           />
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <Space>
             <Button
               type="text"
               icon={themeMode === 'dark' ? <BulbFilled /> : <BulbOutlined />}
@@ -152,15 +150,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 {!collapsed && '登出'}
               </Button>
             </Popconfirm>
-          </div>
+          </Space>
         </Header>
         <Content
+          className="app-content"
           style={{
             margin: 20,
             padding: 20,
             overflow: 'auto',
-            borderRadius: token.borderRadiusLG,
-            background: token.colorBgContainer,
             minHeight: 0,
           }}
         >

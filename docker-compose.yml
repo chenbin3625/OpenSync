@@ -8,5 +8,5 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      TAO_PORT: 8023
+      OPENSYNC_PORT: 8023
       GIN_MODE: release

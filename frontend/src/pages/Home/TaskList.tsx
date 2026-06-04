@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Row, Col, Statistic, Empty, Typography, Tooltip, Divider, Spin, Pagination } from 'antd';
-import { StopOutlined, UnorderedListOutlined, ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined } from '@ant-design/icons';
+import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Row, Col, Statistic, Empty, Typography, Tooltip, Spin, Pagination, Tabs, List } from 'antd';
+import { StopOutlined, ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined } from '@ant-design/icons';
 import { jobGetTask, jobGetTaskCurrent, jobDeleteTask, jobPut } from '../../api/job';
 import dayjs from 'dayjs';
 import type { CurrentTaskData, CurrentTaskView, TaskItem, TaskRecord } from '../../types';
@@ -49,11 +49,11 @@ const statusNames: Record<number, string> = {
 
 /** 实时任务 Tab 状态定义 */
 const statusTabs = [
-  { key: 0, label: '等待', color: '#8c8c8c', numKey: 'wait' },
-  { key: 1, label: '运行中', color: '#1677ff', numKey: 'running' },
-  { key: 2, label: '成功', color: '#52c41a', numKey: 'success' },
-  { key: 7, label: '失败', color: '#f5222d', numKey: 'fail' },
-  { key: -1, label: '其他', color: '#faad14', numKey: 'other' },
+  { key: 0, label: '等待', numKey: 'wait' },
+  { key: 1, label: '运行中', numKey: 'running' },
+  { key: 2, label: '成功', numKey: 'success' },
+  { key: 7, label: '失败', numKey: 'fail' },
+  { key: -1, label: '其他', numKey: 'other' },
 ] as const;
 
 function getTaskCreateTime(task: TaskItem): number {
@@ -78,6 +78,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
   const [tabTaskList, setTabTaskList] = useState<TaskItem[]>([]);
   const [tabLoading, setTabLoading] = useState(false);
   const [tabTaskPage, setTabTaskPage] = useState(1);
+  const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
 
   /** 计算速度与剩余信息 */
   const calcProgress = useCallback((cur: CurrentTaskData) => {
@@ -181,6 +182,13 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     const pollID = setInterval(fetchCurrent, 3000);
     return () => { clearInterval(pollID); };
   }, [fetchCurrent]);
+  useEffect(() => {
+    if (!currentTask) return;
+    const tickID = setInterval(() => {
+      setNowTick(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => { clearInterval(tickID); };
+  }, [currentTask]);
   // Tab 数据加载：currentTask 变化时更新运行中 Tab，切换 Tab 时加载对应数据
   useEffect(() => {
     if (!currentTask) {
@@ -216,11 +224,11 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     },
     {
       title: '成功', dataIndex: 'successNum', key: 'successNum', width: 80,
-      render: (v: number) => <Text style={{ color: '#52c41a' }}>{v ?? '-'}</Text>,
+      render: (v: number) => v ?? '-',
     },
     {
       title: '失败', dataIndex: 'failNum', key: 'failNum', width: 80,
-      render: (v: number) => <Text style={{ color: '#f5222d' }}>{v ?? '-'}</Text>,
+      render: (v: number) => v ?? '-',
     },
     { title: '总计', dataIndex: 'allNum', key: 'allNum', width: 80 },
     {
@@ -236,10 +244,87 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     },
   ];
 
+  const renderCurrentTaskItems = () => (
+    <Spin spinning={tabLoading} size="small">
+      {tabTaskList.length === 0 && !tabLoading ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={<Text type="secondary">暂无{statusTabs.find(t => t.key === activeTab)?.label}任务</Text>}
+        />
+      ) : (
+        <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+          <List
+            size="small"
+            dataSource={pagedTabTaskList}
+            renderItem={(t, i) => {
+              let name = t.fileName || '';
+              const path = t.dstPath || t.srcPath || '';
+              if (!name && path) {
+                const cleanPath = path.replace(/\/+$/, '');
+                name = cleanPath.split('/').pop() || cleanPath;
+              }
+
+              return (
+                <List.Item key={t.fileName + '_' + i}>
+                  <List.Item.Meta
+                    title={(
+                      <Space>
+                        <Tag color={t.type === 1 ? 'red' : t.type === 2 ? 'orange' : 'blue'}>
+                          {typeNames[t.type ?? 0] || '复制'}
+                        </Tag>
+                        <Tooltip title={<div>{t.dstPath && <div>目标: {t.dstPath}</div>}{t.srcPath && <div>来源: {t.srcPath}</div>}</div>}>
+                          <Text ellipsis>{name || '--'}</Text>
+                        </Tooltip>
+                      </Space>
+                    )}
+                    description={path && (
+                      <Tooltip title={path}>
+                        <Text type="secondary" ellipsis>{path}</Text>
+                      </Tooltip>
+                    )}
+                  />
+                  <Space>
+                    {(t.fileSize || 0) > 0 && <Text type="secondary">{formatSize(t.fileSize || 0)}</Text>}
+                    {activeTab === 1 && (
+                      <Progress
+                        percent={Math.round(Number(t.progress || 0))}
+                        size="small"
+                        style={{ width: 120 }}
+                      />
+                    )}
+                    {activeTab === 7 && t.errMsg && (
+                      <Tooltip title={t.errMsg}>
+                        <Text type="danger" ellipsis>失败原因</Text>
+                      </Tooltip>
+                    )}
+                  </Space>
+                </List.Item>
+              );
+            }}
+          />
+        </div>
+      )}
+      {tabTaskList.length > TAB_TASK_PAGE_SIZE && (
+        <Pagination
+          current={tabTaskPage}
+          pageSize={TAB_TASK_PAGE_SIZE}
+          total={tabTaskList.length}
+          onChange={setTabTaskPage}
+          showSizeChanger={false}
+          size="small"
+        />
+      )}
+    </Spin>
+  );
+
+  const displayDuration = currentTask
+    ? Math.max(currentTask.duration || 0, currentTask.createTime ? nowTick - currentTask.createTime : 0)
+    : 0;
+
   return (
     <div>
       {currentTask && (
-        <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div className="page-header">
           <Space>
             <Button icon={<StopOutlined />} danger onClick={handleAbort}>中止</Button>
           </Space>
@@ -249,208 +334,73 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
       {currentTask && (
         <Card
           size="small"
-          style={{ marginBottom: 16 }}
-          styles={{
-            body: { padding: '16px 20px' },
-            header: { minHeight: 40, fontSize: 14 },
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <Text strong style={{ fontSize: 14 }}>实时进度</Text>
+          title="实时进度"
+          extra={(
             <Tag color={currentTask.scanFinish ? 'success' : 'processing'}>
               {currentTask.scanFinish ? '扫描完成，同步中' : '进行中'}
             </Tag>
-          </div>
-
-          {/* 统计指标 */}
+          )}
+          style={{ marginBottom: 16 }}
+        >
           <Row gutter={[16, 12]}>
             <Col xs={8} sm={4}>
               <Statistic
-                title={<span><ClockCircleOutlined style={{ marginRight: 4 }} />耗时</span>}
-                value={formatDuration(currentTask.duration || 0)}
-                valueStyle={{ fontSize: 14, color: 'var(--ant-color-text)' }}
+                title={<Space size={4}><ClockCircleOutlined />耗时</Space>}
+                value={formatDuration(displayDuration)}
               />
             </Col>
             <Col xs={8} sm={4}>
               <Statistic
-                title={<span><DashboardOutlined style={{ marginRight: 4 }} />平均速度</span>}
+                title={<Space size={4}><DashboardOutlined />平均速度</Space>}
                 value={currentTask.speedAvg > 0 ? formatSize(currentTask.speedAvg) : '--'}
                 suffix={currentTask.speedAvg > 0 ? '/s' : ''}
-                valueStyle={{ fontSize: 14, color: 'var(--ant-color-text)' }}
               />
             </Col>
             <Col xs={8} sm={4}>
               <Statistic
-                title={<span><ThunderboltOutlined style={{ marginRight: 4 }} />瞬时速度</span>}
+                title={<Space size={4}><ThunderboltOutlined />瞬时速度</Space>}
                 value={currentTask.speed > 0 ? formatSize(currentTask.speed) : '--'}
                 suffix={currentTask.speed > 0 ? '/s' : ''}
-                valueStyle={{ fontSize: 14, color: 'var(--ant-color-text)' }}
               />
             </Col>
             <Col xs={8} sm={4}>
               <Statistic
                 title="预计剩余"
                 value={currentTask.remainTime > 0 ? formatDuration(currentTask.remainTime) : '--'}
-                valueStyle={{ fontSize: 14, color: 'var(--ant-color-text)' }}
               />
             </Col>
             <Col xs={8} sm={4}>
               <Statistic
                 title="已传输"
                 value={formatSize(currentTask.doneSize || 0)}
-                valueStyle={{ fontSize: 14, color: '#52c41a' }}
               />
             </Col>
             <Col xs={8} sm={4}>
               <Statistic
                 title="剩余"
                 value={formatSize(currentTask.remainSize || 0)}
-                valueStyle={{ fontSize: 14, color: 'var(--ant-color-text-secondary)' }}
               />
             </Col>
           </Row>
 
-          {/* 状态 Tab 切换 + 任务列表 */}
-          <Divider style={{ margin: '12px 0' }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 0, borderBottom: '1px solid var(--ant-color-border-secondary)', marginBottom: 12 }}>
-            {statusTabs.map((tab) => {
-              const count = currentTask.num?.[tab.numKey] || 0;
-              const isActive = activeTab === tab.key;
-              return (
-                <div
-                  key={tab.key}
-                  onClick={() => handleTabChange(tab.key)}
-                  style={{
-                    padding: '8px 16px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    borderBottom: isActive ? `2px solid ${tab.color}` : '2px solid transparent',
-                    marginBottom: -1,
-                    transition: 'all 0.2s',
-                    color: isActive ? tab.color : 'var(--ant-color-text-secondary)',
-                    fontWeight: isActive ? 600 : 400,
-                    fontSize: 13,
-                    userSelect: 'none',
-                  }}
-                >
-                  {tab.label}
-                  <span style={{
-                    fontSize: 12,
-                    background: isActive ? tab.color : 'var(--ant-color-fill-quaternary)',
-                    color: isActive ? '#fff' : 'var(--ant-color-text-secondary)',
-                    borderRadius: 10,
-                    padding: '0 6px',
-                    lineHeight: '18px',
-                    minWidth: 20,
-                    textAlign: 'center',
-                  }}>{count}</span>
-                </div>
-              );
-            })}
-            <div style={{ flex: 1 }} />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              开始: {currentTask.createTime ? dayjs.unix(currentTask.createTime).format('HH:mm:ss') : '--'}
-            </Text>
-          </div>
-
-          {/* Tab 内容 - 任务列表 */}
-          <Spin spinning={tabLoading} size="small">
-            {tabTaskList.length === 0 && !tabLoading ? (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={<Text type="secondary" style={{ fontSize: 12 }}>暂无{statusTabs.find(t => t.key === activeTab)?.label}任务</Text>}
-                style={{ padding: '16px 0' }}
-              />
-            ) : (
-              <div style={{ maxHeight: 240, overflowY: 'auto' }}>
-                {pagedTabTaskList.map((t, i) => (
-                  <div
-                    key={t.fileName + '_' + i}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: '6px 8px',
-                      marginBottom: 2,
-                      borderRadius: 6,
-                      background: i % 2 === 0 ? 'var(--ant-color-fill-quaternary)' : 'transparent',
-                    }}
-                  >
-                    <Tag
-                      color={t.type === 1 ? 'red' : t.type === 2 ? 'orange' : 'blue'}
-                      style={{ margin: 0, fontSize: 11, minWidth: 36, textAlign: 'center' }}
-                    >
-                      {typeNames[t.type ?? 0] || '复制'}
-                    </Tag>
-                    <Tooltip title={<div>{t.dstPath && <div>目标: {t.dstPath}</div>}{t.srcPath && <div>来源: {t.srcPath}</div>}</div>}>
-                      {(() => {
-                        // 优先使用 fileName，否则从 dstPath 或 srcPath 提取
-                          let name = t.fileName || '';
-                          const path = t.dstPath || t.srcPath || '';
-
-                        // 如果 fileName 为空，从路径中提取文件名
-                        if (!name && path) {
-                          // 去除末尾的 /
-                          const cleanPath = path.replace(/\/+$/, '');
-                          name = cleanPath.split('/').pop() || cleanPath;
-                        }
-
-                        return (
-                          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.4 }}>
-                            <Text style={{ fontSize: 12, display: 'block' }} ellipsis>{name || '--'}</Text>
-                            {path && (
-                              <Tooltip title={path}>
-                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }} ellipsis>{path}</Text>
-                              </Tooltip>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </Tooltip>
-                    {(t.fileSize || 0) > 0 && (
-                      <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>{formatSize(t.fileSize || 0)}</Text>
-                    )}
-                    {activeTab === 1 && (
-                      <Progress
-                        percent={Math.round(Number(t.progress || 0))}
-                        size="small"
-                        style={{ width: 120, flexShrink: 0 }}
-                        strokeColor={Number(t.progress || 0) >= 100 ? '#52c41a' : '#1677ff'}
-                      />
-                    )}
-                    {activeTab === 7 && t.errMsg && (
-                      <Tooltip title={t.errMsg}>
-                        <Text type="danger" style={{ fontSize: 11, maxWidth: 120 }} ellipsis>失败原因</Text>
-                      </Tooltip>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            {tabTaskList.length > TAB_TASK_PAGE_SIZE && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 10 }}>
-                <Pagination
-                  current={tabTaskPage}
-                  pageSize={TAB_TASK_PAGE_SIZE}
-                  total={tabTaskList.length}
-                  onChange={setTabTaskPage}
-                  showSizeChanger={false}
-                  size="small"
-                />
-              </div>
-            )}
-          </Spin>
+          <Tabs
+            activeKey={String(activeTab)}
+            onChange={(key) => handleTabChange(Number(key))}
+            items={statusTabs.map((tab) => ({
+              key: String(tab.key),
+              label: `${tab.label} (${currentTask.num?.[tab.numKey] || 0})`,
+              children: renderCurrentTaskItems(),
+            }))}
+          />
+          <Text type="secondary">
+            开始: {currentTask.createTime ? dayjs.unix(currentTask.createTime).format('HH:mm:ss') : '--'}
+          </Text>
         </Card>
       )}
 
       {list.length === 0 && !loading ? (
         <Empty
-          image={<UnorderedListOutlined style={{ fontSize: 64, color: '#bbb' }} />}
-          styles={{ image: { height: 80 } }}
           description={<Text type="secondary">暂无任务记录，执行同步任务后将在此显示任务进度</Text>}
-          className="empty-state-compact"
         />
       ) : (
         <Table

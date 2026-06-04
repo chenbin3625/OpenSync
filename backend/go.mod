@@ -1,4 +1,4 @@
-module taosync
+module opensync
 
 go 1.26.1
 

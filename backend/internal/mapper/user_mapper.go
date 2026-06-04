@@ -2,7 +2,7 @@ package mapper
 
 import (
 	"errors"
-	"taosync/internal/i18n"
+	"opensync/internal/i18n"
 )
 
 // GetUserByName gets user by username

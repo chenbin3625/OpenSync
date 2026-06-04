@@ -4,117 +4,173 @@
   box-sizing: border-box;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   width: 100%;
   height: 100%;
 }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+.app-shell,
+.app-sider,
+.app-header {
+  background-image: none !important;
+  box-shadow: none !important;
 }
 
-/* Smooth transitions for theme switching */
-body, .ant-layout, .ant-layout-sider, .ant-layout-header, .ant-layout-content {
-  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+.app-content,
+.ant-layout-content.app-content,
+.ant-layout-content.app-content::before,
+.ant-layout-content.app-content::after {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+  backdrop-filter: none !important;
 }
 
-/* Card hover effects */
-.ant-card.ant-card-hoverable:hover {
-  transform: translateY(-2px);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.ant-card.ant-card-hoverable {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(128, 128, 128, 0.3);
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(128, 128, 128, 0.5);
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-/* Page header consistent spacing */
 .page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .page-header h2 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
 }
 
-/* Card item layout (used in Engine / Notify / Home cards) */
-.card-item-header {
-  display: flex;
-  align-items: center;
-  margin-bottom: 14px;
-  gap: 12px;
+.app-logo-mark {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
 }
 
-.card-item-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 8px;
+.login-page {
+  position: relative;
   display: flex;
+  min-height: 100vh;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-}
-
-.card-item-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--ant-color-text);
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  padding: 32px 18px;
+  background:
+    linear-gradient(90deg, rgba(14, 165, 233, 0.11) 1px, transparent 1px),
+    linear-gradient(rgba(20, 184, 166, 0.11) 1px, transparent 1px),
+    radial-gradient(circle at 18% 20%, rgba(20, 184, 166, 0.18), transparent 28%),
+    radial-gradient(circle at 82% 76%, rgba(37, 99, 235, 0.14), transparent 30%),
+    linear-gradient(135deg, #f8fafc 0%, #e8f7f4 54%, #f4f0e8 100%);
+  background-size: 32px 32px, 32px 32px, auto, auto, auto;
 }
 
-.card-item-subtitle {
-  font-size: 12px;
-  color: var(--ant-color-text-secondary);
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.login-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.84) 0%, transparent 36%),
+    radial-gradient(circle at center, transparent 0%, rgba(255, 255, 255, 0.62) 78%);
+  pointer-events: none;
 }
 
-.card-item-info {
-  flex: 1;
-  min-width: 0;
+.login-orbit {
+  position: absolute;
+  border: 2px solid rgba(13, 148, 136, 0.2);
+  border-radius: 999px;
+  pointer-events: none;
 }
 
-/* Small secondary text inside Descriptions items */
-.desc-text-sm {
-  font-size: 12px;
-  color: var(--ant-color-text-secondary);
+.login-orbit-primary {
+  width: min(760px, 88vw);
+  height: 260px;
+  transform: rotate(-22deg);
 }
 
-/* Consistent Empty state padding */
-.empty-state {
-  padding: 60px 0;
+.login-orbit-secondary {
+  width: min(620px, 78vw);
+  height: 190px;
+  border-color: rgba(37, 99, 235, 0.16);
+  transform: rotate(18deg);
 }
 
-.empty-state-compact {
-  padding: 40px 0;
+.login-backdrop-lines {
+  position: absolute;
+  width: min(860px, 92vw);
+  height: 420px;
+  background:
+    linear-gradient(120deg, transparent 0 45%, rgba(13, 148, 136, 0.12) 45% 45.5%, transparent 45.5% 100%),
+    linear-gradient(150deg, transparent 0 52%, rgba(37, 99, 235, 0.1) 52% 52.5%, transparent 52.5% 100%);
+  pointer-events: none;
+}
+
+.login-card {
+  position: relative;
+  z-index: 1;
+  width: min(420px, 100%);
+  background: rgba(255, 255, 255, 0.72) !important;
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(15, 118, 110, 0.14);
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.login-card .ant-card-body {
+  background: transparent;
+}
+
+.login-brand {
+  margin-bottom: 32px;
+  text-align: center;
+}
+
+.login-brand .ant-typography {
+  margin-bottom: 0;
+}
+
+.login-logo {
+  display: block;
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 12px;
+}
+
+.login-forgot {
+  margin-bottom: 0;
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  .app-content {
+    margin: 12px !important;
+    padding: 0 !important;
+  }
+
+  .page-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .page-header .ant-space {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .ant-drawer-content-wrapper {
+    width: 100vw !important;
+  }
+
+  .login-page {
+    align-items: flex-start;
+    padding-top: 72px;
+  }
+
+  .login-orbit-primary {
+    height: 210px;
+  }
+
+  .login-orbit-secondary {
+    height: 150px;
+  }
 }

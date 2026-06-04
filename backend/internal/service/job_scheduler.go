@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"taosync/internal/i18n"
+	"opensync/internal/i18n"
 
 	"github.com/robfig/cron/v3"
 )

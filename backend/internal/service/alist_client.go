@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"taosync/internal/i18n"
+	"opensync/internal/i18n"
 	"time"
 )
 

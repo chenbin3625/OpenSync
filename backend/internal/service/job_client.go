@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"taosync/internal/i18n"
-	"taosync/internal/mapper"
+	"opensync/internal/i18n"
+	"opensync/internal/mapper"
 	"time"
 
 	ignore "github.com/sabhiram/go-gitignore"

@@ -4,9 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"taosync/internal/config"
-	"taosync/internal/i18n"
-	"taosync/pkg/crypto"
+	"opensync/internal/config"
+	"opensync/internal/i18n"
+	"opensync/pkg/crypto"
 	"time"
 )
 

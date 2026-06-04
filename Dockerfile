@@ -22,7 +22,7 @@ FROM alpine:3.20
 WORKDIR /app
 COPY --from=backend-builder /app/opensync .
 RUN mkdir -p data/log
-ENV TAO_PORT=8023
+ENV OPENSYNC_PORT=8023
 ENV GIN_MODE=release
 EXPOSE 8023
 VOLUME ["/app/data"]

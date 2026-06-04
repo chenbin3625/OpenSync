@@ -7,7 +7,7 @@ import {
 import {
   PlusOutlined, PlayCircleOutlined, DeleteOutlined,
   CaretRightOutlined, FolderOpenOutlined, FolderOutlined,
-  SwapOutlined, ClockCircleOutlined, CloudServerOutlined, EditOutlined,
+  ClockCircleOutlined, CloudServerOutlined, EditOutlined,
 } from '@ant-design/icons';
 import { jobGetJob, jobPost, jobPut, jobDelete } from '../../api/job';
 import { alistGet, alistGetPath } from '../../api/alist';
@@ -277,7 +277,7 @@ export default function Home() {
 
   return (
     <div>
-      <Card>
+      <Card className="page-card">
         <div className="page-header">
           <h2>任务管理</h2>
           <Space>
@@ -288,10 +288,7 @@ export default function Home() {
 
         {list.length === 0 && !loading ? (
           <Empty
-            image={<FolderOpenOutlined style={{ fontSize: 64, color: 'var(--ant-color-text-quaternary)' }} />}
-            styles={{ image: { height: 80 } }}
             description={<Text type="secondary">暂无同步任务，点击上方「新建同步任务」创建第一个同步任务</Text>}
-            className="empty-state"
           />
         ) : (
           <>
@@ -300,87 +297,65 @@ export default function Home() {
                 <Col xs={24} md={12} key={job.id}>
                   <Card
                     hoverable
-                    style={{ cursor: 'pointer' }}
-                    styles={{ body: { padding: '20px 24px' } }}
+                    title={job.remark || `同步任务 #${job.id}`}
+                    extra={
+                      <Space>
+                        <Tag color={statusColors[job.enable] || 'default'}>{statusLabels[job.enable] || '未知'}</Tag>
+                        <Tag>{methodNames[job.method] || job.method}</Tag>
+                        <Switch
+                          checked={job.enable === 1}
+                          onChange={(_, e) => { e.stopPropagation(); handleToggle(job); }}
+                          onClick={(_, e) => e.stopPropagation()}
+                          size="small"
+                        />
+                      </Space>
+                    }
                     onClick={() => openTaskDrawer(job.id)}
                     actions={[
                       <Tooltip title="手动执行" key="run">
                         <CaretRightOutlined
                           onClick={(e) => { e.stopPropagation(); handleRun(job.id); }}
-                          style={{ color: job.enable === 1 ? 'var(--ant-color-primary)' : undefined }}
                         />
                       </Tooltip>,
                       <Tooltip title={job.enable === 1 ? '启用中，不可编辑' : '编辑'} key="edit">
                         <EditOutlined
                           onClick={(e) => { e.stopPropagation(); if (job.enable !== 1) handleEdit(job); }}
-                          style={job.enable === 1 ? { color: 'var(--ant-color-text-disabled)', cursor: 'not-allowed' } : undefined}
                         />
                       </Tooltip>,
                       <Popconfirm title="确认删除此同步任务？" onConfirm={() => handleDelete(job.id)} key="del">
                         <Tooltip title="删除">
                           <DeleteOutlined
                             onClick={(e) => e.stopPropagation()}
-                            style={{ color: 'var(--ant-color-error)' }}
                           />
                         </Tooltip>
                       </Popconfirm>,
                     ]}
                   >
-                    {/* Header */}
-                    <div className="card-item-header">
-                      <div className="card-item-icon" style={{
-                        background: job.enable === 1
-                          ? 'linear-gradient(135deg, #1677ff 0%, #0958d9 100%)'
-                          : 'linear-gradient(135deg, #8c8c8c 0%, #595959 100%)',
-                      }}>
-                        <SwapOutlined style={{ fontSize: 20, color: '#fff' }} />
-                      </div>
-                      <div className="card-item-info" style={{ flex: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <Text strong style={{ fontSize: 15 }}>
-                            {job.remark || `同步任务 #${job.id}`}
-                          </Text>
-                          <Tag color={statusColors[job.enable] || 'default'} style={{ margin: 0, fontSize: 11 }}>
-                            {statusLabels[job.enable] || '未知'}
-                          </Tag>
-                          <Tag style={{ margin: 0, fontSize: 11 }}>{methodNames[job.method] || job.method}</Tag>
-                        </div>
-                        <div style={{ fontSize: 12, color: 'var(--ant-color-text-secondary)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <CloudServerOutlined />
-                          <span>{getAlistName(job.alistId)}</span>
-                        </div>
-                      </div>
-                      <Switch
-                        checked={job.enable === 1}
-                        onChange={(_, e) => { e.stopPropagation(); handleToggle(job); }}
-                        onClick={(_, e) => e.stopPropagation()}
-                        size="small"
-                      />
-                    </div>
-
-                    {/* Body */}
-                    <Descriptions column={1} size="small" styles={{ label: { color: 'var(--ant-color-text-secondary)', width: 70, fontSize: 12 }, content: { fontSize: 13 } }}>
-                      <Descriptions.Item label={<span><FolderOutlined style={{ marginRight: 4 }} />源目录</span>}>
-                        <Text ellipsis={{ tooltip: job.srcPath }} style={{ fontSize: 13 }}>{job.srcPath}</Text>
+                    <Descriptions column={1} size="small">
+                      <Descriptions.Item label={<><CloudServerOutlined /> 引擎</>}>
+                        <Text type="secondary">{getAlistName(job.alistId)}</Text>
                       </Descriptions.Item>
-                      <Descriptions.Item label={<span><FolderOpenOutlined style={{ marginRight: 4 }} />目标</span>}>
-                        <Text ellipsis={{ tooltip: job.dstPath }} style={{ fontSize: 13 }}>
+                      <Descriptions.Item label={<><FolderOutlined /> 源目录</>}>
+                        <Text ellipsis={{ tooltip: job.srcPath }}>{job.srcPath}</Text>
+                      </Descriptions.Item>
+                      <Descriptions.Item label={<><FolderOpenOutlined /> 目标</>}>
+                        <Text ellipsis={{ tooltip: job.dstPath }}>
                           {String(job.dstPath).replace(/:/g, ' → ')}
                         </Text>
                       </Descriptions.Item>
-                      <Descriptions.Item label={<span><ClockCircleOutlined style={{ marginRight: 4 }} />调度</span>}>
-                        <Text type="secondary" className="desc-text-sm">{formatSchedule(job)}</Text>
+                      <Descriptions.Item label={<><ClockCircleOutlined /> 调度</>}>
+                        <Text type="secondary">{formatSchedule(job)}</Text>
                       </Descriptions.Item>
                       <Descriptions.Item label="缓存">
-                        <Text type="secondary" className="desc-text-sm">{formatCache(job.useCacheS, job.useCacheT)}</Text>
+                        <Text type="secondary">{formatCache(job.useCacheS, job.useCacheT)}</Text>
                       </Descriptions.Item>
                       {job.exclude && (
                         <Descriptions.Item label="排除">
-                          <Text type="secondary" ellipsis={{ tooltip: job.exclude }} style={{ fontSize: 12, maxWidth: 200 }}>{job.exclude}</Text>
+                          <Text type="secondary" ellipsis={{ tooltip: job.exclude }}>{job.exclude}</Text>
                         </Descriptions.Item>
                       )}
                       <Descriptions.Item label="创建">
-                        <Text type="secondary" className="desc-text-sm">
+                        <Text type="secondary">
                           {job.createTime ? dayjs.unix(job.createTime).format('YYYY-MM-DD HH:mm') : '—'}
                         </Text>
                       </Descriptions.Item>
@@ -458,7 +433,7 @@ export default function Home() {
             <Input placeholder="可选备注" />
           </Form.Item>
 
-          <Divider style={{ fontSize: 13 }}>同步配置</Divider>
+          <Divider>同步配置</Divider>
           <Row gutter={16}>
             <Col span={8}>
               <Form.Item name="method" label="同步方式">
@@ -505,29 +480,27 @@ export default function Home() {
             </Row>
           )}
 
-          <Divider style={{ fontSize: 13 }}>缓存与扫描</Divider>
+          <Divider>缓存与扫描</Divider>
           <Row gutter={16}>
             <Col span={12}>
-              <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
+              <Card title="源端" size="small">
                 <Space orientation="vertical" style={{ width: '100%' }} size={12}>
-                  <Text strong style={{ fontSize: 13 }}>源端</Text>
-                  <Form.Item name="useCacheS" label="缓存" valuePropName="checked" style={{ marginBottom: 0 }}>
+                  <Form.Item name="useCacheS" label="缓存" valuePropName="checked">
                     <Switch checkedChildren="使用" unCheckedChildren="不使用" />
                   </Form.Item>
-                  <Form.Item name="scanIntervalS" label="扫描间隔(秒)" style={{ marginBottom: 0 }}>
+                  <Form.Item name="scanIntervalS" label="扫描间隔(秒)">
                     <InputNumber min={0} style={{ width: '100%' }} placeholder="0 表示默认" />
                   </Form.Item>
                 </Space>
               </Card>
             </Col>
             <Col span={12}>
-              <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
+              <Card title="目标端" size="small">
                 <Space orientation="vertical" style={{ width: '100%' }} size={12}>
-                  <Text strong style={{ fontSize: 13 }}>目标端</Text>
-                  <Form.Item name="useCacheT" label="缓存" valuePropName="checked" style={{ marginBottom: 0 }}>
+                  <Form.Item name="useCacheT" label="缓存" valuePropName="checked">
                     <Switch checkedChildren="使用" unCheckedChildren="不使用" />
                   </Form.Item>
-                  <Form.Item name="scanIntervalT" label="扫描间隔(秒)" style={{ marginBottom: 0 }}>
+                  <Form.Item name="scanIntervalT" label="扫描间隔(秒)">
                     <InputNumber min={0} style={{ width: '100%' }} placeholder="0 表示默认" />
                   </Form.Item>
                 </Space>
@@ -552,7 +525,7 @@ export default function Home() {
         title={`任务列表 — 同步任务 #${taskDrawerJobId}`}
         open={!!taskDrawerJobId}
         onClose={closeTaskDrawer}
-        styles={{ wrapper: { width: 'min(900px, 90vw)' } }}
+        styles={{ wrapper: { width: 'min(1180px, 96vw)' } }}
         destroyOnClose
       >
         <TaskList
@@ -565,7 +538,7 @@ export default function Home() {
         title={`任务详情 — 任务 #${taskDetailDrawerTaskId}`}
         open={!!taskDetailDrawerTaskId}
         onClose={() => setTaskDetailDrawerTaskId('')}
-        styles={{ wrapper: { width: 'min(760px, 86vw)' } }}
+        styles={{ wrapper: { width: 'min(1040px, 94vw)' } }}
         destroyOnClose
       >
         <TaskDetail key={taskDetailDrawerTaskId} taskId={taskDetailDrawerTaskId} embedded />

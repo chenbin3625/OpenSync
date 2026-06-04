@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Card, Form, Input, Button, App, Typography, Descriptions } from 'antd';
+import { Card, Form, Input, Button, App, Typography, Descriptions, Space } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { editPwd } from '../../api/user';
 import { useStore } from '../../stores/useStore';
@@ -23,35 +23,21 @@ export default function Setting() {
   };
 
   return (
-    <Card>
+    <Card className="page-card">
       <div className="page-header">
         <h2>系统设置</h2>
       </div>
 
-      <Card style={{ marginBottom: 16 }} styles={{ body: { padding: '20px 24px' } }}>
-        <div className="card-item-header">
-          <div className="card-item-icon" style={{ background: 'linear-gradient(135deg, #1677ff 0%, #0958d9 100%)' }}>
-            <UserOutlined style={{ fontSize: 22, color: '#fff' }} />
-          </div>
-          <div className="card-item-info">
-            <div className="card-item-title">用户信息</div>
-            <Descriptions column={1} size="small" styles={{ label: { color: 'var(--ant-color-text-secondary)', width: 70 }, content: { fontSize: 13 } }}>
-              <Descriptions.Item label="用户名">
-                <Text strong>{userInfo?.userName}</Text>
-              </Descriptions.Item>
-            </Descriptions>
-          </div>
-        </div>
+      <Card title={<Space><UserOutlined />用户信息</Space>} style={{ marginBottom: 16 }}>
+        <Descriptions column={1} size="small">
+          <Descriptions.Item label="用户名">
+            <Text strong>{userInfo?.userName}</Text>
+          </Descriptions.Item>
+        </Descriptions>
       </Card>
 
-      <Card styles={{ body: { padding: '20px 24px' } }}>
-        <div className="card-item-header">
-          <div className="card-item-icon" style={{ background: 'linear-gradient(135deg, #fa541c 0%, #d4380d 100%)' }}>
-            <LockOutlined style={{ fontSize: 22, color: '#fff' }} />
-          </div>
-          <div className="card-item-info">
-            <div className="card-item-title">修改密码</div>
-            <Form form={form} onFinish={handleSubmit} layout="vertical" style={{ maxWidth: 400, marginTop: 12 }}>
+      <Card title={<Space><LockOutlined />修改密码</Space>}>
+            <Form form={form} onFinish={handleSubmit} layout="vertical" style={{ maxWidth: 400 }}>
               <Form.Item name="oldPasswd" label="旧密码" rules={[{ required: true, message: '请输入旧密码' }]}>
                 <Input.Password prefix={<LockOutlined />} placeholder="请输入旧密码" />
               </Form.Item>
@@ -80,8 +66,6 @@ export default function Setting() {
                 </Button>
               </Form.Item>
             </Form>
-          </div>
-        </div>
       </Card>
     </Card>
   );

@@ -5,8 +5,7 @@
 **/.gitkeep
 data
 backend/data/*
-backend/taosync
-backend/server
 backend/opensync
+backend/server
 backend/cmd/server/web/*
 !backend/cmd/server/web/.gitkeep
