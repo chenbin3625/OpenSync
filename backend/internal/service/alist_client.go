@@ -9,9 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"opensync/internal/i18n"
 	"strings"
 	"sync"
-	"opensync/internal/i18n"
 	"time"
 )
 
@@ -209,12 +209,66 @@ func (c *AlistClient) CheckWaitContext(ctx context.Context, path string, scanInt
 
 // FileListResponse represents a file list entry
 type FileListEntry struct {
-	Name  string `json:"name"`
-	IsDir bool   `json:"is_dir"`
-	Size  int64  `json:"size"`
+	Name     string                 `json:"name"`
+	IsDir    bool                   `json:"is_dir"`
+	Size     int64                  `json:"size"`
+	HashInfo map[string]interface{} `json:"hash_info"`
+	Hashinfo string                 `json:"hashinfo"`
 }
 
-// FileListResult maps filename -> size (for files) or empty map (for dirs)
+// FileMetadata contains lightweight comparison data from AList list results.
+type FileMetadata struct {
+	Size int64
+	MD5  string
+}
+
+func (e FileListEntry) metadata() FileMetadata {
+	return FileMetadata{
+		Size: e.Size,
+		MD5:  normalizeMD5(firstMD5(e.HashInfo, e.Hashinfo)),
+	}
+}
+
+func firstMD5(hashInfo map[string]interface{}, hashinfo string) string {
+	if md5 := hashValue(hashInfo, "md5"); md5 != "" {
+		return md5
+	}
+	if md5 := hashValue(hashInfo, "MD5"); md5 != "" {
+		return md5
+	}
+	if hashinfo == "" {
+		return ""
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(hashinfo), &parsed); err == nil {
+		if md5 := hashValue(parsed, "md5"); md5 != "" {
+			return md5
+		}
+		return hashValue(parsed, "MD5")
+	}
+	return ""
+}
+
+func hashValue(hashInfo map[string]interface{}, key string) string {
+	if hashInfo == nil {
+		return ""
+	}
+	value, ok := hashInfo[key]
+	if !ok || value == nil {
+		return ""
+	}
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func normalizeMD5(md5 string) string {
+	return strings.ToLower(strings.TrimSpace(md5))
+}
+
+// FileListResult maps filename -> metadata (for files) or empty map (for dirs)
 // Directories have key ending with "/"
 type FileListResult = map[string]interface{}
 
@@ -249,7 +303,7 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 			if item.IsDir {
 				result[item.Name+"/"] = map[string]interface{}{}
 			} else {
-				result[item.Name] = item.Size
+				result[item.Name] = item.metadata()
 			}
 		}
 	}

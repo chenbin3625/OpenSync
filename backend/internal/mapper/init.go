@@ -132,7 +132,9 @@ func InitSQL() string {
 	}
 
 	if sqlVersion < int64(currentVersion) {
-		migrateDB(sqlVersion)
+		if err := migrateDB(sqlVersion); err != nil {
+			log.Fatalf("Failed to migrate database from version %d to %d: %v", sqlVersion, currentVersion, err)
+		}
 	}
 	ensureIndexes(db)
 
@@ -154,40 +156,36 @@ func ensureIndexes(db *sql.DB) {
 	}
 }
 
-// migrateDB runs database migrations
-func migrateDB(fromVersion int64) {
-	db := GetDB()
-
-	exec := func(sql string) {
-		if _, err := db.Exec(sql); err != nil {
-			log.Printf("Migration SQL failed: %v\nSQL: %s", err, sql)
-		}
-	}
-
+func migrationStatements(fromVersion int64) []string {
+	var stmts []string
 	if fromVersion < 240731 {
-		exec(fmt.Sprintf("ALTER TABLE user_list ADD COLUMN sqlVersion integer DEFAULT %d", currentVersion))
-		exec("ALTER TABLE job_task ADD COLUMN errMsg text")
+		stmts = append(stmts,
+			fmt.Sprintf("ALTER TABLE user_list ADD COLUMN sqlVersion integer DEFAULT %d", currentVersion),
+			"ALTER TABLE job_task ADD COLUMN errMsg text",
+		)
 	}
 	if fromVersion < 240813 {
 		// SQLite doesn't support DROP COLUMN before 3.35.0, use recreate approach
 		// For simplicity, just add new columns (old 'cron' column will remain unused)
-		exec("ALTER TABLE job ADD COLUMN isCron integer DEFAULT 0")
-		exec("ALTER TABLE job ADD COLUMN year text DEFAULT NULL")
-		exec("ALTER TABLE job ADD COLUMN month text DEFAULT NULL")
-		exec("ALTER TABLE job ADD COLUMN day text DEFAULT NULL")
-		exec("ALTER TABLE job ADD COLUMN week text DEFAULT NULL")
-		exec("ALTER TABLE job ADD COLUMN day_of_week text DEFAULT NULL")
-		exec("ALTER TABLE job ADD COLUMN hour text DEFAULT NULL")
-		exec("ALTER TABLE job ADD COLUMN minute text DEFAULT NULL")
-		exec("ALTER TABLE job ADD COLUMN second text DEFAULT NULL")
-		exec("ALTER TABLE job ADD COLUMN start_date text DEFAULT NULL")
-		exec("ALTER TABLE job ADD COLUMN end_date text DEFAULT NULL")
+		stmts = append(stmts,
+			"ALTER TABLE job ADD COLUMN isCron integer DEFAULT 0",
+			"ALTER TABLE job ADD COLUMN year text DEFAULT NULL",
+			"ALTER TABLE job ADD COLUMN month text DEFAULT NULL",
+			"ALTER TABLE job ADD COLUMN day text DEFAULT NULL",
+			"ALTER TABLE job ADD COLUMN week text DEFAULT NULL",
+			"ALTER TABLE job ADD COLUMN day_of_week text DEFAULT NULL",
+			"ALTER TABLE job ADD COLUMN hour text DEFAULT NULL",
+			"ALTER TABLE job ADD COLUMN minute text DEFAULT NULL",
+			"ALTER TABLE job ADD COLUMN second text DEFAULT NULL",
+			"ALTER TABLE job ADD COLUMN start_date text DEFAULT NULL",
+			"ALTER TABLE job ADD COLUMN end_date text DEFAULT NULL",
+		)
 	}
 	if fromVersion < 240905 {
-		exec("ALTER TABLE job ADD COLUMN exclude text DEFAULT NULL")
+		stmts = append(stmts, "ALTER TABLE job ADD COLUMN exclude text DEFAULT NULL")
 	}
 	if fromVersion < 241014 {
-		exec(`CREATE TABLE IF NOT EXISTS notify(
+		stmts = append(stmts, `CREATE TABLE IF NOT EXISTS notify(
 			id integer primary key autoincrement,
 			enable integer DEFAULT 1,
 			method integer,
@@ -196,24 +194,58 @@ func migrateDB(fromVersion int64) {
 		)`)
 	}
 	if fromVersion < 250307 {
-		exec("ALTER TABLE job_task ADD COLUMN taskNum text")
+		stmts = append(stmts, "ALTER TABLE job_task ADD COLUMN taskNum text")
 	}
 	if fromVersion < 250416 {
-		exec("ALTER TABLE job ADD COLUMN remark text")
+		stmts = append(stmts, "ALTER TABLE job ADD COLUMN remark text")
 	}
 	if fromVersion < 250520 {
-		exec("ALTER TABLE job_task_item ADD COLUMN isPath integer DEFAULT 0")
+		stmts = append(stmts, "ALTER TABLE job_task_item ADD COLUMN isPath integer DEFAULT 0")
 	}
 	if fromVersion < 250608 {
-		exec("ALTER TABLE job RENAME COLUMN speed TO useCacheT")
-		exec("ALTER TABLE job ADD COLUMN scanIntervalT integer DEFAULT 0")
-		exec("ALTER TABLE job ADD COLUMN useCacheS integer DEFAULT 0")
-		exec("ALTER TABLE job ADD COLUMN scanIntervalS integer DEFAULT 0")
-		exec("UPDATE job SET scanIntervalT = 10, useCacheT = 0 WHERE useCacheT = 2")
+		stmts = append(stmts,
+			"ALTER TABLE job RENAME COLUMN speed TO useCacheT",
+			"ALTER TABLE job ADD COLUMN scanIntervalT integer DEFAULT 0",
+			"ALTER TABLE job ADD COLUMN useCacheS integer DEFAULT 0",
+			"ALTER TABLE job ADD COLUMN scanIntervalS integer DEFAULT 0",
+			"UPDATE job SET scanIntervalT = 10, useCacheT = 0 WHERE useCacheT = 2",
+		)
 	}
+	stmts = append(stmts, fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion))
+	return stmts
+}
 
-	exec(fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion))
+// migrateDB runs database migrations
+func migrateDB(fromVersion int64) error {
+	if err := migrateDBTx(GetDB(), fromVersion); err != nil {
+		return err
+	}
 	log.Printf("Database migrated from version %d to %d", fromVersion, currentVersion)
+	return nil
+}
+
+func migrateDBTx(db *sql.DB, fromVersion int64) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	for _, stmt := range migrationStatements(fromVersion) {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("migration SQL failed: %w\nSQL: %s", err, stmt)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // UpdateAbnormalTasks updates incomplete tasks to aborted status on startup

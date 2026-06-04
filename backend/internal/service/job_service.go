@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
-	"sync"
+	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
+	"strings"
+	"sync"
+	"time"
 )
 
 var (
@@ -19,6 +21,7 @@ var (
 func InitJobs() {
 	logger := log.Default()
 	mapper.UpdateJobTaskStatusByStatus()
+	CleanupExpiredTasks(logger, config.GetConfig().Server.TaskSave, time.Now())
 	jobList, err := mapper.GetJobListAll()
 	if err != nil {
 		logger.Printf("Failed to get job list: %v", err)
@@ -35,6 +38,23 @@ func InitJobs() {
 			AddJobClient(item, true)
 		}()
 	}
+}
+
+func CleanupExpiredTasks(logger *log.Logger, taskSaveDays int, now time.Time) {
+	cutoff, ok := taskRetentionCutoff(now, taskSaveDays)
+	if !ok {
+		return
+	}
+	if err := mapper.DeleteJobTaskByRunTime(cutoff); err != nil {
+		logger.Printf("Failed to delete expired task history: %v", err)
+	}
+}
+
+func taskRetentionCutoff(now time.Time, taskSaveDays int) (int64, bool) {
+	if taskSaveDays <= 0 {
+		return 0, false
+	}
+	return now.Add(-time.Duration(taskSaveDays) * 24 * time.Hour).Unix(), true
 }
 
 // GetJobClientByID gets or creates a job client
@@ -105,12 +125,15 @@ func EditJobClient(job map[string]interface{}) {
 	if client.enabled() && toInt(client.Job["isCron"]) != 2 {
 		panic(i18n.G("disable_then_edit"))
 	}
+	newClient := NewJobClient(job, false)
+	if err := mapper.UpdateJob(job); err != nil {
+		newClient.StopJob(true)
+		panic(err.Error())
+	}
 	client.StopJob(true)
 	jobClientListMu.Lock()
 	delete(jobClientList, jobID)
 	jobClientListMu.Unlock()
-	newClient := NewJobClient(job, false)
-	mapper.UpdateJob(job)
 	jobClientListMu.Lock()
 	jobClientList[jobID] = newClient
 	jobClientListMu.Unlock()
@@ -142,8 +165,11 @@ func DoJobManual(jobID int64) {
 // RemoveJobClient deletes a job
 func RemoveJobClient(jobID int64) {
 	client := GetJobClientByID(jobID)
+	client.AbortJob()
+	if err := mapper.DeleteJob(jobID); err != nil {
+		panic(err.Error())
+	}
 	client.StopJob(true)
-	mapper.DeleteJob(jobID)
 	jobClientListMu.Lock()
 	delete(jobClientList, jobID)
 	jobClientListMu.Unlock()
@@ -246,5 +272,7 @@ func GetTaskItemList(req map[string]interface{}) map[string]interface{} {
 
 // RemoveTask deletes a task
 func RemoveTask(taskID int64) {
-	mapper.DeleteJobTaskByTaskID(taskID)
+	if err := mapper.DeleteJobTaskByTaskID(taskID); err != nil {
+		panic(err.Error())
+	}
 }

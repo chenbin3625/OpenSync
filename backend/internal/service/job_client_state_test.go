@@ -62,3 +62,19 @@ func TestStopJobKeepsClientBusyUntilTaskFinishes(t *testing.T) {
 		t.Fatalf("StopJob() marked client idle before task cleanup finished")
 	}
 }
+
+func TestDoScheduledSkipsWhenJobAlreadyRunning(t *testing.T) {
+	client := &JobClient{
+		Job: map[string]interface{}{"enable": 1, "isCron": 2},
+	}
+	if !client.tryMarkDoing() {
+		t.Fatalf("tryMarkDoing() = false, want true")
+	}
+
+	if client.DoScheduled() {
+		t.Fatalf("DoScheduled() = true while job is running, want false")
+	}
+	if !client.isDoing() {
+		t.Fatalf("DoScheduled() changed running state, want still running")
+	}
+}

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -132,14 +133,18 @@ func TestMarkWaitingAsAbortedMovesQueuedItemsToFinish(t *testing.T) {
 	}
 }
 
-func TestCopyHookFlushesOldFinishedItems(t *testing.T) {
+func TestCopyHookBuffersOldFinishedItemsBeforePersistThreshold(t *testing.T) {
 	oldPersist := persistJobTaskItems
 	defer func() {
 		persistJobTaskItems = oldPersist
 	}()
 
 	var persisted []map[string]interface{}
+	var calls int
+	var batchSizes []int
 	persistJobTaskItems = func(items []map[string]interface{}) error {
+		calls++
+		batchSizes = append(batchSizes, len(items))
 		persisted = append(persisted, items...)
 		return nil
 	}
@@ -157,10 +162,96 @@ func TestCopyHookFlushesOldFinishedItems(t *testing.T) {
 	if len(jt.Finish) != maxRealtimeFinishedItems {
 		t.Fatalf("finish len = %d, want capped len %d", len(jt.Finish), maxRealtimeFinishedItems)
 	}
+	if len(persisted) != 0 {
+		t.Fatalf("persisted len = %d, want 0 before persist batch threshold", len(persisted))
+	}
+	if calls != 0 {
+		t.Fatalf("persist calls = %d with batch sizes %v, want 0 before persist batch threshold", calls, batchSizes)
+	}
+	if len(jt.pendingPersist) != 3 {
+		t.Fatalf("pendingPersist len = %d, want 3 buffered items", len(jt.pendingPersist))
+	}
+	if jt.pendingPersist[0]["createTime"] != int64(100) {
+		t.Fatalf("first pending createTime = %v, want 100", jt.pendingPersist[0]["createTime"])
+	}
+}
+
+func TestFlushPendingTaskItemsPersistsOverflowInOneBatch(t *testing.T) {
+	oldPersist := persistJobTaskItems
+	defer func() {
+		persistJobTaskItems = oldPersist
+	}()
+
+	var calls int
+	var batchSizes []int
+	var persisted []map[string]interface{}
+	persistJobTaskItems = func(items []map[string]interface{}) error {
+		calls++
+		batchSizes = append(batchSizes, len(items))
+		persisted = append(persisted, items...)
+		return nil
+	}
+
+	jt := &JobTask{
+		TaskID: 42,
+		Finish: make([]map[string]interface{}, 0),
+	}
+	jt.initRuntime()
+
+	for i := 0; i < maxRealtimeFinishedItems+3; i++ {
+		jt.CopyHook("/src/", "/dst/", "file.txt", int64(10), "", 2, nil, 0, 0, int64(100+i))
+	}
+
+	if err := jt.flushPendingTaskItems(); err != nil {
+		t.Fatalf("flushPendingTaskItems() error: %v", err)
+	}
+
+	if calls != 1 || len(batchSizes) != 1 || batchSizes[0] != 3 {
+		t.Fatalf("persist calls = %d with batch sizes %v, want one batch of 3", calls, batchSizes)
+	}
 	if len(persisted) != 3 {
 		t.Fatalf("persisted len = %d, want 3 flushed items", len(persisted))
 	}
-	if persisted[0]["createTime"] != int64(100) {
-		t.Fatalf("first persisted createTime = %v, want 100", persisted[0]["createTime"])
+	if len(jt.pendingPersist) != 0 {
+		t.Fatalf("pendingPersist len = %d, want 0 after flush", len(jt.pendingPersist))
+	}
+}
+
+func TestNewTaskContextUsesConfiguredTimeoutHours(t *testing.T) {
+	ctx, cancel := newTaskContext(2)
+	defer cancel()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatalf("newTaskContext(2) has no deadline, want deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining < 119*time.Minute || remaining > 121*time.Minute {
+		t.Fatalf("deadline remaining = %s, want about 2h", remaining)
+	}
+}
+
+func TestNewTaskContextFallsBackToCancelableContextWhenTimeoutDisabled(t *testing.T) {
+	ctx, cancel := newTaskContext(0)
+	defer cancel()
+
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatalf("newTaskContext(0) has deadline, want no deadline")
+	}
+	cancel()
+	if err := ctx.Err(); err != context.Canceled {
+		t.Fatalf("ctx.Err() = %v, want context.Canceled", err)
+	}
+}
+
+func TestFinalTaskStatusUsesTimeoutWhenContextDeadlineExceeded(t *testing.T) {
+	if status := finalTaskStatus(false, context.DeadlineExceeded, 0); status != 5 {
+		t.Fatalf("finalTaskStatus() = %d, want timeout status 5", status)
+	}
+}
+
+func TestFinalTaskStatusKeepsManualBreakAsStopped(t *testing.T) {
+	if status := finalTaskStatus(true, context.DeadlineExceeded, 0); status != 7 {
+		t.Fatalf("finalTaskStatus() = %d, want stopped status 7", status)
 	}
 }

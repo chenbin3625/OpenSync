@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"opensync/internal/i18n"
 	"strings"
 	"sync"
-	"opensync/internal/i18n"
 
 	"github.com/robfig/cron/v3"
 )
@@ -86,6 +86,9 @@ func (s *Scheduler) Resume(isCron int, jobData map[string]interface{}, fn func()
 	defer s.mu.Unlock()
 
 	if isCron == 2 {
+		return nil
+	}
+	if s.entryID != 0 {
 		return nil
 	}
 

@@ -22,3 +22,27 @@ func TestBuildCronSpecRejectsEmptySchedule(t *testing.T) {
 		t.Fatalf("buildCronSpec(empty) = %q, want empty string", spec)
 	}
 }
+
+func TestSchedulerResumeIsIdempotent(t *testing.T) {
+	s := NewScheduler()
+	defer s.Stop()
+
+	jobData := map[string]interface{}{
+		"enable":   1,
+		"isCron":   0,
+		"interval": 60,
+	}
+	if err := s.AddJob(0, jobData, func() {}); err != nil {
+		t.Fatalf("AddJob() error: %v", err)
+	}
+	if got := len(s.cron.Entries()); got != 1 {
+		t.Fatalf("entries after AddJob = %d, want 1", got)
+	}
+
+	if err := s.Resume(0, jobData, func() {}); err != nil {
+		t.Fatalf("Resume() error: %v", err)
+	}
+	if got := len(s.cron.Entries()); got != 1 {
+		t.Fatalf("entries after duplicate Resume = %d, want 1", got)
+	}
+}

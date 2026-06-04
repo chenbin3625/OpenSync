@@ -6,12 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"opensync/internal/config"
+	"opensync/internal/i18n"
+	"opensync/internal/mapper"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"opensync/internal/i18n"
-	"opensync/internal/mapper"
 	"time"
 
 	ignore "github.com/sabhiram/go-gitignore"
@@ -22,6 +23,7 @@ const (
 	maxCopyConcurrency       = 20
 	maxQueuedCopyItems       = 5000
 	maxRealtimeFinishedItems = 2000
+	maxPersistTaskItemBatch  = 500
 )
 
 var errScanAborted = errors.New("scan aborted")
@@ -369,6 +371,7 @@ type JobTask struct {
 
 	Finish         []map[string]interface{}
 	FinishMu       sync.Mutex
+	pendingPersist []map[string]interface{}
 	FinishedCounts map[int]int
 	FinishedSizes  map[int]int64
 	Doing          map[int64]*CopyItem
@@ -404,6 +407,7 @@ func newJobTask(taskID int64, jc *JobClient) *JobTask {
 		AlistClient:    GetClientByID(toInt64(jc.Job["alistId"])),
 		CreateTime:     float64(time.Now().Unix()),
 		Finish:         make([]map[string]interface{}, 0),
+		pendingPersist: make([]map[string]interface{}, 0),
 		FinishedCounts: make(map[int]int),
 		FinishedSizes:  make(map[int]int64),
 		Doing:          make(map[int64]*CopyItem),
@@ -412,8 +416,15 @@ func newJobTask(taskID int64, jc *JobClient) *JobTask {
 		scanSem:        make(chan struct{}, scanConcurrencyLimit()),
 		CurrentTasks:   make(map[int][]map[string]interface{}),
 	}
-	jt.ctx, jt.cancel = context.WithCancel(context.Background())
+	jt.ctx, jt.cancel = newTaskContext(config.GetConfig().Server.Timeout)
 	return jt
+}
+
+func newTaskContext(timeoutHours int) (context.Context, context.CancelFunc) {
+	if timeoutHours <= 0 {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithTimeout(context.Background(), time.Duration(timeoutHours)*time.Hour)
 }
 
 func (jt *JobTask) Start() {
@@ -441,6 +452,9 @@ func (jt *JobTask) initRuntime() {
 	}
 	if jt.Finish == nil {
 		jt.Finish = make([]map[string]interface{}, 0)
+	}
+	if jt.pendingPersist == nil {
+		jt.pendingPersist = make([]map[string]interface{}, 0)
 	}
 	if jt.FinishedCounts == nil {
 		jt.FinishedCounts = make(map[int]int)
@@ -688,9 +702,14 @@ func (jt *JobTask) taskSubmit() {
 	}
 	jt.copyWG.Wait()
 
+	if err := jt.flushPendingTaskItems(); err != nil {
+		log.Printf("Failed to save pending task items for task %d: %v", jt.TaskID, err)
+	}
+
 	// Batch save finish items
 	jt.FinishMu.Lock()
 	finish := append([]map[string]interface{}(nil), jt.Finish...)
+	jt.Finish = jt.Finish[:0]
 	jt.FinishMu.Unlock()
 	if len(finish) > 0 {
 		if err := persistJobTaskItems(finish); err != nil {
@@ -783,8 +802,12 @@ func (jt *JobTask) appendFinish(item map[string]interface{}) {
 	}
 	jt.Finish = append(jt.Finish, item)
 	if overflow := len(jt.Finish) - maxRealtimeFinishedItems; overflow > 0 {
-		flush = append([]map[string]interface{}(nil), jt.Finish[:overflow]...)
+		jt.pendingPersist = append(jt.pendingPersist, jt.Finish[:overflow]...)
 		jt.Finish = append([]map[string]interface{}(nil), jt.Finish[overflow:]...)
+	}
+	if len(jt.pendingPersist) >= maxPersistTaskItemBatch {
+		flush = append([]map[string]interface{}(nil), jt.pendingPersist...)
+		jt.pendingPersist = jt.pendingPersist[:0]
 	}
 	jt.FinishMu.Unlock()
 
@@ -793,6 +816,18 @@ func (jt *JobTask) appendFinish(item map[string]interface{}) {
 			log.Printf("Failed to flush task items for task %d: %v", jt.TaskID, err)
 		}
 	}
+}
+
+func (jt *JobTask) flushPendingTaskItems() error {
+	jt.initRuntime()
+	jt.FinishMu.Lock()
+	pending := append([]map[string]interface{}(nil), jt.pendingPersist...)
+	jt.pendingPersist = jt.pendingPersist[:0]
+	jt.FinishMu.Unlock()
+	if len(pending) == 0 {
+		return nil
+	}
+	return persistJobTaskItems(pending)
 }
 
 func (jt *JobTask) finishedAggregateForStatus(status int) (int, int64) {
@@ -1018,8 +1053,8 @@ func (jt *JobTask) syncWithHave(srcPath, dstPath string, spec *ignore.GitIgnore,
 		if !strings.HasSuffix(key, "/") {
 			// File
 			dstVal, exists := dstFiles[key]
-			if !exists || dstVal != srcVal {
-				jt.copyFile(srcPath, dstPath, key, srcVal)
+			if !exists || fileChanged(srcVal, dstVal) {
+				jt.copyFile(srcPath, dstPath, key, fileSize(srcVal))
 			}
 		} else {
 			// Directory
@@ -1034,7 +1069,7 @@ func (jt *JobTask) syncWithHave(srcPath, dstPath string, spec *ignore.GitIgnore,
 	if toInt(jt.Job["method"]) == 1 {
 		for dstKey, dstVal := range dstFiles {
 			if _, exists := srcFiles[dstKey]; !exists {
-				jt.delFile(dstPath, dstKey, dstVal)
+				jt.delFile(dstPath, dstKey, fileSize(dstVal))
 			}
 		}
 	}
@@ -1072,8 +1107,38 @@ func (jt *JobTask) syncWithoutHave(srcPath, dstPath string, spec *ignore.GitIgno
 		if strings.HasSuffix(key, "/") {
 			jt.syncWithoutHave(srcPath+key, dstPath+key, spec, srcRootPath, dstRootPath, firstDst)
 		} else {
-			jt.copyFile(srcPath, dstPath, key, srcFiles[key])
+			jt.copyFile(srcPath, dstPath, key, fileSize(srcFiles[key]))
 		}
+	}
+}
+
+func fileChanged(srcVal, dstVal interface{}) bool {
+	src := toFileMetadata(srcVal)
+	dst := toFileMetadata(dstVal)
+	if src.MD5 != "" && dst.MD5 != "" {
+		return src.MD5 != dst.MD5
+	}
+	return src.Size != dst.Size
+}
+
+func fileSize(val interface{}) int64 {
+	return toFileMetadata(val).Size
+}
+
+func toFileMetadata(val interface{}) FileMetadata {
+	switch v := val.(type) {
+	case FileMetadata:
+		v.MD5 = normalizeMD5(v.MD5)
+		return v
+	case *FileMetadata:
+		if v == nil {
+			return FileMetadata{}
+		}
+		metadata := *v
+		metadata.MD5 = normalizeMD5(metadata.MD5)
+		return metadata
+	default:
+		return FileMetadata{Size: toInt64Val(val)}
 	}
 }
 
@@ -1081,14 +1146,22 @@ func (jt *JobTask) updateTaskStatus() {
 	jt.GetCurrent()
 	taskNum := GetCuTaskNum(jt.TaskID)
 	failOrOtherNum := toInt(taskNum["failNum"]) + toInt(taskNum["otherNum"])
-	status := 2
-	if jt.isBreak() {
-		status = 7
-	} else if failOrOtherNum > 0 {
-		status = 3
-	}
+	status := finalTaskStatus(jt.isBreak(), jt.context().Err(), failOrOtherNum)
 
 	UpdateJobTaskStatusFinal(jt.TaskID, status, nil, jt.CreateTime)
+}
+
+func finalTaskStatus(isBreak bool, ctxErr error, failOrOtherNum int) int {
+	if isBreak {
+		return 7
+	}
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
+		return 5
+	}
+	if failOrOtherNum > 0 {
+		return 3
+	}
+	return 2
 }
 
 // JobClient manages a single job's lifecycle
@@ -1190,7 +1263,9 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 	sched := NewScheduler()
 	jc.Scheduler = sched
 
-	err := sched.AddJob(toInt(job["isCron"]), job, jc.DoJob)
+	err := sched.AddJob(toInt(job["isCron"]), job, func() {
+		jc.DoScheduled()
+	})
 	if err != nil {
 		if isInit || addJobID != 0 {
 			log.Printf("Error during job setup, deleting job: %v", job)
@@ -1202,15 +1277,7 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 	return jc
 }
 
-// DoJob executes the job
-func (jc *JobClient) DoJob() {
-	for !jc.tryMarkDoing() {
-		if !jc.enabled() {
-			return
-		}
-		time.Sleep(10 * time.Second)
-	}
-
+func (jc *JobClient) runMarkedJob() {
 	taskID := int64(0)
 	defer func() {
 		if r := recover(); r != nil {
@@ -1237,12 +1304,33 @@ func (jc *JobClient) DoJob() {
 	task.Start()
 }
 
+// DoJob executes the job, waiting until any current run has finished.
+func (jc *JobClient) DoJob() {
+	for !jc.tryMarkDoing() {
+		if !jc.enabled() {
+			return
+		}
+		time.Sleep(10 * time.Second)
+	}
+	jc.runMarkedJob()
+}
+
+// DoScheduled executes a scheduled job once, skipping if the previous run is still active.
+func (jc *JobClient) DoScheduled() bool {
+	if !jc.tryMarkDoing() {
+		log.Printf("Skipping job %d because previous run is still active", jc.JobID)
+		return false
+	}
+	jc.runMarkedJob()
+	return true
+}
+
 // DoManual triggers manual execution
 func (jc *JobClient) DoManual() {
-	if jc.isDoing() {
+	if !jc.tryMarkDoing() {
 		panic(i18n.G("job_running"))
 	}
-	go jc.DoJob()
+	go jc.runMarkedJob()
 }
 
 // ResumeJob enables and resumes the job
@@ -1254,7 +1342,9 @@ func (jc *JobClient) ResumeJob() {
 		return
 	}
 
-	err := jc.Scheduler.Resume(toInt(jc.Job["isCron"]), jc.Job, jc.DoJob)
+	err := jc.Scheduler.Resume(toInt(jc.Job["isCron"]), jc.Job, func() {
+		jc.DoScheduled()
+	})
 	if err != nil {
 		panic(err.Error())
 	}

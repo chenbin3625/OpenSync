@@ -1,6 +1,7 @@
 package mapper
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"opensync/internal/i18n"
@@ -81,9 +82,18 @@ func UpdateJobEnable(jobID int64, enable int) error {
 
 // DeleteJob deletes a job and its tasks
 func DeleteJob(jobID int64) error {
-	ExecuteUpdate("DELETE FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE jobId=?)", jobID)
-	ExecuteUpdate("DELETE FROM job_task WHERE jobId=?", jobID)
-	return ExecuteUpdate("DELETE FROM job WHERE id=?", jobID)
+	return withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec("DELETE FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE jobId=?)", jobID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM job_task WHERE jobId=?", jobID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM job WHERE id=?", jobID); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // --- Job Task ---
@@ -128,14 +138,49 @@ func UpdateJobTaskStatusByStatusAndJobID(jobID int64) error {
 
 // DeleteJobTaskByTaskID deletes a task and its items
 func DeleteJobTaskByTaskID(taskID int64) error {
-	ExecuteUpdate("DELETE FROM job_task_item WHERE taskId=?", taskID)
-	return ExecuteUpdate("DELETE FROM job_task WHERE id=?", taskID)
+	return withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec("DELETE FROM job_task_item WHERE taskId=?", taskID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM job_task WHERE id=?", taskID); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // DeleteJobTaskByRunTime deletes old tasks
 func DeleteJobTaskByRunTime(runTime int64) error {
-	ExecuteUpdate("DELETE FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE runTime < ?)", runTime)
-	return ExecuteUpdate("DELETE FROM job_task WHERE runTime < ?", runTime)
+	return withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec("DELETE FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE runTime < ?)", runTime); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM job_task WHERE runTime < ?", runTime); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func withTx(fn func(*sql.Tx) error) error {
+	tx, err := GetDB().Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // UpdateJobTaskNumMany batch updates task result counts
@@ -189,10 +234,11 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 	baseSQL := fmt.Sprintf("SELECT * FROM job_task_item %s ORDER BY createTime DESC", where)
 
 	// Manual pagination
-	pageSize, hasPageSize := params["pageSize"]
-	pageNum, hasPageNum := params["pageNum"]
-
-	if !hasPageSize || !hasPageNum {
+	ps, pn, paginated, err := parsePageParams(params)
+	if err != nil {
+		return nil, err
+	}
+	if !paginated {
 		dataList, err := FetchAllToTable(baseSQL, args...)
 		if err != nil {
 			return nil, err
@@ -200,8 +246,6 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 		return map[string]interface{}{"dataList": dataList, "count": len(dataList)}, nil
 	}
 
-	ps := toInt(pageSize)
-	pn := toInt(pageNum)
 	offset := (pn - 1) * ps
 
 	dataQuery := baseSQL + fmt.Sprintf(" LIMIT %d OFFSET %d", ps, offset)

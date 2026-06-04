@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
-	"sync"
+	"math"
 	"opensync/internal/config"
 	"opensync/internal/i18n"
+	"strconv"
+	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
@@ -17,6 +19,8 @@ var (
 	db   *sql.DB
 	once sync.Once
 )
+
+const maxPageSize = 500
 
 // InitDB initializes the database connection
 func InitDB() *sql.DB {
@@ -127,10 +131,11 @@ func ExecuteMany(query string, argsList [][]interface{}) error {
 
 // FetchAllToPage executes a paginated query
 func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...interface{}) (map[string]interface{}, error) {
-	pageSize, hasPageSize := params["pageSize"]
-	pageNum, hasPageNum := params["pageNum"]
-
-	if !hasPageSize || !hasPageNum {
+	ps, pn, paginated, err := parsePageParams(params)
+	if err != nil {
+		return nil, err
+	}
+	if !paginated {
 		dataList, err := FetchAllToTable(baseSQL, sqlArgs...)
 		if err != nil {
 			return nil, err
@@ -141,8 +146,6 @@ func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...in
 		}, nil
 	}
 
-	ps := toInt(pageSize)
-	pn := toInt(pageNum)
 	offset := (pn - 1) * ps
 
 	dataQuery := baseSQL + fmt.Sprintf(" LIMIT %d OFFSET %d", ps, offset)
@@ -161,6 +164,57 @@ func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...in
 		"dataList": dataList,
 		"count":    toInt64(count),
 	}, nil
+}
+
+func parsePageParams(params map[string]interface{}) (pageSize, pageNum int, paginated bool, err error) {
+	pageSizeVal, hasPageSize := params["pageSize"]
+	pageNumVal, hasPageNum := params["pageNum"]
+	if !hasPageSize && !hasPageNum {
+		return 0, 0, false, nil
+	}
+	if !hasPageSize || !hasPageNum {
+		return 0, 0, false, errors.New(i18n.G("lost_part"))
+	}
+
+	pageSize, err = positiveInt(pageSizeVal)
+	if err != nil {
+		return 0, 0, false, errors.New(i18n.G("lost_part"))
+	}
+	pageNum, err = positiveInt(pageNumVal)
+	if err != nil {
+		return 0, 0, false, errors.New(i18n.G("lost_part"))
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
+	}
+	return pageSize, pageNum, true, nil
+}
+
+func positiveInt(v interface{}) (int, error) {
+	var n int64
+	switch val := v.(type) {
+	case int:
+		n = int64(val)
+	case int64:
+		n = val
+	case float64:
+		if math.Trunc(val) != val {
+			return 0, errors.New(i18n.G("lost_part"))
+		}
+		n = int64(val)
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		n = parsed
+	default:
+		return 0, errors.New(i18n.G("lost_part"))
+	}
+	if n <= 0 || n > int64(math.MaxInt) {
+		return 0, errors.New(i18n.G("lost_part"))
+	}
+	return int(n), nil
 }
 
 func toInt(v interface{}) int {
