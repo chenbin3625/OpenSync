@@ -1,6 +1,8 @@
 name: Docker Hub
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -24,6 +26,9 @@ on:
 permissions:
   contents: read
 
+env:
+  DOCKERHUB_REPOSITORY: chenbin3625/opensync
+
 jobs:
   publish:
     name: Build and publish Docker Hub image
@@ -43,15 +48,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
 
       - name: Prepare Docker tags
         id: tags
         shell: bash
         run: |
-          version="${{ inputs.version }}"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            version="${{ github.event.release.tag_name }}"
+            if [ "${{ github.event.release.prerelease }}" = "true" ]; then
+              latest="false"
+            else
+              latest="true"
+            fi
+          else
+            version="${{ inputs.version }}"
+            latest="${{ inputs.latest }}"
+          fi
+
           version="${version#v}"
           repository="${{ inputs.repository }}"
+          if [ -z "$repository" ]; then
+            repository="$DOCKERHUB_REPOSITORY"
+          fi
 
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Version must look like 1.4.0 or v1.4.0."
@@ -64,7 +83,7 @@ jobs:
             echo "tags<<EOF"
             echo "$repository:$version"
             echo "$repository:$minor"
-            if [ "${{ inputs.latest }}" = "true" ]; then
+            if [ "$latest" = "true" ]; then
               echo "$repository:latest"
             fi
             echo "EOF"
@@ -84,7 +103,7 @@ jobs:
         with:
           context: .
           push: true
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

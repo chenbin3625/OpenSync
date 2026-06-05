@@ -295,7 +295,27 @@ OpenSync 默认推荐使用 Docker Hub 镜像：
 - `chenbin3625/opensync:1.4.0`
 - `chenbin3625/opensync:1.4`
 
-当前镜像平台为 `linux/amd64`，适合常见 x86_64 飞牛系统、NAS 和服务器设备。
+镜像支持以下平台：
+
+- `linux/amd64`
+- `linux/arm64`
+- `linux/arm/v7`
+
+适合常见 x86_64、ARM64 和 ARMv7 架构的飞牛系统、NAS 和服务器设备。
+
+## GitHub Release 二进制产物
+
+每个正式 Release 会同时上传免 Docker 的二进制压缩包，适合不方便使用容器的环境：
+
+- `linux-amd64`
+- `linux-arm64`
+- `linux-armv7`
+- `darwin-amd64`
+- `darwin-arm64`
+- `windows-amd64`
+- `windows-arm64`
+
+二进制文件已内嵌前端静态资源，解压后运行 `opensync` 或 `opensync.exe` 即可。运行数据仍会保存在程序工作目录下的 `data/` 目录，请和 Docker 部署一样保留该目录。
 
 ## 注意事项
 

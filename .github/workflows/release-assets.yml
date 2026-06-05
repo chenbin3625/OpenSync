@@ -1,0 +1,144 @@
+name: Release Assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: GitHub release tag to upload assets to
+        required: true
+        default: v1.4.0
+      ref:
+        description: Git ref to build
+        required: true
+        default: v1.4.0
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.id }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-amd64
+            goos: linux
+            goarch: amd64
+            goarm: ""
+            archive: tar.gz
+            binary: opensync
+          - id: linux-arm64
+            goos: linux
+            goarch: arm64
+            goarm: ""
+            archive: tar.gz
+            binary: opensync
+          - id: linux-armv7
+            goos: linux
+            goarch: arm
+            goarm: "7"
+            archive: tar.gz
+            binary: opensync
+          - id: darwin-amd64
+            goos: darwin
+            goarch: amd64
+            goarm: ""
+            archive: tar.gz
+            binary: opensync
+          - id: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            goarm: ""
+            archive: tar.gz
+            binary: opensync
+          - id: windows-amd64
+            goos: windows
+            goarch: amd64
+            goarm: ""
+            archive: zip
+            binary: opensync.exe
+          - id: windows-arm64
+            goos: windows
+            goarch: arm64
+            goarm: ""
+            archive: zip
+            binary: opensync.exe
+
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build and package binary
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${RELEASE_TAG#v}"
+          package_name="opensync_${version}_${{ matrix.id }}"
+          package_dir="dist/$package_name"
+          binary="${{ matrix.binary }}"
+
+          mkdir -p "$package_dir"
+
+          if [ -n "${{ matrix.goarm }}" ]; then
+            export GOARM="${{ matrix.goarm }}"
+          fi
+
+          CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" \
+            go -C backend build -trimpath -ldflags="-s -w" -o "../$package_dir/$binary" ./cmd/server
+
+          cp README.md "$package_dir/README.md"
+
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            archive="dist/$package_name.zip"
+            (cd dist && zip -r "$package_name.zip" "$package_name")
+          else
+            archive="dist/$package_name.tar.gz"
+            tar -C dist -czf "$archive" "$package_name"
+          fi
+
+          checksum="$archive.sha256"
+          (cd dist && shasum -a 256 "$(basename "$archive")" > "$(basename "$checksum")")
+
+          {
+            echo "asset=$archive"
+            echo "checksum=$checksum"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "${{ steps.package.outputs.asset }}" \
+            "${{ steps.package.outputs.checksum }}" \
+            --clobber

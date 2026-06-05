@@ -59,7 +59,13 @@ services:
 - `chenbin3625/opensync:1.4.0`
 - `chenbin3625/opensync:1.4`
 
-当前镜像平台为 `linux/amd64`，适合常见 x86_64 飞牛系统、NAS 和服务器设备。
+镜像支持以下平台：
+
+- `linux/amd64`
+- `linux/arm64`
+- `linux/arm/v7`
+
+适合常见 x86_64、ARM64 和 ARMv7 架构的飞牛系统、NAS 和服务器设备。
 
 ## 主要功能
 
