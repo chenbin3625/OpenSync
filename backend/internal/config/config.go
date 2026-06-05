@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"fmt"
 	"log"
 	"opensync/pkg/crypto"
 	"os"
@@ -11,14 +12,18 @@ import (
 
 // ServerConfig holds server configuration
 type ServerConfig struct {
-	Port         int
-	Expires      int
-	LogLevel     int
-	ConsoleLevel int
-	LogSave      int
-	TaskSave     int
-	Timeout      int
-	PasswdStr    string
+	Port                  int
+	Expires               int
+	LogLevel              int
+	ConsoleLevel          int
+	LogSave               int
+	TaskSave              int
+	Timeout               int
+	CopyConcurrency       int
+	ScanConcurrency       int
+	RealtimeFinishedItems int
+	MaxRetries            int
+	PasswdStr             string
 }
 
 // DBConfig holds database configuration
@@ -34,6 +39,46 @@ type Config struct {
 
 var sysConfig *Config
 
+const (
+	defaultPort                  = 8023
+	defaultExpires               = 7
+	defaultLogLevel              = 1
+	defaultConsoleLevel          = 2
+	defaultLogSave               = 7
+	defaultTaskSave              = 30
+	defaultTaskTimeout           = 48
+	defaultCopyConcurrency       = 5
+	defaultScanConcurrency       = 8
+	defaultRealtimeFinishedItems = 1000
+	defaultMaxRetries            = 0
+
+	minExpires               = 1
+	maxExpires               = 365
+	minTaskSave              = 0
+	maxTaskSave              = 3650
+	minTaskTimeout           = 0
+	maxTaskTimeout           = 8760
+	minCopyConcurrency       = 1
+	maxCopyConcurrency       = 100
+	minScanConcurrency       = 1
+	maxScanConcurrency       = 20
+	minRealtimeFinishedItems = 100
+	maxRealtimeFinishedItems = 50000
+	minMaxRetries            = 0
+	maxMaxRetries            = 10
+)
+
+// SystemSettings is the subset of backend settings exposed for runtime editing.
+type SystemSettings struct {
+	Expires               int `json:"expires"`
+	TaskTimeout           int `json:"taskTimeout"`
+	TaskSave              int `json:"taskSave"`
+	CopyConcurrency       int `json:"copyConcurrency"`
+	ScanConcurrency       int `json:"scanConcurrency"`
+	RealtimeFinishedItems int `json:"realtimeFinishedItems"`
+	MaxRetries            int `json:"maxRetries"`
+}
+
 // GetPasswordStr gets or generates the encryption secret key
 func GetPasswordStr() string {
 	return crypto.ReadOrSetFile("data/secret.key", crypto.GeneratePassword(256), false)
@@ -48,14 +93,18 @@ func GetConfig() *Config {
 	dbname := "data/openSync.db"
 
 	sCfg := ServerConfig{
-		Port:         8023,
-		Expires:      2,
-		LogLevel:     1,
-		ConsoleLevel: 2,
-		LogSave:      7,
-		TaskSave:     0,
-		Timeout:      72,
-		PasswdStr:    passwdStr,
+		Port:                  defaultPort,
+		Expires:               defaultExpires,
+		LogLevel:              defaultLogLevel,
+		ConsoleLevel:          defaultConsoleLevel,
+		LogSave:               defaultLogSave,
+		TaskSave:              defaultTaskSave,
+		Timeout:               defaultTaskTimeout,
+		CopyConcurrency:       defaultCopyConcurrency,
+		ScanConcurrency:       defaultScanConcurrency,
+		RealtimeFinishedItems: defaultRealtimeFinishedItems,
+		MaxRetries:            defaultMaxRetries,
+		PasswdStr:             passwdStr,
 	}
 
 	if _, err := os.Stat("data/config.ini"); err == nil {
@@ -83,44 +132,32 @@ func GetConfig() *Config {
 			if v, ok := opensync["task_timeout"]; ok {
 				sCfg.Timeout = intConfigValue(v, sCfg.Timeout, "task_timeout")
 			}
+			if v, ok := opensync["copy_concurrency"]; ok {
+				sCfg.CopyConcurrency = intConfigValue(v, sCfg.CopyConcurrency, "copy_concurrency")
+			}
+			if v, ok := opensync["scan_concurrency"]; ok {
+				sCfg.ScanConcurrency = intConfigValue(v, sCfg.ScanConcurrency, "scan_concurrency")
+			}
+			if v, ok := opensync["realtime_finished_items"]; ok {
+				sCfg.RealtimeFinishedItems = intConfigValue(v, sCfg.RealtimeFinishedItems, "realtime_finished_items")
+			}
+			if v, ok := opensync["max_retries"]; ok {
+				sCfg.MaxRetries = intConfigValue(v, sCfg.MaxRetries, "max_retries")
+			}
 		}
 	} else {
 		// Read from environment variables
-		if v := os.Getenv("OPENSYNC_PORT"); v != "" {
-			if i, err := strconv.Atoi(v); err == nil {
-				sCfg.Port = i
-			}
-		}
-		if v := os.Getenv("OPENSYNC_EXPIRES"); v != "" {
-			if i, err := strconv.Atoi(v); err == nil {
-				sCfg.Expires = i
-			}
-		}
-		if v := os.Getenv("OPENSYNC_LOG_LEVEL"); v != "" {
-			if i, err := strconv.Atoi(v); err == nil {
-				sCfg.LogLevel = i
-			}
-		}
-		if v := os.Getenv("OPENSYNC_CONSOLE_LEVEL"); v != "" {
-			if i, err := strconv.Atoi(v); err == nil {
-				sCfg.ConsoleLevel = i
-			}
-		}
-		if v := os.Getenv("OPENSYNC_LOG_SAVE"); v != "" {
-			if i, err := strconv.Atoi(v); err == nil {
-				sCfg.LogSave = i
-			}
-		}
-		if v := os.Getenv("OPENSYNC_TASK_SAVE"); v != "" {
-			if i, err := strconv.Atoi(v); err == nil {
-				sCfg.TaskSave = i
-			}
-		}
-		if v := os.Getenv("OPENSYNC_TASK_TIMEOUT"); v != "" {
-			if i, err := strconv.Atoi(v); err == nil {
-				sCfg.Timeout = i
-			}
-		}
+		sCfg.Port = envIntConfigValue("OPENSYNC_PORT", sCfg.Port)
+		sCfg.Expires = envIntConfigValue("OPENSYNC_EXPIRES", sCfg.Expires)
+		sCfg.LogLevel = envIntConfigValue("OPENSYNC_LOG_LEVEL", sCfg.LogLevel)
+		sCfg.ConsoleLevel = envIntConfigValue("OPENSYNC_CONSOLE_LEVEL", sCfg.ConsoleLevel)
+		sCfg.LogSave = envIntConfigValue("OPENSYNC_LOG_SAVE", sCfg.LogSave)
+		sCfg.TaskSave = envIntConfigValue("OPENSYNC_TASK_SAVE", sCfg.TaskSave)
+		sCfg.Timeout = envIntConfigValue("OPENSYNC_TASK_TIMEOUT", sCfg.Timeout)
+		sCfg.CopyConcurrency = envIntConfigValue("OPENSYNC_COPY_CONCURRENCY", sCfg.CopyConcurrency)
+		sCfg.ScanConcurrency = envIntConfigValue("OPENSYNC_SCAN_CONCURRENCY", sCfg.ScanConcurrency)
+		sCfg.RealtimeFinishedItems = envIntConfigValue("OPENSYNC_REALTIME_FINISHED_ITEMS", sCfg.RealtimeFinishedItems)
+		sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
 	}
 
 	sysConfig = &Config{
@@ -128,6 +165,110 @@ func GetConfig() *Config {
 		Server: sCfg,
 	}
 	return sysConfig
+}
+
+// SetConfigForTest swaps the process config for tests in other packages.
+func SetConfigForTest(cfg *Config) {
+	sysConfig = cfg
+}
+
+// GetSystemSettings returns the runtime-editable settings.
+func GetSystemSettings() SystemSettings {
+	cfg := GetConfig()
+	return SystemSettings{
+		Expires:               cfg.Server.Expires,
+		TaskTimeout:           cfg.Server.Timeout,
+		TaskSave:              cfg.Server.TaskSave,
+		CopyConcurrency:       cfg.Server.CopyConcurrency,
+		ScanConcurrency:       cfg.Server.ScanConcurrency,
+		RealtimeFinishedItems: cfg.Server.RealtimeFinishedItems,
+		MaxRetries:            cfg.Server.MaxRetries,
+	}
+}
+
+// UpdateSystemSettings validates, persists, and applies runtime-editable settings.
+func UpdateSystemSettings(settings SystemSettings) error {
+	if err := validateSystemSettings(settings); err != nil {
+		return err
+	}
+
+	cfg := GetConfig()
+	nextServer := cfg.Server
+	nextServer.Expires = settings.Expires
+	nextServer.Timeout = settings.TaskTimeout
+	nextServer.TaskSave = settings.TaskSave
+	nextServer.CopyConcurrency = settings.CopyConcurrency
+	nextServer.ScanConcurrency = settings.ScanConcurrency
+	nextServer.RealtimeFinishedItems = settings.RealtimeFinishedItems
+	nextServer.MaxRetries = settings.MaxRetries
+
+	if err := writeConfigFile(nextServer); err != nil {
+		return err
+	}
+	cfg.Server = nextServer
+	return nil
+}
+
+func validateSystemSettings(settings SystemSettings) error {
+	checks := []struct {
+		name     string
+		value    int
+		min, max int
+	}{
+		{"登录有效期", settings.Expires, minExpires, maxExpires},
+		{"任务超时时间", settings.TaskTimeout, minTaskTimeout, maxTaskTimeout},
+		{"历史任务保留", settings.TaskSave, minTaskSave, maxTaskSave},
+		{"复制并发数", settings.CopyConcurrency, minCopyConcurrency, maxCopyConcurrency},
+		{"扫描并发数", settings.ScanConcurrency, minScanConcurrency, maxScanConcurrency},
+		{"完成明细保留数", settings.RealtimeFinishedItems, minRealtimeFinishedItems, maxRealtimeFinishedItems},
+		{"最大重试次数", settings.MaxRetries, minMaxRetries, maxMaxRetries},
+	}
+	for _, item := range checks {
+		if item.value < item.min || item.value > item.max {
+			return fmt.Errorf("%s必须在%d到%d之间", item.name, item.min, item.max)
+		}
+	}
+	return nil
+}
+
+func envIntConfigValue(envName string, fallback int) int {
+	value := os.Getenv(envName)
+	if value == "" {
+		return fallback
+	}
+	return intConfigValue(value, fallback, envName)
+}
+
+func writeConfigFile(sCfg ServerConfig) error {
+	if err := os.MkdirAll("data", 0755); err != nil {
+		return err
+	}
+	content := fmt.Sprintf(`[opensync]
+port=%d
+expires=%d
+log_level=%d
+console_level=%d
+log_save=%d
+task_save=%d
+task_timeout=%d
+copy_concurrency=%d
+scan_concurrency=%d
+realtime_finished_items=%d
+max_retries=%d
+`,
+		sCfg.Port,
+		sCfg.Expires,
+		sCfg.LogLevel,
+		sCfg.ConsoleLevel,
+		sCfg.LogSave,
+		sCfg.TaskSave,
+		sCfg.Timeout,
+		sCfg.CopyConcurrency,
+		sCfg.ScanConcurrency,
+		sCfg.RealtimeFinishedItems,
+		sCfg.MaxRetries,
+	)
+	return os.WriteFile("data/config.ini", []byte(content), 0644)
 }
 
 func intConfigValue(value string, fallback int, key string) int {

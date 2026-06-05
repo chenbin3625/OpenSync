@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const currentVersion = 250608
+const currentVersion = 260605
 
 // InitSQL initializes the database schema and runs migrations
 // Returns the initial admin password if first run, empty string otherwise
@@ -74,6 +74,8 @@ func InitSQL() string {
 				start_date text DEFAULT NULL,
 				end_date text DEFAULT NULL,
 				exclude text DEFAULT NULL,
+				minFileSize integer DEFAULT 0,
+				maxFileSize integer DEFAULT 0,
 				createTime integer DEFAULT (strftime('%s', 'now')),
 				UNIQUE (srcPath, dstPath, alistId)
 			)`,
@@ -211,6 +213,12 @@ func migrationStatements(fromVersion int64) []string {
 			"UPDATE job SET scanIntervalT = 10, useCacheT = 0 WHERE useCacheT = 2",
 		)
 	}
+	if fromVersion < 260605 {
+		stmts = append(stmts,
+			"ALTER TABLE job ADD COLUMN minFileSize integer DEFAULT 0",
+			"ALTER TABLE job ADD COLUMN maxFileSize integer DEFAULT 0",
+		)
+	}
 	stmts = append(stmts, fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion))
 	return stmts
 }
@@ -237,6 +245,9 @@ func migrateDBTx(db *sql.DB, fromVersion int64) error {
 	}()
 
 	for _, stmt := range migrationStatements(fromVersion) {
+		if shouldSkipMigrationStatement(tx, stmt) {
+			continue
+		}
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("migration SQL failed: %w\nSQL: %s", err, stmt)
 		}
@@ -246,6 +257,42 @@ func migrateDBTx(db *sql.DB, fromVersion int64) error {
 	}
 	committed = true
 	return nil
+}
+
+func shouldSkipMigrationStatement(tx *sql.Tx, stmt string) bool {
+	switch stmt {
+	case "ALTER TABLE job RENAME COLUMN speed TO useCacheT":
+		return !txTableHasColumn(tx, "job", "speed") && txTableHasColumn(tx, "job", "useCacheT")
+	case "ALTER TABLE job ADD COLUMN minFileSize integer DEFAULT 0":
+		return txTableHasColumn(tx, "job", "minFileSize")
+	case "ALTER TABLE job ADD COLUMN maxFileSize integer DEFAULT 0":
+		return txTableHasColumn(tx, "job", "maxFileSize")
+	default:
+		return false
+	}
+}
+
+func txTableHasColumn(tx *sql.Tx, tableName, columnName string) bool {
+	rows, err := tx.Query("PRAGMA table_info(" + tableName + ")")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false
+		}
+		if name == columnName {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateAbnormalTasks updates incomplete tasks to aborted status on startup

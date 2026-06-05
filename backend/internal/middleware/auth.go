@@ -140,7 +140,7 @@ func AuthRequired() gin.HandlerFunc {
 		cookieVal, err := c.Cookie(cookieName)
 		if err != nil || cookieVal == "" {
 			ClearAuthCookie(c)
-			c.JSON(http.StatusOK, model.Unauthorized(i18n.G("sign_in")))
+			c.JSON(http.StatusUnauthorized, model.Unauthorized(i18n.G("sign_in")))
 			c.Abort()
 			return
 		}
@@ -148,7 +148,7 @@ func AuthRequired() gin.HandlerFunc {
 		var decoded string
 		if err := sc.Decode(cookieName, cookieVal, &decoded); err != nil {
 			ClearAuthCookie(c)
-			c.JSON(http.StatusOK, model.Unauthorized(i18n.G("login_expired")))
+			c.JSON(http.StatusUnauthorized, model.Unauthorized(i18n.G("login_expired")))
 			c.Abort()
 			return
 		}
@@ -156,7 +156,7 @@ func AuthRequired() gin.HandlerFunc {
 		var cUser CookieUser
 		if err := json.Unmarshal([]byte(decoded), &cUser); err != nil {
 			ClearAuthCookie(c)
-			c.JSON(http.StatusOK, model.Unauthorized(i18n.G("login_expired")))
+			c.JSON(http.StatusUnauthorized, model.Unauthorized(i18n.G("login_expired")))
 			c.Abort()
 			return
 		}
@@ -165,14 +165,14 @@ func AuthRequired() gin.HandlerFunc {
 		trueUser, err := mapper.GetUserByID(cUser.ID)
 		if err != nil {
 			ClearAuthCookie(c)
-			c.JSON(http.StatusOK, model.Unauthorized(i18n.G("login_expired")))
+			c.JSON(http.StatusUnauthorized, model.Unauthorized(i18n.G("login_expired")))
 			c.Abort()
 			return
 		}
 
 		if !CookieUserMatches(cUser, trueUser) {
 			ClearAuthCookie(c)
-			c.JSON(http.StatusOK, model.Unauthorized(i18n.G("login_expired")))
+			c.JSON(http.StatusUnauthorized, model.Unauthorized(i18n.G("login_expired")))
 			c.Abort()
 			return
 		}

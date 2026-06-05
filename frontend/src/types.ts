@@ -15,6 +15,16 @@ export interface UserInfo {
   createTime: number;
 }
 
+export interface SystemSettings {
+  expires: number;
+  taskTimeout: number;
+  taskSave: number;
+  copyConcurrency: number;
+  scanConcurrency: number;
+  realtimeFinishedItems: number;
+  maxRetries: number;
+}
+
 export interface AlistItem {
   id: number;
   remark?: string | null;
@@ -53,6 +63,8 @@ export interface JobItem {
   start_date?: string | null;
   end_date?: string | null;
   exclude?: string | null;
+  minFileSize?: number;
+  maxFileSize?: number;
   createTime?: number;
 }
 
@@ -76,6 +88,10 @@ export interface JobFormValues {
   month?: string;
   day_of_week?: string;
   exclude?: string | null;
+  minFileSize?: number;
+  minFileSizeUnit?: string;
+  maxFileSize?: number;
+  maxFileSizeUnit?: string;
 }
 
 export interface TreeNode {
@@ -121,6 +137,7 @@ export interface ScanProgress {
 }
 
 export interface CurrentTaskData {
+  taskId: number;
   scanFinish: boolean;
   scan?: ScanProgress;
   doingTask: TaskItem[];

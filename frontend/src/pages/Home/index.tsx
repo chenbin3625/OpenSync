@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Key } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Card, Row, Col, Button, Tag, Space, Popconfirm, Pagination, App, Drawer, Select, Input, Form, Switch, InputNumber,
-  Empty, Typography, Divider, TreeSelect, Spin, Descriptions, Tooltip,
+  Empty, Typography, Divider, TreeSelect, Spin, Descriptions, Tooltip, Tabs, Menu,
 } from 'antd';
 import {
   PlusOutlined, PlayCircleOutlined, DeleteOutlined,
   CaretRightOutlined, EditOutlined, QuestionCircleOutlined,
+  CheckOutlined, PauseOutlined,
 } from '@ant-design/icons';
 import { jobGetJob, jobPost, jobPut, jobDelete } from '../../api/job';
 import { alistGet, alistGetPath } from '../../api/alist';
@@ -14,8 +16,10 @@ import TaskList from './TaskList';
 import TaskDetail from './TaskDetail';
 import dayjs from 'dayjs';
 import type { AlistItem, JobFormValues, JobItem, PathItem, TreeNode } from '../../types';
+import { fileSizeToBytes, fileSizeUnitOptions, splitBytesToFileSize } from './fileSizeUnits';
+import { buildHomeRouteSearch, readHomeRouteState, type HomeRouteState, type HomeTabKey } from './routeState';
 
-const { Text } = Typography;
+const { Text, Title } = Typography;
 
 const statusColors: Record<number, string> = {
   0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
@@ -140,6 +144,55 @@ const formatJobPaths = (value: unknown, separator = '、') => {
   return paths.length > 0 ? paths.join(separator) : '';
 };
 
+const formatSize = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = bytes;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+  return `${size.toFixed(unitIndex === 0 ? 0 : 2)} ${units[unitIndex]}`;
+};
+
+const formatFileSizeRange = (minSize?: number | null, maxSize?: number | null) => {
+  const min = Number(minSize || 0);
+  const max = Number(maxSize || 0);
+  if (min <= 0 && max <= 0) return '';
+  if (min > 0 && max > 0) return `${formatSize(min)} ~ ${formatSize(max)}`;
+  if (min > 0) return `不小于 ${formatSize(min)}`;
+  return `不大于 ${formatSize(max)}`;
+};
+
+function formatExcludePreview(value?: string | null): string {
+  const rules = String(value ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+
+  if (rules.length === 0) return '仅注释';
+  const preview = rules.slice(0, 3).join('、');
+  return rules.length > 3 ? `${preview} 等 ${rules.length} 条` : preview;
+}
+
+function JobExcludeText({ value }: { value?: string | null }) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+
+  return (
+    <Tooltip
+      placement="topLeft"
+      classNames={{ root: 'sync-job-exclude-tooltip' }}
+      title={<pre className="sync-job-exclude-tooltip-content">{text}</pre>}
+    >
+      <Text type="secondary" className="sync-job-exclude-preview">
+        {formatExcludePreview(text)}
+      </Text>
+    </Tooltip>
+  );
+}
+
 const defaultExclude = `# macOS
 .DS_Store
 ._*
@@ -233,15 +286,19 @@ coverage/
 
 export default function Home() {
   const { message } = App.useApp();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialRouteState = readHomeRouteState(searchParams);
   const [list, setList] = useState<JobItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(12);
   const [loading, setLoading] = useState(false);
+  const [listLoaded, setListLoaded] = useState(false);
   const [alistList, setAlistList] = useState<AlistItem[]>([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [editingJob, setEditingJob] = useState<JobItem | null>(null);
-  const [taskDrawerJobId, setTaskDrawerJobId] = useState<string>('');
+  const [selectedJobId, setSelectedJobId] = useState<number | null>(() => initialRouteState.jobId);
+  const [activeJobTab, setActiveJobTab] = useState<HomeTabKey>(() => initialRouteState.tab);
   const [taskDetailDrawerTaskId, setTaskDetailDrawerTaskId] = useState<string>('');
   const [form] = Form.useForm();
 
@@ -259,7 +316,10 @@ export default function Home() {
       setList(res.data?.dataList || []);
       setTotal(res.data?.count || 0);
     } catch { /* ignore */ }
-    setLoading(false);
+    finally {
+      setListLoaded(true);
+      setLoading(false);
+    }
   }, [page, pageSize]);
 
   const fetchAlistList = useCallback(async () => {
@@ -271,6 +331,27 @@ export default function Home() {
 
   useEffect(() => { fetchAlistList(); }, [fetchAlistList]);
   useEffect(() => { fetchList(); }, [fetchList]);
+  useEffect(() => {
+    const routeState = readHomeRouteState(searchParams);
+    setActiveJobTab((current) => (current === routeState.tab ? current : routeState.tab));
+    setSelectedJobId((current) => (current === routeState.jobId ? current : routeState.jobId));
+  }, [searchParams]);
+  useEffect(() => {
+    if (!listLoaded) return;
+    let nextJobId = selectedJobId;
+    if (list.length === 0) {
+      nextJobId = null;
+    } else if (!selectedJobId || !list.some((job) => job.id === selectedJobId)) {
+      nextJobId = list[0].id;
+    }
+
+    if (nextJobId === selectedJobId) return;
+    setSelectedJobId(nextJobId);
+    setSearchParams(buildHomeRouteSearch(searchParams, {
+      tab: activeJobTab,
+      jobId: nextJobId,
+    }), { replace: true });
+  }, [activeJobTab, list, listLoaded, searchParams, selectedJobId, setSearchParams]);
 
   // Load root directory when alistId changes
   const selectedAlistId = Form.useWatch('alistId', form) as number | undefined;
@@ -353,6 +434,10 @@ export default function Home() {
       useCacheT: false,
       scanIntervalS: 0,
       scanIntervalT: 0,
+      minFileSize: 0,
+      minFileSizeUnit: 'MB',
+      maxFileSize: 0,
+      maxFileSizeUnit: 'MB',
       ...defaultCronFields,
       exclude: defaultExclude,
     });
@@ -364,6 +449,8 @@ export default function Home() {
   };
 
   const handleEdit = (job: JobItem) => {
+    const minFileSize = splitBytesToFileSize(job.minFileSize);
+    const maxFileSize = splitBytesToFileSize(job.maxFileSize);
     setEditingJob(job);
     form.resetFields();
     form.setFieldsValue({
@@ -379,6 +466,10 @@ export default function Home() {
       day: job.day || defaultCronFields.day,
       month: job.month || defaultCronFields.month,
       day_of_week: job.day_of_week || defaultCronFields.day_of_week,
+      minFileSize: minFileSize.value,
+      minFileSizeUnit: minFileSize.unit,
+      maxFileSize: maxFileSize.value,
+      maxFileSizeUnit: maxFileSize.unit,
     });
     setSrcLoadedKeys([]);
     setDstLoadedKeys([]);
@@ -390,17 +481,20 @@ export default function Home() {
       const values = await form.validateFields() as JobFormValues;
       const srcPaths = normalizeFormPaths(values.srcPath);
       const dstPaths = normalizeFormPaths(values.dstPath);
+      const { minFileSizeUnit, maxFileSizeUnit, ...jobValues } = values;
       const jobData: Record<string, unknown> = {
         ...(editingJob ? { id: editingJob.id } : {}),
-        ...values,
+        ...jobValues,
         srcPath: srcPaths,
         dstPath: dstPaths,
         enable: values.enable ? 1 : 0,
         useCacheS: values.useCacheS ? 1 : 0,
         useCacheT: values.useCacheT ? 1 : 0,
+        minFileSize: fileSizeToBytes(values.minFileSize, minFileSizeUnit),
+        maxFileSize: fileSizeToBytes(values.maxFileSize, maxFileSizeUnit),
       };
       await jobPost(jobData);
-      message.success(editingJob ? '编辑成功' : '创建成功');
+      message.success(editingJob ? '编辑成功，下次任务生效' : '创建成功');
       setDrawerVisible(false);
       fetchList();
     } catch { /* ignore */ }
@@ -437,15 +531,15 @@ export default function Home() {
     } catch { /* ignore */ }
   };
 
-  const openTaskDrawer = (jobId: number | string) => {
-    setTaskDetailDrawerTaskId('');
-    setTaskDrawerJobId(String(jobId));
-  };
-
-  const closeTaskDrawer = () => {
-    setTaskDetailDrawerTaskId('');
-    setTaskDrawerJobId('');
-  };
+  const updateHomeRouteState = useCallback((state: Partial<HomeRouteState>) => {
+    const nextRouteState: HomeRouteState = {
+      tab: state.tab ?? activeJobTab,
+      jobId: state.jobId !== undefined ? state.jobId : selectedJobId,
+    };
+    setActiveJobTab(nextRouteState.tab);
+    setSelectedJobId(nextRouteState.jobId);
+    setSearchParams(buildHomeRouteSearch(searchParams, nextRouteState), { replace: true });
+  }, [activeJobTab, searchParams, selectedJobId, setSearchParams]);
 
   const getAlistName = (alistId: number) => {
     const a = alistList.find((x) => x.id === alistId);
@@ -486,107 +580,189 @@ export default function Home() {
     day_of_week: dayOfWeekValue,
   };
   const schedulePlan = formatSchedulePlan(scheduleValues);
+  const selectedJob = list.find((job) => job.id === selectedJobId) || null;
+
+  const getJobName = (job: JobItem) => job.remark || `同步任务 #${job.id}`;
+
+  const renderSelectedJobEmpty = () => (
+    <Empty
+      image={Empty.PRESENTED_IMAGE_SIMPLE}
+      description={<Text type="secondary">请先在左侧选择同步任务</Text>}
+    />
+  );
+
+  const renderOverview = () => {
+    if (!selectedJob) return renderSelectedJobEmpty();
+    const fileSizeRange = formatFileSizeRange(selectedJob.minFileSize, selectedJob.maxFileSize);
+
+    return (
+      <div className="sync-overview">
+        <Card className="sync-overview-summary">
+          <div className={`sync-status-badge ${selectedJob.enable === 1 ? 'is-enabled' : 'is-disabled'}`}>
+            {selectedJob.enable === 1 ? <CheckOutlined /> : <PauseOutlined />}
+          </div>
+          <div className="sync-overview-title">
+            <Title level={3} className="sync-overview-heading">{getJobName(selectedJob)}</Title>
+            <Space size={6} wrap>
+              <Tag color={statusColors[selectedJob.enable] || 'default'}>
+                {statusLabels[selectedJob.enable] || '未知'}
+              </Tag>
+              <Tag>{methodNames[selectedJob.method] || selectedJob.method}</Tag>
+              {selectedJob.isCron !== 2 && (
+                <Switch
+                  checked={selectedJob.enable === 1}
+                  onChange={() => handleToggle(selectedJob)}
+                  size="small"
+                />
+              )}
+            </Space>
+          </div>
+          <Space className="sync-overview-actions" wrap>
+            <Button icon={<CaretRightOutlined />} onClick={() => handleRun(selectedJob.id)}>手动执行</Button>
+            <Button
+              icon={<EditOutlined />}
+              onClick={() => handleEdit(selectedJob)}
+            >
+              编辑
+            </Button>
+            <Popconfirm title="确认删除此同步任务？" onConfirm={() => handleDelete(selectedJob.id)}>
+              <Button icon={<DeleteOutlined />} danger>删除</Button>
+            </Popconfirm>
+          </Space>
+        </Card>
+
+        <Card title="连接信息">
+          <Descriptions className="sync-job-descriptions" column={1} size="middle">
+            <Descriptions.Item label="引擎">
+              <Text type="secondary">{getAlistName(selectedJob.alistId)}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="源目录">
+              <Text ellipsis={{ tooltip: formatJobPaths(selectedJob.srcPath) }}>
+                {formatJobPaths(selectedJob.srcPath)}
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="目标">
+              <Text ellipsis={{ tooltip: formatJobPaths(selectedJob.dstPath, ' → ') }}>
+                {formatJobPaths(selectedJob.dstPath, ' → ')}
+              </Text>
+            </Descriptions.Item>
+          </Descriptions>
+        </Card>
+
+        <Card title="同步设置">
+          <Descriptions className="sync-job-descriptions" column={1} size="middle">
+            <Descriptions.Item label="调度">
+              <Text type="secondary">{formatSchedule(selectedJob)}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="缓存">
+              <Text type="secondary">{formatCache(selectedJob.useCacheS, selectedJob.useCacheT)}</Text>
+            </Descriptions.Item>
+            {fileSizeRange ? (
+              <Descriptions.Item label="大小范围">
+                <Text type="secondary">{fileSizeRange}</Text>
+              </Descriptions.Item>
+            ) : null}
+            {selectedJob.exclude ? (
+              <Descriptions.Item label="排除">
+                <JobExcludeText value={selectedJob.exclude} />
+              </Descriptions.Item>
+            ) : null}
+            <Descriptions.Item label="创建">
+              <Text type="secondary">
+                {selectedJob.createTime ? dayjs.unix(selectedJob.createTime).format('YYYY-MM-DD HH:mm') : '-'}
+              </Text>
+            </Descriptions.Item>
+          </Descriptions>
+        </Card>
+      </div>
+    );
+  };
 
   return (
-    <div>
-      <Card className="page-card">
-        <div className="page-header">
-          <h2>任务管理</h2>
-          <Space>
-            <Button icon={<PlayCircleOutlined />} onClick={handleRunAll}>执行全部</Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新建同步任务</Button>
-          </Space>
+    <div className="sync-manager">
+      <aside className="sync-manager-sidebar">
+        <div className="sync-sidebar-toolbar">
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新建</Button>
+          <Button icon={<PlayCircleOutlined />} onClick={handleRunAll}>执行全部</Button>
         </div>
 
-        {list.length === 0 && !loading ? (
-          <Empty
-            description={<Text type="secondary">暂无同步任务，点击上方「新建同步任务」创建第一个同步任务</Text>}
+        <div className="sync-sidebar-list">
+          {list.length === 0 && !loading ? (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={<Text type="secondary">暂无同步任务</Text>}
+            />
+          ) : (
+            <Spin spinning={loading && list.length === 0}>
+              <Menu
+                mode="inline"
+                selectedKeys={selectedJobId ? [String(selectedJobId)] : []}
+                onClick={({ key }) => {
+                  updateHomeRouteState({ jobId: Number(key) });
+                  setTaskDetailDrawerTaskId('');
+                }}
+                items={list.map((job) => ({
+                  key: String(job.id),
+                  label: getJobName(job),
+                }))}
+              />
+            </Spin>
+          )}
+        </div>
+
+        <div className="sync-sidebar-pagination">
+          {total > pageSize && (
+            <Pagination current={page} pageSize={pageSize} total={total} onChange={setPage} showSizeChanger={false} size="small" />
+          )}
+        </div>
+      </aside>
+
+      <main className="sync-manager-content">
+        {selectedJob ? (
+          <Tabs
+            className="sync-main-tabs"
+            activeKey={activeJobTab}
+            onChange={(key) => updateHomeRouteState({ tab: key as HomeTabKey })}
+            items={[
+              {
+                key: 'overview',
+                label: '总览',
+                children: activeJobTab === 'overview' ? renderOverview() : null,
+              },
+              {
+                key: 'realtime',
+                label: '实时任务',
+                children: activeJobTab === 'realtime' ? (
+                  <TaskList
+                    key={`realtime-${selectedJob.id}`}
+                    jobId={String(selectedJob.id)}
+                    view="realtime"
+                    onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+                  />
+                ) : null,
+              },
+              {
+                key: 'history',
+                label: '历史任务',
+                children: activeJobTab === 'history' ? (
+                  <TaskList
+                    key={`history-${selectedJob.id}`}
+                    jobId={String(selectedJob.id)}
+                    view="history"
+                    onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+                  />
+                ) : null,
+              },
+            ]}
           />
         ) : (
-          <>
-            <Row gutter={[16, 16]}>
-              {list.map((job) => (
-                <Col xs={24} md={12} key={job.id}>
-                  <Card
-                    hoverable
-                    className="sync-job-card"
-                    title={job.remark || `同步任务 #${job.id}`}
-                    extra={
-                      <Space>
-                        <Tag color={statusColors[job.enable] || 'default'}>{statusLabels[job.enable] || '未知'}</Tag>
-                        <Tag>{methodNames[job.method] || job.method}</Tag>
-                        {job.isCron !== 2 && (
-                          <Switch
-                            checked={job.enable === 1}
-                            onChange={(_, e) => { e.stopPropagation(); handleToggle(job); }}
-                            onClick={(_, e) => e.stopPropagation()}
-                            size="small"
-                          />
-                        )}
-                      </Space>
-                    }
-                    onClick={() => openTaskDrawer(job.id)}
-                    actions={[
-                      <Tooltip title="手动执行" key="run">
-                        <CaretRightOutlined
-                          onClick={(e) => { e.stopPropagation(); handleRun(job.id); }}
-                        />
-                      </Tooltip>,
-                      <Tooltip title={job.enable === 1 ? '启用中，不可编辑' : '编辑'} key="edit">
-                        <EditOutlined
-                          onClick={(e) => { e.stopPropagation(); if (job.enable !== 1) handleEdit(job); }}
-                        />
-                      </Tooltip>,
-                      <Popconfirm title="确认删除此同步任务？" onConfirm={() => handleDelete(job.id)} key="del">
-                        <Tooltip title="删除">
-                          <DeleteOutlined
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </Tooltip>
-                      </Popconfirm>,
-                    ]}
-                  >
-                    <Descriptions className="sync-job-descriptions" column={1} size="small">
-                      <Descriptions.Item label="引擎">
-                        <Text type="secondary">{getAlistName(job.alistId)}</Text>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="源目录">
-                        <Text ellipsis={{ tooltip: formatJobPaths(job.srcPath) }}>{formatJobPaths(job.srcPath)}</Text>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="目标">
-                        <Text ellipsis={{ tooltip: formatJobPaths(job.dstPath, ' → ') }}>
-                          {formatJobPaths(job.dstPath, ' → ')}
-                        </Text>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="调度">
-                        <Text type="secondary">{formatSchedule(job)}</Text>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="缓存">
-                        <Text type="secondary">{formatCache(job.useCacheS, job.useCacheT)}</Text>
-                      </Descriptions.Item>
-                      {job.exclude && (
-                        <Descriptions.Item label="排除">
-                          <Text type="secondary" ellipsis={{ tooltip: job.exclude }}>{job.exclude}</Text>
-                        </Descriptions.Item>
-                      )}
-                      <Descriptions.Item label="创建">
-                        <Text type="secondary">
-                          {job.createTime ? dayjs.unix(job.createTime).format('YYYY-MM-DD HH:mm') : '—'}
-                        </Text>
-                      </Descriptions.Item>
-                    </Descriptions>
-                  </Card>
-                </Col>
-              ))}
-            </Row>
-            {total > pageSize && (
-              <div style={{ textAlign: 'center', marginTop: 20 }}>
-                <Pagination current={page} pageSize={pageSize} total={total} onChange={setPage} showSizeChanger={false} />
-              </div>
-            )}
-          </>
+          <div className="sync-manager-empty">
+            <Empty
+              description={<Text type="secondary">暂无同步任务，点击左侧「新建」创建第一个同步任务</Text>}
+            />
+          </div>
         )}
-      </Card>
+      </main>
 
       <Drawer
         title={editingJob ? '编辑同步任务' : '新建同步任务'}
@@ -675,7 +851,7 @@ export default function Home() {
                         </Space>
                       )}
                     >
-                      <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                      <QuestionCircleOutlined />
                     </Tooltip>
                   </Space>
                 )}
@@ -691,7 +867,7 @@ export default function Home() {
                   <Space size={4}>
                     调度方式
                     <Tooltip title={`预计执行计划：${schedulePlan}`}>
-                      <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                      <QuestionCircleOutlined />
                     </Tooltip>
                   </Space>
                 )}
@@ -733,6 +909,69 @@ export default function Home() {
               ))}
             </Row>
           )}
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item
+                name="minFileSize"
+                label="最小文件大小"
+                tooltip="0 表示不限制小文件"
+                style={compactItemStyle}
+              >
+                <InputNumber
+                  min={0}
+                  precision={2}
+                  style={{ width: '100%' }}
+                  placeholder="0 不限"
+                  addonAfter={(
+                    <Form.Item name="minFileSizeUnit" noStyle>
+                      <Select
+                        options={fileSizeUnitOptions}
+                        style={{ width: 84 }}
+                        onChange={() => form.validateFields(['maxFileSize']).catch(() => undefined)}
+                      />
+                    </Form.Item>
+                  )}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="maxFileSize"
+                label="最大文件大小"
+                tooltip="0 表示不限制大文件"
+                dependencies={['minFileSize', 'minFileSizeUnit', 'maxFileSizeUnit']}
+                rules={[
+                  ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      const minSize = fileSizeToBytes(getFieldValue('minFileSize'), getFieldValue('minFileSizeUnit'));
+                      const maxSize = fileSizeToBytes(value, getFieldValue('maxFileSizeUnit'));
+                      if (maxSize > 0 && minSize > maxSize) {
+                        return Promise.reject(new Error('最大文件大小必须大于等于最小文件大小'));
+                      }
+                      return Promise.resolve();
+                    },
+                  }),
+                ]}
+                style={compactItemStyle}
+              >
+                <InputNumber
+                  min={0}
+                  precision={2}
+                  style={{ width: '100%' }}
+                  placeholder="0 不限"
+                  addonAfter={(
+                    <Form.Item name="maxFileSizeUnit" noStyle>
+                      <Select
+                        options={fileSizeUnitOptions}
+                        style={{ width: 84 }}
+                        onChange={() => form.validateFields(['maxFileSize']).catch(() => undefined)}
+                      />
+                    </Form.Item>
+                  )}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Divider style={compactDividerStyle}>缓存与扫描</Divider>
           <Row gutter={12}>
@@ -772,23 +1011,12 @@ export default function Home() {
       </Drawer>
 
       <Drawer
-        title={`任务列表 — 同步任务 #${taskDrawerJobId}`}
-        open={!!taskDrawerJobId}
-        onClose={closeTaskDrawer}
-        styles={{ wrapper: { width: 'min(1180px, 96vw)' } }}
-        destroyOnClose
-      >
-        <TaskList
-          jobId={taskDrawerJobId}
-          onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-        />
-      </Drawer>
-
-      <Drawer
         title={`任务详情 — 任务 #${taskDetailDrawerTaskId}`}
+        placement="bottom"
         open={!!taskDetailDrawerTaskId}
         onClose={() => setTaskDetailDrawerTaskId('')}
-        styles={{ wrapper: { width: 'min(1040px, 94vw)' } }}
+        height="min(78vh, 720px)"
+        styles={{ body: { padding: 16 } }}
         destroyOnClose
       >
         <TaskDetail key={taskDetailDrawerTaskId} taskId={taskDetailDrawerTaskId} embedded />

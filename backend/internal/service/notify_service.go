@@ -148,8 +148,10 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 // sendNotify sends a notification via the configured method
 func sendNotify(notify map[string]interface{}, title, content string, needNotSync bool) {
 	paramsStr := fmt.Sprintf("%v", notify["params"])
-	var params map[string]interface{}
-	json.Unmarshal([]byte(paramsStr), &params)
+	params, err := parseNotifyParams(paramsStr)
+	if err != nil {
+		panic(err.Error())
+	}
 
 	method := toInt(notify["method"])
 
@@ -173,6 +175,59 @@ func sendNotify(notify map[string]interface{}, title, content string, needNotSyn
 		sendWeCom(notifyHTTPClient, params, title, content)
 	case 4: // Lark (Feishu)
 		sendLark(notifyHTTPClient, params, title, content)
+	}
+}
+
+func parseNotifyParams(paramsStr string) (map[string]interface{}, error) {
+	paramsStr = strings.TrimSpace(paramsStr)
+	if paramsStr == "" || paramsStr == "<nil>" {
+		return map[string]interface{}{}, nil
+	}
+	var params map[string]interface{}
+	if err := json.Unmarshal([]byte(paramsStr), &params); err != nil {
+		return nil, err
+	}
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	return params, nil
+}
+
+func buildNotifyRequest(method, urlStr string, body io.Reader, contentType string) (*http.Request, error) {
+	method = strings.TrimSpace(method)
+	urlStr = strings.TrimSpace(urlStr)
+	if urlStr == "" {
+		return nil, fmt.Errorf("url is required")
+	}
+	req, err := http.NewRequest(method, urlStr, body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	return req, nil
+}
+
+func sendNotifyRequest(client *http.Client, req *http.Request) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err.Error())
+	}
+	defer resp.Body.Close()
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		panic(err.Error())
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		msg := strings.TrimSpace(string(bodyBytes))
+		if msg == "" {
+			msg = resp.Status
+		}
+		panic(msg)
 	}
 }
 
@@ -210,13 +265,18 @@ func sendWebhook(client *http.Client, params map[string]interface{}, title, cont
 		bodyStr = strings.ReplaceAll(bodyStr, "{title}", title)
 		bodyStr = strings.ReplaceAll(bodyStr, "{content}", content)
 		body = nil
-		json.Unmarshal([]byte(bodyStr), &body)
+		if err := json.Unmarshal([]byte(bodyStr), &body); err != nil {
+			panic(err.Error())
+		}
 	}
 
-	jsonData, _ := json.Marshal(body)
 	var req *http.Request
+	var err error
 	if method == "GET" {
-		req, _ = http.NewRequest("GET", urlStr, nil)
+		req, err = buildNotifyRequest(http.MethodGet, urlStr, nil, "")
+		if err != nil {
+			panic(err.Error())
+		}
 		q := req.URL.Query()
 		q.Set(titleName, title)
 		if needContent {
@@ -229,11 +289,17 @@ func sendWebhook(client *http.Client, params map[string]interface{}, title, cont
 			for k, v := range body {
 				formBody = append(formBody, fmt.Sprintf("%s=%s", url.QueryEscape(k), url.QueryEscape(fmt.Sprintf("%v", v))))
 			}
-			req, _ = http.NewRequest(method, urlStr, strings.NewReader(strings.Join(formBody, "&")))
+			req, err = buildNotifyRequest(method, urlStr, strings.NewReader(strings.Join(formBody, "&")), contentType)
 		} else {
-			req, _ = http.NewRequest(method, urlStr, bytes.NewReader(jsonData))
+			jsonData, err := json.Marshal(body)
+			if err != nil {
+				panic(err.Error())
+			}
+			req, err = buildNotifyRequest(method, urlStr, bytes.NewReader(jsonData), contentType)
 		}
-		req.Header.Set("Content-Type", contentType)
+		if err != nil {
+			panic(err.Error())
+		}
 	}
 
 	if headers, ok := params["headers"]; ok && headers != nil {
@@ -244,19 +310,11 @@ func sendWebhook(client *http.Client, params map[string]interface{}, title, cont
 		}
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		panic(err.Error())
-	}
-	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		panic(string(bodyBytes))
-	}
+	sendNotifyRequest(client, req)
 }
 
 func sendServerChan(client *http.Client, params map[string]interface{}, title, content string) {
-	sendKey := fmt.Sprintf("%v", params["sendKey"])
+	sendKey := paramString(params, "sendKey")
 	version := "v1"
 	if v, ok := params["version"]; ok {
 		version = fmt.Sprintf("%v", v)
@@ -273,15 +331,15 @@ func sendServerChan(client *http.Client, params map[string]interface{}, title, c
 		"title": title,
 		"desp":  content,
 	}
-	jsonData, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", urlStr, bytes.NewReader(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	jsonData, err := json.Marshal(body)
 	if err != nil {
 		panic(err.Error())
 	}
-	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
+	req, err := buildNotifyRequest(http.MethodPost, urlStr, bytes.NewReader(jsonData), "application/json")
+	if err != nil {
+		panic(err.Error())
+	}
+	sendNotifyRequest(client, req)
 }
 
 func sendDingTalk(client *http.Client, params map[string]interface{}, title, content string) {
@@ -292,15 +350,15 @@ func sendDingTalk(client *http.Client, params map[string]interface{}, title, con
 			"content": title + "\n" + content,
 		},
 	}
-	jsonData, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", webhook, bytes.NewReader(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	jsonData, err := json.Marshal(body)
 	if err != nil {
 		panic(err.Error())
 	}
-	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
+	req, err := buildNotifyRequest(http.MethodPost, webhook, bytes.NewReader(jsonData), "application/json")
+	if err != nil {
+		panic(err.Error())
+	}
+	sendNotifyRequest(client, req)
 }
 
 func sendWeCom(client *http.Client, params map[string]interface{}, title, content string) {
@@ -314,7 +372,11 @@ func sendWeCom(client *http.Client, params map[string]interface{}, title, conten
 
 	// Get access token
 	tokenURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s", corpID, corpSecret)
-	resp, err := client.Get(tokenURL)
+	req, err := buildNotifyRequest(http.MethodGet, tokenURL, nil, "")
+	if err != nil {
+		panic(err.Error())
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -324,9 +386,11 @@ func sendWeCom(client *http.Client, params map[string]interface{}, title, conten
 		AccessToken string `json:"access_token"`
 		ErrCode     int    `json:"errcode"`
 	}
-	json.Unmarshal(tokenBody, &tokenResult)
+	if err := json.Unmarshal(tokenBody, &tokenResult); err != nil {
+		panic(err.Error())
+	}
 	if tokenResult.ErrCode != 0 {
-		panic("WeCom token error")
+		panic(fmt.Sprintf("WeCom token error: %s", strings.TrimSpace(string(tokenBody))))
 	}
 
 	// Send message
@@ -338,16 +402,16 @@ func sendWeCom(client *http.Client, params map[string]interface{}, title, conten
 			"content": title + "\n" + content,
 		},
 	}
-	jsonData, _ := json.Marshal(msgBody)
-	msgURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s", tokenResult.AccessToken)
-	req, _ := http.NewRequest("POST", msgURL, bytes.NewReader(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	resp2, err := client.Do(req)
+	jsonData, err := json.Marshal(msgBody)
 	if err != nil {
 		panic(err.Error())
 	}
-	defer resp2.Body.Close()
-	io.ReadAll(resp2.Body)
+	msgURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s", tokenResult.AccessToken)
+	msgReq, err := buildNotifyRequest(http.MethodPost, msgURL, bytes.NewReader(jsonData), "application/json")
+	if err != nil {
+		panic(err.Error())
+	}
+	sendNotifyRequest(client, msgReq)
 }
 
 func sendLark(client *http.Client, params map[string]interface{}, title, content string) {
@@ -369,15 +433,15 @@ func sendLark(client *http.Client, params map[string]interface{}, title, content
 			},
 		},
 	}
-	jsonData, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", webhook, bytes.NewReader(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	jsonData, err := json.Marshal(body)
 	if err != nil {
 		panic(err.Error())
 	}
-	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
+	req, err := buildNotifyRequest(http.MethodPost, webhook, bytes.NewReader(jsonData), "application/json")
+	if err != nil {
+		panic(err.Error())
+	}
+	sendNotifyRequest(client, req)
 }
 
 func paramString(params map[string]interface{}, keys ...string) string {

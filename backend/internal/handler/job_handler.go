@@ -100,12 +100,35 @@ func AddJob(c *gin.Context) {
 // UpdateJob handles PUT /svr/job
 func UpdateJob(c *gin.Context) {
 	var req struct {
-		ID    *string `json:"id"`
-		Pause *bool   `json:"pause"`
-		Abort *bool   `json:"abort"`
+		ID     *string `json:"id"`
+		TaskID *string `json:"taskId"`
+		Action string  `json:"action"`
+		Pause  *bool   `json:"pause"`
+		Abort  *bool   `json:"abort"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		return
+	}
+
+	if req.TaskID != nil {
+		taskID, err := parseRequiredID(*req.TaskID, "taskId")
+		if err != nil {
+			c.JSON(http.StatusOK, model.Error(err.Error()))
+			return
+		}
+		switch req.Action {
+		case "pause":
+			service.PauseTask(taskID)
+		case "restart":
+			service.RestartTask(taskID)
+		case "retryFailed":
+			service.RetryFailedTask(taskID)
+		default:
+			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+			return
+		}
+		c.JSON(http.StatusOK, model.Success(nil))
 		return
 	}
 

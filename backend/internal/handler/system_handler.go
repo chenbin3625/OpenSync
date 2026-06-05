@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"log"
 	"net/http"
+	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/internal/middleware"
 	"opensync/internal/model"
 	"opensync/internal/service"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -77,6 +80,26 @@ func EditPassword(c *gin.Context) {
 	userID := userMap["id"].(int64)
 	service.EditPasswd(userID, req.Passwd, req.OldPasswd)
 	c.JSON(http.StatusOK, model.Success(nil))
+}
+
+// GetSystemConfig handles GET /svr/system/config
+func GetSystemConfig(c *gin.Context) {
+	c.JSON(http.StatusOK, model.Success(config.GetSystemSettings()))
+}
+
+// UpdateSystemConfig handles PUT /svr/system/config
+func UpdateSystemConfig(c *gin.Context) {
+	var req config.SystemSettings
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		return
+	}
+	if err := config.UpdateSystemSettings(req); err != nil {
+		c.JSON(http.StatusOK, model.Error(err.Error()))
+		return
+	}
+	service.CleanupExpiredTasks(log.Default(), req.TaskSave, time.Now())
+	c.JSON(http.StatusOK, model.Success(config.GetSystemSettings()))
 }
 
 // GetLanguage handles GET /svr/language

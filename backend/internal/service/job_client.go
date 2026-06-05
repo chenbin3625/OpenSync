@@ -20,16 +20,52 @@ import (
 )
 
 const (
-	maxScanConcurrency       = 8
-	maxCopyConcurrency       = 20
-	maxQueuedCopyItems       = 5000
-	maxRealtimeFinishedItems = 2000
-	maxPersistTaskItemBatch  = 500
+	defaultScanConcurrency       = 8
+	maxScanConcurrency           = 20
+	defaultCopyConcurrency       = 5
+	maxCopyConcurrency           = 100
+	maxQueuedCopyItems           = 5000
+	defaultRealtimeFinishedItems = 1000
+	maxRealtimeFinishedItems     = 50000
+	maxPersistTaskItemBatch      = 500
+	defaultMaxRetries            = 0
+	maxCopyRetries               = 10
 )
 
 var errScanAborted = errors.New("scan aborted")
 
 var persistJobTaskItems = mapper.AddJobTaskItemMany
+var copyRetryDelay = defaultCopyRetryDelay
+
+type taskRuntimeLimits struct {
+	CopyConcurrency       int
+	ScanConcurrency       int
+	RealtimeFinishedItems int
+	MaxRetries            int
+}
+
+func runtimeTaskLimits() taskRuntimeLimits {
+	return taskRuntimeLimitsFromServer(config.GetConfig().Server)
+}
+
+func taskRuntimeLimitsFromServer(server config.ServerConfig) taskRuntimeLimits {
+	return taskRuntimeLimits{
+		CopyConcurrency:       intInRangeOrDefault(server.CopyConcurrency, 1, maxCopyConcurrency, defaultCopyConcurrency),
+		ScanConcurrency:       intInRangeOrDefault(server.ScanConcurrency, 1, maxScanConcurrency, defaultScanConcurrency),
+		RealtimeFinishedItems: intInRangeOrDefault(server.RealtimeFinishedItems, 100, maxRealtimeFinishedItems, defaultRealtimeFinishedItems),
+		MaxRetries:            intInRangeOrDefault(server.MaxRetries, 0, maxCopyRetries, defaultMaxRetries),
+	}
+}
+
+func intInRangeOrDefault(value, minValue, maxValue, defaultValue int) int {
+	if value < minValue {
+		return defaultValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
+}
 
 type copyQueue struct {
 	mu       sync.Mutex
@@ -229,6 +265,25 @@ func (ci *CopyItem) setFailure(err error) {
 	ci.mu.Unlock()
 }
 
+func (ci *CopyItem) setRunning() {
+	ci.mu.Lock()
+	ci.Status = 1
+	ci.Progress = 0
+	ci.ErrMsg = nil
+	ci.AlistTaskID = ""
+	ci.mu.Unlock()
+}
+
+func (ci *CopyItem) setRetrying(err error) {
+	errMsg := err.Error()
+	ci.mu.Lock()
+	ci.Status = 8
+	ci.Progress = 0
+	ci.ErrMsg = &errMsg
+	ci.AlistTaskID = ""
+	ci.mu.Unlock()
+}
+
 func (ci *CopyItem) setProgress(status int, progress float64, errMsg *string) {
 	ci.mu.Lock()
 	ci.Status = status
@@ -269,27 +324,69 @@ func (ci *CopyItem) snapshotMap() map[string]interface{} {
 
 // DoIt executes the copy operation in a goroutine
 func (ci *CopyItem) DoIt() {
-	if ci.jobTask.isBreak() {
-		ci.setStatus(4)
-	} else {
-		ci.setStatus(1)
+	maxRetries := runtimeTaskLimits().MaxRetries
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if ci.jobTask.isBreak() {
+			ci.setStatus(4)
+			break
+		}
+
+		ci.setRunning()
 		taskID, err := ci.alistClient.CopyFileContext(ci.jobTask.context(), ci.SrcPath, ci.DstPath, ci.FileName)
 		if err != nil {
 			if errors.Is(err, context.Canceled) && ci.jobTask.isBreak() {
 				ci.setStatus(4)
-			} else {
-				ci.setFailure(err)
+				break
 			}
-		} else {
-			ci.setTaskID(taskID)
-			if taskID == "" {
-				ci.setStatus(2)
-			} else if ci.status() != 4 {
-				ci.checkAndGetStatus()
+			if attempt < maxRetries {
+				ci.setRetrying(err)
+				if completed := ci.jobTask.waitForBreak(copyRetryDelay(attempt)); !completed {
+					ci.setStatus(4)
+					break
+				}
+				continue
 			}
+			ci.setFailure(err)
+			break
 		}
+
+		ci.setTaskID(taskID)
+		if taskID == "" {
+			ci.setProgress(2, 100, nil)
+		} else if ci.status() != 4 {
+			ci.checkAndGetStatus()
+		}
+		if ci.status() == 7 && attempt < maxRetries {
+			ci.setRetrying(errors.New(ci.errorMessage()))
+			if completed := ci.jobTask.waitForBreak(copyRetryDelay(attempt)); !completed {
+				ci.setStatus(4)
+				break
+			}
+			continue
+		}
+		break
 	}
 	ci.endIt()
+}
+
+func defaultCopyRetryDelay(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	delay := time.Duration(attempt+1) * time.Second
+	if delay > 5*time.Second {
+		return 5 * time.Second
+	}
+	return delay
+}
+
+func (ci *CopyItem) errorMessage() string {
+	ci.mu.RLock()
+	defer ci.mu.RUnlock()
+	if ci.ErrMsg == nil {
+		return "copy failed"
+	}
+	return *ci.ErrMsg
 }
 
 func (ci *CopyItem) checkAndGetStatus() {
@@ -411,11 +508,19 @@ type JobTask struct {
 
 	CurrentTasks map[int][]map[string]interface{}
 	CurrentMu    sync.RWMutex
+	RetryItems   []map[string]interface{}
 }
 
 // NewJobTask creates and starts a new task
 func NewJobTask(taskID int64, jc *JobClient) *JobTask {
 	jt := newJobTask(taskID, jc)
+	jt.Start()
+	return jt
+}
+
+func NewRetryJobTask(taskID int64, jc *JobClient, retryItems []map[string]interface{}) *JobTask {
+	jt := newJobTask(taskID, jc)
+	jt.RetryItems = cloneTaskRows(retryItems)
 	jt.Start()
 	return jt
 }
@@ -455,14 +560,11 @@ func (jt *JobTask) Start() {
 }
 
 func scanConcurrencyLimit() int {
-	limit := runtime.NumCPU()
-	if limit < 2 {
-		return 2
+	limit := runtimeTaskLimits().ScanConcurrency
+	if limit <= 0 {
+		limit = runtime.NumCPU()
 	}
-	if limit > maxScanConcurrency {
-		return maxScanConcurrency
-	}
-	return limit
+	return intInRangeOrDefault(limit, 1, maxScanConcurrency, defaultScanConcurrency)
 }
 
 func (jt *JobTask) initRuntime() {
@@ -668,6 +770,7 @@ func (jt *JobTask) GetCurrent() map[string]interface{} {
 	jt.CurrentMu.Unlock()
 
 	result := map[string]interface{}{
+		"taskId":     jt.TaskID,
 		"scanFinish": jt.ScanFinish.Load(),
 		"scan":       jt.scanProgress(),
 		"doingTask":  currentTasks[1],
@@ -740,7 +843,8 @@ func (jt *JobTask) taskSubmit() {
 		}
 
 		started := false
-		for jt.doingLen() < maxCopyConcurrency {
+		limits := runtimeTaskLimits()
+		for jt.doingLen() < limits.CopyConcurrency {
 			if jt.isBreak() {
 				jt.markWaitingAsAborted()
 				break
@@ -874,7 +978,7 @@ func (jt *JobTask) appendFinish(item map[string]interface{}) {
 		jt.FinishedSizes[status] += toInt64Val(item["fileSize"])
 	}
 	jt.Finish = append(jt.Finish, item)
-	if overflow := len(jt.Finish) - maxRealtimeFinishedItems; overflow > 0 {
+	if overflow := len(jt.Finish) - runtimeTaskLimits().RealtimeFinishedItems; overflow > 0 {
 		jt.pendingPersist = append(jt.pendingPersist, jt.Finish[:overflow]...)
 		jt.Finish = append([]map[string]interface{}(nil), jt.Finish[overflow:]...)
 	}
@@ -921,6 +1025,11 @@ func (jt *JobTask) finishedAggregateForStatus(status int) (int, int64) {
 }
 
 func (jt *JobTask) sync() {
+	if len(jt.RetryItems) > 0 {
+		jt.syncRetryItems()
+		return
+	}
+
 	srcPaths := parseSrcPaths(jt.Job["srcPath"])
 	jobExclude := jt.Job["exclude"]
 
@@ -951,6 +1060,57 @@ func (jt *JobTask) sync() {
 		}
 	}
 	jt.ScanFinish.Store(true)
+}
+
+func (jt *JobTask) syncRetryItems() {
+	for _, item := range jt.RetryItems {
+		if jt.isBreak() {
+			break
+		}
+		jt.retryTaskItem(item)
+	}
+	jt.ScanFinish.Store(true)
+}
+
+func (jt *JobTask) retryTaskItem(item map[string]interface{}) {
+	copyType := toInt(item["type"])
+	isPath := toInt(item["isPath"]) == 1
+	srcPath := stringValue(item["srcPath"])
+	dstPath := stringValue(item["dstPath"])
+	fileName := stringValue(item["fileName"])
+	fileSize := item["fileSize"]
+
+	switch copyType {
+	case 1:
+		jt.delFile(dstPath, fileName, fileSize)
+	case 0, 2:
+		if isPath {
+			jt.retryMkdir(srcPath, dstPath, copyType)
+			return
+		}
+		jt.queueCopyFile(srcPath, dstPath, fileName, fileSize, copyType)
+	default:
+		errMsg := fmt.Sprintf("unsupported retry task type: %d", copyType)
+		jt.CopyHook(srcPath, dstPath, fileName, fileSize, "", 7, &errMsg, boolToInt(isPath), copyType, time.Now().Unix())
+	}
+}
+
+func (jt *JobTask) retryMkdir(srcPath, dstPath string, copyType int) {
+	if dstPath == "" {
+		errMsg := "missing destination path for directory retry"
+		jt.CopyHook(srcPath, dstPath, "", nil, "", 7, &errMsg, 1, copyType, time.Now().Unix())
+		return
+	}
+
+	status := 2
+	var errMsg *string
+	scanIntervalT := toInt(jt.Job["scanIntervalT"])
+	if err := jt.AlistClient.MkdirContext(jt.context(), dstPath, scanIntervalT); err != nil {
+		status = 7
+		e := err.Error()
+		errMsg = &e
+	}
+	jt.CopyHook(srcPath, dstPath, "", nil, "", status, errMsg, 1, copyType, time.Now().Unix())
 }
 
 func dstPathForSrcSelection(dstPath, srcPath string, hasMultipleSrc bool) string {
@@ -985,6 +1145,13 @@ func (jt *JobTask) copyFile(srcPath, dstPath, fileName string, fileSize interfac
 	copyType := 0
 	if method >= 2 {
 		copyType = 2
+	}
+	jt.queueCopyFile(srcPath, dstPath, fileName, fileSize, copyType)
+}
+
+func (jt *JobTask) queueCopyFile(srcPath, dstPath, fileName string, fileSize interface{}, copyType int) {
+	if jt.isBreak() {
+		return
 	}
 	ci := &CopyItem{
 		SrcPath:     srcPath,
@@ -1184,9 +1351,13 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 		}
 		if !strings.HasSuffix(key, "/") {
 			// File
+			srcSize := fileSize(srcVal)
+			if !jobAllowsFileSize(jt.Job, srcSize) {
+				continue
+			}
 			dstVal, exists := dstFiles[key]
 			if !exists || fileChanged(srcVal, dstVal) {
-				jt.copyFile(work.SrcPath, work.DstPath, key, fileSize(srcVal))
+				jt.copyFile(work.SrcPath, work.DstPath, key, srcSize)
 			}
 		} else {
 			// Directory
@@ -1259,7 +1430,7 @@ func (jt *JobTask) syncWithoutHave(work scanWork, spec *ignore.GitIgnore) {
 	}
 
 	children := make([]scanWork, 0)
-	for key := range srcFiles {
+	for key, srcVal := range srcFiles {
 		if jt.isBreak() {
 			break
 		}
@@ -1273,11 +1444,27 @@ func (jt *JobTask) syncWithoutHave(work scanWork, spec *ignore.GitIgnore) {
 				Mode:        scanWorkMissingDst,
 			})
 		} else {
-			jt.copyFile(work.SrcPath, work.DstPath, key, fileSize(srcFiles[key]))
+			srcSize := fileSize(srcVal)
+			if !jobAllowsFileSize(jt.Job, srcSize) {
+				continue
+			}
+			jt.copyFile(work.SrcPath, work.DstPath, key, srcSize)
 		}
 	}
 	jt.finishScanWork()
 	jt.runChildScanWorks(children, spec)
+}
+
+func jobAllowsFileSize(job map[string]interface{}, size int64) bool {
+	minSize := toInt64Val(job["minFileSize"])
+	maxSize := toInt64Val(job["maxFileSize"])
+	if minSize > 0 && size < minSize {
+		return false
+	}
+	if maxSize > 0 && size > maxSize {
+		return false
+	}
+	return true
 }
 
 func fileChanged(srcVal, dstVal interface{}) bool {
@@ -1420,6 +1607,28 @@ func (jc *JobClient) enabled() bool {
 	return jc.Job != nil && toInt(jc.Job["enable"]) == 1
 }
 
+func (jc *JobClient) replaceJobConfig(job map[string]interface{}, scheduler *Scheduler) *Scheduler {
+	jc.mu.Lock()
+	oldScheduler := jc.Scheduler
+	jc.JobID = toInt64(job["id"])
+	jc.Job = job
+	jc.Scheduler = scheduler
+	jc.mu.Unlock()
+	return oldScheduler
+}
+
+func cloneTaskRows(rows []map[string]interface{}) []map[string]interface{} {
+	cloned := make([]map[string]interface{}, 0, len(rows))
+	for _, row := range rows {
+		item := make(map[string]interface{}, len(row))
+		for key, value := range row {
+			item[key] = value
+		}
+		cloned = append(cloned, item)
+	}
+	return cloned
+}
+
 // NewJobClient creates a new job client
 func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 	jc := &JobClient{
@@ -1468,6 +1677,10 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 }
 
 func (jc *JobClient) runMarkedJob() {
+	jc.runMarkedJobWithRetryItems(nil)
+}
+
+func (jc *JobClient) runMarkedJobWithRetryItems(retryItems []map[string]interface{}) {
 	taskID := int64(0)
 	defer func() {
 		if r := recover(); r != nil {
@@ -1490,6 +1703,9 @@ func (jc *JobClient) runMarkedJob() {
 		panic("abort")
 	}
 	task := newJobTask(taskID, jc)
+	if len(retryItems) > 0 {
+		task.RetryItems = cloneTaskRows(retryItems)
+	}
 	jc.setCurrentTask(task)
 	task.Start()
 }
@@ -1521,6 +1737,17 @@ func (jc *JobClient) DoManual() {
 		panic(i18n.G("job_running"))
 	}
 	go jc.runMarkedJob()
+}
+
+// DoRetryItems triggers a manual execution that only retries selected failed items.
+func (jc *JobClient) DoRetryItems(items []map[string]interface{}) {
+	if len(items) == 0 {
+		panic(i18n.G("no_failed_task_items"))
+	}
+	if !jc.tryMarkDoing() {
+		panic(i18n.G("job_running"))
+	}
+	go jc.runMarkedJobWithRetryItems(items)
 }
 
 // ResumeJob enables and resumes the job
@@ -1637,9 +1864,27 @@ func toInt64Val(v interface{}) int64 {
 		return int64(val)
 	case float64:
 		return int64(val)
+	case string:
+		val = strings.TrimSpace(val)
+		if val == "" {
+			return 0
+		}
+		n := int64(0)
+		fmt.Sscanf(val, "%d", &n)
+		return n
 	default:
 		return 0
 	}
+}
+
+func stringValue(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 func toFloat64(v interface{}) float64 {

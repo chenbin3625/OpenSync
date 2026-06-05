@@ -12,10 +12,28 @@ body,
 }
 
 .app-shell,
-.app-sider,
 .app-header {
   background-image: none !important;
   box-shadow: none !important;
+}
+
+.app-brand {
+  min-width: 0;
+}
+
+.app-top-nav.ant-menu-horizontal {
+  overflow: hidden;
+  border-bottom: 0;
+}
+
+.app-top-nav .ant-menu-item,
+.app-top-nav .ant-menu-submenu {
+  display: inline-flex;
+  align-items: center;
+}
+
+.app-actions {
+  min-width: max-content;
 }
 
 .app-content,
@@ -55,81 +73,148 @@ body,
   white-space: nowrap;
 }
 
-.sync-job-card {
-  height: 100%;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-}
-
-.sync-job-card .ant-card-head {
-  min-height: 46px;
-  padding: 0 14px;
-  border-bottom-color: rgba(15, 23, 42, 0.06);
-}
-
-.sync-job-card .ant-card-head-title {
-  min-width: 0;
-  padding: 11px 0;
+.sync-manager {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  min-height: calc(100vh - 136px);
   overflow: hidden;
-  font-size: 15px;
-  font-weight: 600;
+  gap: 16px;
+  padding: 16px;
+  background: var(--ant-color-bg-container);
+  border-radius: var(--ant-border-radius-lg);
+}
+
+.sync-manager-sidebar {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  padding-inline-end: 16px;
+  border-inline-end: 1px solid var(--ant-color-border);
+}
+
+.sync-sidebar-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sync-sidebar-toolbar .ant-btn {
+  min-width: 0;
+}
+
+.sync-sidebar-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+.sync-sidebar-list .ant-menu-inline {
+  border-inline-end: 0;
+}
+
+.sync-sidebar-list .ant-spin-nested-loading,
+.sync-sidebar-list .ant-spin-container {
+  min-height: 100%;
+}
+
+.sync-sidebar-pagination {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.sync-manager-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sync-overview {
+  display: grid;
+  gap: 22px;
+}
+
+.sync-overview-summary .ant-card-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sync-status-badge {
+  display: grid;
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--ant-color-text-light-solid);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.sync-status-badge.is-enabled {
+  background: var(--ant-color-success);
+}
+
+.sync-status-badge.is-disabled {
+  background: var(--ant-color-text-quaternary);
+}
+
+.sync-overview-title {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.sync-overview-heading {
+  margin: 0 0 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-overview-actions {
+  justify-content: flex-end;
+}
+
+.sync-manager-empty {
+  display: grid;
+  min-height: 360px;
+  place-items: center;
+}
+
+.sync-job-descriptions .ant-typography {
+  max-width: 100%;
+}
+
+.sync-job-exclude-preview {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  cursor: help;
   line-height: 22px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sync-job-card .ant-card-extra {
-  padding: 10px 0;
+.ant-tooltip.sync-job-exclude-tooltip {
+  max-width: min(520px, calc(100vw - 32px));
 }
 
-.sync-job-card .ant-card-extra .ant-space {
-  gap: 6px !important;
+.sync-job-exclude-tooltip .ant-tooltip-inner {
+  max-height: 320px;
+  overflow: auto;
 }
 
-.sync-job-card .ant-tag {
-  margin-inline-end: 0;
-  border-radius: 4px;
-}
-
-.sync-job-card .ant-card-body {
-  padding: 12px 14px;
-}
-
-.sync-job-card .ant-card-actions {
-  border-top-color: rgba(15, 23, 42, 0.06);
-}
-
-.sync-job-card .ant-card-actions > li {
-  margin: 8px 0;
-}
-
-.sync-job-card .ant-card-actions .anticon {
-  color: rgba(15, 23, 42, 0.62);
-  font-size: 16px;
-}
-
-.sync-job-card .ant-card-actions .anticon:hover {
-  color: #1677ff;
-}
-
-.sync-job-descriptions .ant-descriptions-item {
-  padding-bottom: 7px;
-}
-
-.sync-job-descriptions .ant-descriptions-item-label {
-  width: 56px;
-  color: rgba(15, 23, 42, 0.52);
-  white-space: nowrap;
-}
-
-.sync-job-descriptions .ant-descriptions-item-content {
-  min-width: 0;
-  color: rgba(15, 23, 42, 0.76);
-}
-
-.sync-job-descriptions .ant-typography {
+.sync-job-exclude-tooltip-content {
   max-width: 100%;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .task-progress-card .ant-card-head {
@@ -385,9 +470,73 @@ body,
 }
 
 @media (max-width: 768px) {
+  .app-header {
+    padding: 0 10px !important;
+    gap: 8px !important;
+  }
+
+  .app-brand .ant-typography {
+    display: none;
+  }
+
+  .app-top-nav.ant-menu-horizontal {
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+  }
+
+  .app-top-nav .ant-menu-item,
+  .app-top-nav .ant-menu-submenu {
+    padding-inline: 10px;
+  }
+
+  .app-actions .ant-btn > span:not(.ant-btn-icon) {
+    display: none;
+  }
+
   .app-content {
     margin: 12px !important;
     padding: 0 !important;
+  }
+
+  .sync-manager {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: calc(100vh - 104px);
+  }
+
+  .sync-manager-sidebar {
+    max-height: none;
+    padding-inline-end: 0;
+    border-inline-end: 0;
+  }
+
+  .sync-sidebar-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .sync-sidebar-list {
+    overflow-x: auto;
+  }
+
+  .sync-sidebar-pagination {
+    padding: 8px 10px;
+  }
+
+  .sync-manager-content {
+    padding: 16px 14px 20px;
+  }
+
+  .sync-overview {
+    gap: 14px;
+  }
+
+  .sync-overview-summary .ant-card-body {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sync-overview-actions {
+    justify-content: flex-start;
   }
 
   .page-header {

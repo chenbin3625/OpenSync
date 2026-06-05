@@ -12,7 +12,17 @@ import (
 var (
 	alistClientList   = make(map[int64]*AlistClient)
 	alistClientListMu sync.RWMutex
+	alistClientLoads  = make(map[int64]*alistClientLoad)
+
+	getAlistByID   = mapper.GetAlistByID
+	newAlistClient = NewAlistClient
 )
+
+type alistClientLoad struct {
+	wg     sync.WaitGroup
+	client *AlistClient
+	err    error
+}
 
 // GetClientList returns all alist entries without token
 func GetClientList() []map[string]interface{} {
@@ -35,29 +45,74 @@ func GetClientByID(alistID int64) *AlistClient {
 		return client
 	}
 
-	alist, err := mapper.GetAlistByID(alistID)
-	if err != nil {
-		panic(err.Error())
+	load, owner := beginAlistClientLoad(alistID)
+	if !owner {
+		load.wg.Wait()
+		if load.err != nil {
+			panicAlistClientLoadError(load.err)
+		}
+		return load.client
 	}
 
-	newClient, err := NewAlistClient(
+	alist, err := getAlistByID(alistID)
+	if err != nil {
+		finishAlistClientLoad(alistID, load, nil, err)
+		panicAlistClientLoadError(err)
+	}
+
+	newClient, err := newAlistClient(
 		fmt.Sprintf("%v", alist["url"]),
 		fmt.Sprintf("%v", alist["token"]),
 		alistID,
 	)
 	if err != nil {
-		msg := i18n.G("add_alist_client_fail")
-		msg = strings.Replace(msg, "{}", err.Error(), 1)
-		panic(msg)
+		finishAlistClientLoad(alistID, load, nil, err)
+		panicAlistClientLoadError(err)
 	}
 
+	finishAlistClientLoad(alistID, load, newClient, nil)
+	return newClient
+}
+
+func beginAlistClientLoad(alistID int64) (*alistClientLoad, bool) {
 	alistClientListMu.Lock()
 	defer alistClientListMu.Unlock()
+
 	if client, ok := alistClientList[alistID]; ok {
-		return client
+		load := &alistClientLoad{client: client}
+		load.wg.Add(1)
+		load.wg.Done()
+		return load, false
 	}
-	alistClientList[alistID] = newClient
-	return newClient
+	if load, ok := alistClientLoads[alistID]; ok {
+		return load, false
+	}
+
+	load := &alistClientLoad{}
+	load.wg.Add(1)
+	alistClientLoads[alistID] = load
+	return load, true
+}
+
+func finishAlistClientLoad(alistID int64, load *alistClientLoad, client *AlistClient, err error) {
+	alistClientListMu.Lock()
+	load.client = client
+	load.err = err
+	if err == nil && client != nil {
+		alistClientList[alistID] = client
+	}
+	delete(alistClientLoads, alistID)
+	alistClientListMu.Unlock()
+	load.wg.Done()
+}
+
+func panicAlistClientLoadError(err error) {
+	if err == nil {
+		return
+	}
+	msg := i18n.G("add_alist_client_fail")
+	msg = strings.Replace(msg, "{}", err.Error(), 1)
+	panic(msg)
 }
 
 // UpdateClient updates an AList client

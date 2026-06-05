@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +109,58 @@ func CleanJobInput(job map[string]interface{}) {
 	if job["dstPath"] != nil {
 		job["dstPath"] = normalizeDstPathForStorage(job["dstPath"])
 	}
+	normalizeJobFileSizeRange(job)
+}
+
+func normalizeJobFileSizeRange(job map[string]interface{}) {
+	minSize, err := nonNegativeFileSize(job["minFileSize"])
+	if err != nil {
+		panic("最小文件大小必须是大于等于0的整数")
+	}
+	maxSize, err := nonNegativeFileSize(job["maxFileSize"])
+	if err != nil {
+		panic("最大文件大小必须是大于等于0的整数")
+	}
+	if maxSize > 0 && minSize > maxSize {
+		panic("最小文件大小不能大于最大文件大小")
+	}
+	job["minFileSize"] = minSize
+	job["maxFileSize"] = maxSize
+}
+
+func nonNegativeFileSize(value interface{}) (int64, error) {
+	if value == nil {
+		return 0, nil
+	}
+	switch v := value.(type) {
+	case int:
+		if v < 0 {
+			return 0, fmt.Errorf("negative file size")
+		}
+		return int64(v), nil
+	case int64:
+		if v < 0 {
+			return 0, fmt.Errorf("negative file size")
+		}
+		return v, nil
+	case float64:
+		if v < 0 || math.Trunc(v) != v || v > float64(math.MaxInt64) {
+			return 0, fmt.Errorf("invalid file size")
+		}
+		return int64(v), nil
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return 0, nil
+		}
+		parsed, err := strconv.ParseInt(trimmed, 10, 64)
+		if err != nil || parsed < 0 {
+			return 0, fmt.Errorf("invalid file size")
+		}
+		return parsed, nil
+	default:
+		return 0, fmt.Errorf("invalid file size")
+	}
 }
 
 // AddJobClient creates a new job client
@@ -123,21 +177,21 @@ func EditJobClient(job map[string]interface{}) {
 	jobID := toInt64(job["id"])
 	CleanJobInput(job)
 	client := GetJobClientByID(jobID)
-	if client.enabled() && toInt(client.Job["isCron"]) != 2 {
-		panic(i18n.G("disable_then_edit"))
-	}
-	newClient := NewJobClient(job, false)
-	if err := mapper.UpdateJob(job); err != nil {
-		newClient.StopJob(true)
+	nextScheduler := NewScheduler()
+	if err := nextScheduler.AddJob(toInt(job["isCron"]), job, func() {
+		client.DoScheduled()
+	}); err != nil {
+		nextScheduler.Stop()
 		panic(err.Error())
 	}
-	client.StopJob(true)
-	jobClientListMu.Lock()
-	delete(jobClientList, jobID)
-	jobClientListMu.Unlock()
-	jobClientListMu.Lock()
-	jobClientList[jobID] = newClient
-	jobClientListMu.Unlock()
+	if err := mapper.UpdateJob(job); err != nil {
+		nextScheduler.Stop()
+		panic(err.Error())
+	}
+	oldScheduler := client.replaceJobConfig(job, nextScheduler)
+	if oldScheduler != nil {
+		oldScheduler.Stop()
+	}
 }
 
 // DoAllJobManual executes all enabled jobs manually
@@ -197,6 +251,46 @@ func PauseJob(jobID int64) {
 func AbortJob(jobID int64) {
 	client := GetJobClientByID(jobID)
 	client.AbortJob()
+}
+
+// PauseTask pauses a currently running task without changing the job schedule.
+func PauseTask(taskID int64) {
+	job, err := mapper.GetJobByTaskID(taskID)
+	if err != nil {
+		panic(err.Error())
+	}
+	client := GetJobClientByID(toInt64(job["id"]))
+	task := client.currentTask()
+	if task == nil || task.TaskID != taskID {
+		panic(i18n.G("task_not_running"))
+	}
+	task.requestBreak()
+}
+
+// RestartTask starts a fresh full run for the job that owns the task.
+func RestartTask(taskID int64) {
+	job, err := mapper.GetJobByTaskID(taskID)
+	if err != nil {
+		panic(err.Error())
+	}
+	DoJobManual(toInt64(job["id"]))
+}
+
+// RetryFailedTask starts a fresh run that only retries failed items from the task.
+func RetryFailedTask(taskID int64) {
+	job, err := mapper.GetJobByTaskID(taskID)
+	if err != nil {
+		panic(err.Error())
+	}
+	client := GetJobClientByID(toInt64(job["id"]))
+	if !client.enabled() {
+		panic(i18n.G("disabled_job_cannot_run"))
+	}
+	items, err := mapper.GetFailedJobTaskItems(taskID)
+	if err != nil {
+		panic(err.Error())
+	}
+	client.DoRetryItems(items)
 }
 
 // GetJobList returns paginated job list

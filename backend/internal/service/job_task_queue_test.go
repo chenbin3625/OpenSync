@@ -2,6 +2,10 @@ package service
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"opensync/internal/config"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -67,6 +71,145 @@ func TestCopyQueueRejectsPushWhenCapacityIsFull(t *testing.T) {
 	}
 	if ok := queue.push(&CopyItem{FileName: "two.txt"}); !ok {
 		t.Fatalf("push after pop returned false, want true")
+	}
+}
+
+func TestRuntimeTaskLimitsUseConfiguredValues(t *testing.T) {
+	limits := taskRuntimeLimitsFromServer(config.ServerConfig{
+		Timeout:               72,
+		CopyConcurrency:       7,
+		ScanConcurrency:       20,
+		RealtimeFinishedItems: 120,
+		MaxRetries:            4,
+	})
+
+	if limits.CopyConcurrency != 7 {
+		t.Fatalf("CopyConcurrency = %d, want 7", limits.CopyConcurrency)
+	}
+	if limits.ScanConcurrency != 20 {
+		t.Fatalf("ScanConcurrency = %d, want 20", limits.ScanConcurrency)
+	}
+	if limits.RealtimeFinishedItems != 120 {
+		t.Fatalf("RealtimeFinishedItems = %d, want 120", limits.RealtimeFinishedItems)
+	}
+	if limits.MaxRetries != 4 {
+		t.Fatalf("MaxRetries = %d, want 4", limits.MaxRetries)
+	}
+}
+
+func TestRuntimeTaskLimitsClampInvalidConfiguredValues(t *testing.T) {
+	limits := taskRuntimeLimitsFromServer(config.ServerConfig{
+		CopyConcurrency:       0,
+		ScanConcurrency:       99,
+		RealtimeFinishedItems: 0,
+		MaxRetries:            99,
+	})
+
+	if limits.CopyConcurrency != 5 {
+		t.Fatalf("CopyConcurrency = %d, want default 5", limits.CopyConcurrency)
+	}
+	if limits.ScanConcurrency != 20 {
+		t.Fatalf("ScanConcurrency = %d, want max 20", limits.ScanConcurrency)
+	}
+	if limits.RealtimeFinishedItems != 1000 {
+		t.Fatalf("RealtimeFinishedItems = %d, want default 1000", limits.RealtimeFinishedItems)
+	}
+	if limits.MaxRetries != maxCopyRetries {
+		t.Fatalf("MaxRetries = %d, want max %d", limits.MaxRetries, maxCopyRetries)
+	}
+}
+
+func TestCopyItemRetriesFailedCopyBeforeSuccess(t *testing.T) {
+	oldConfig := config.GetConfig()
+	oldDelay := copyRetryDelay
+	defer func() {
+		config.SetConfigForTest(oldConfig)
+		copyRetryDelay = oldDelay
+	}()
+
+	copyRetryDelay = func(int) time.Duration { return 0 }
+	config.SetConfigForTest(&config.Config{
+		Server: config.ServerConfig{
+			Timeout:               0,
+			CopyConcurrency:       1,
+			ScanConcurrency:       1,
+			RealtimeFinishedItems: 100,
+			MaxRetries:            2,
+		},
+	})
+
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/fs/copy" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if attempts.Add(1) <= 2 {
+			_, _ = w.Write([]byte(`{"code":500,"message":"boom","data":{}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"tasks":[]}}`))
+	}))
+	defer server.Close()
+
+	jt := &JobTask{
+		TaskID:  42,
+		Job:     map[string]interface{}{},
+		Finish:  make([]map[string]interface{}, 0),
+		Waiting: newCopyQueue(),
+		AlistClient: &AlistClient{
+			URL:    server.URL,
+			client: server.Client(),
+		},
+	}
+	jt.initRuntime()
+
+	item := &CopyItem{
+		SrcPath:     "/src",
+		DstPath:     "/dst",
+		FileName:    "file.txt",
+		FileSize:    int64(11),
+		CopyType:    0,
+		Status:      0,
+		CreateTime:  100,
+		jobTask:     jt,
+		alistClient: jt.AlistClient,
+	}
+
+	item.DoIt()
+
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("copy attempts = %d, want 3", got)
+	}
+	if status := item.status(); status != 2 {
+		t.Fatalf("item status = %d, want success status 2", status)
+	}
+	if item.ErrMsg != nil {
+		t.Fatalf("item ErrMsg = %q, want nil after successful retry", *item.ErrMsg)
+	}
+
+	jt.FinishMu.Lock()
+	defer jt.FinishMu.Unlock()
+	if len(jt.Finish) != 1 {
+		t.Fatalf("finish len = %d, want 1", len(jt.Finish))
+	}
+	if jt.Finish[0]["status"] != 2 {
+		t.Fatalf("finish status = %v, want 2", jt.Finish[0]["status"])
+	}
+	switch errMsg := jt.Finish[0]["errMsg"].(type) {
+	case nil:
+	case *string:
+		if errMsg != nil {
+			t.Fatalf("finish errMsg = %q, want nil", *errMsg)
+		}
+	default:
+		t.Fatalf("finish errMsg = %#v, want nil", errMsg)
 	}
 }
 
@@ -155,12 +298,12 @@ func TestCopyHookBuffersOldFinishedItemsBeforePersistThreshold(t *testing.T) {
 	}
 	jt.initRuntime()
 
-	for i := 0; i < maxRealtimeFinishedItems+3; i++ {
+	for i := 0; i < defaultRealtimeFinishedItems+3; i++ {
 		jt.CopyHook("/src/", "/dst/", "file.txt", int64(10), "", 2, nil, 0, 0, int64(100+i))
 	}
 
-	if len(jt.Finish) != maxRealtimeFinishedItems {
-		t.Fatalf("finish len = %d, want capped len %d", len(jt.Finish), maxRealtimeFinishedItems)
+	if len(jt.Finish) != defaultRealtimeFinishedItems {
+		t.Fatalf("finish len = %d, want capped len %d", len(jt.Finish), defaultRealtimeFinishedItems)
 	}
 	if len(persisted) != 0 {
 		t.Fatalf("persisted len = %d, want 0 before persist batch threshold", len(persisted))
@@ -198,7 +341,7 @@ func TestFlushPendingTaskItemsPersistsOverflowInOneBatch(t *testing.T) {
 	}
 	jt.initRuntime()
 
-	for i := 0; i < maxRealtimeFinishedItems+3; i++ {
+	for i := 0; i < defaultRealtimeFinishedItems+3; i++ {
 		jt.CopyHook("/src/", "/dst/", "file.txt", int64(10), "", 2, nil, 0, 0, int64(100+i))
 	}
 
@@ -276,6 +419,22 @@ func TestScanProgressTracksDiscoveredAndFinishedDirectories(t *testing.T) {
 	progress = jt.scanProgress()
 	if progress["totalDirs"] != 2 || progress["scannedDirs"] != 1 || progress["remainingDirs"] != 1 {
 		t.Fatalf("scanProgress after root finish = %#v, want total=2 scanned=1 remaining=1", progress)
+	}
+}
+
+func TestGetCurrentIncludesTaskIDForTaskActions(t *testing.T) {
+	jt := &JobTask{
+		TaskID:     123,
+		CreateTime: float64(time.Now().Unix()),
+		Finish:     make([]map[string]interface{}, 0),
+		Waiting:    newCopyQueue(),
+	}
+	jt.initRuntime()
+
+	current := jt.GetCurrent()
+
+	if current["taskId"] != int64(123) {
+		t.Fatalf("taskId = %v, want 123", current["taskId"])
 	}
 }
 

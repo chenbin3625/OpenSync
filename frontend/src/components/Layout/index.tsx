@@ -1,13 +1,11 @@
 import type React from 'react';
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { Layout as AntLayout, Menu, Button, Typography, Popconfirm, Space, theme } from 'antd';
 import {
   HomeOutlined,
   CloudServerOutlined,
   BellOutlined,
   SettingOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
   LogoutOutlined,
   BulbOutlined,
   BulbFilled,
@@ -16,7 +14,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../../stores/useStore';
 import { logout } from '../../api/user';
 
-const { Header, Sider, Content } = AntLayout;
+const { Header, Content } = AntLayout;
 const { Text } = Typography;
 
 const menuItems = [
@@ -27,7 +25,6 @@ const menuItems = [
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { theme: themeMode, setTheme, setUserInfo, leftIndex, setLeftIndex } = useStore();
@@ -57,113 +54,92 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <AntLayout className="app-shell" style={{ minHeight: '100vh' }}>
-      <Sider
-        className="app-sider"
-        trigger={null}
-        collapsible
-        collapsed={collapsed}
-        width={168}
-        theme={themeMode}
+      <Header
+        className="app-header"
         style={{
+          padding: '0 20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 16,
           background: token.colorBgContainer,
-          borderRight: `1px solid ${token.colorBorderSecondary}`,
-          overflow: 'hidden',
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+          height: 56,
+          lineHeight: '56px',
         }}
       >
         <div
-          className="app-logo"
+          className="app-brand"
           style={{
             height: 56,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
             gap: 8,
-            background: token.colorBgContainer,
-            borderBottom: `1px solid ${token.colorBorderSecondary}`,
             cursor: 'pointer',
+            flex: '0 0 auto',
           }}
           onClick={() => navigate('/home')}
         >
           <img className="app-logo-mark" src="/favicon.svg" alt="OpenSync" />
-          {!collapsed && (
-            <Text
-              strong
-              style={{
-                color: token.colorText,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              OpenSync
-            </Text>
-          )}
+          <Text
+            strong
+            style={{
+              color: token.colorText,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            OpenSync
+          </Text>
         </div>
         <Menu
-          mode="inline"
+          className="app-top-nav"
+          mode="horizontal"
           theme={themeMode}
           selectedKeys={[leftIndex || selectedKey]}
           items={menuItems}
           onClick={handleMenuClick}
           style={{
+            flex: '1 1 auto',
+            minWidth: 0,
             background: token.colorBgContainer,
-            border: 'none',
+            borderBottom: 'none',
             color: token.colorText,
-          }}
-        />
-      </Sider>
-      <AntLayout>
-        <Header
-          className="app-header"
-          style={{
-            padding: '0 20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: token.colorBgContainer,
-            borderBottom: `1px solid ${token.colorBorderSecondary}`,
-            height: 56,
             lineHeight: '56px',
           }}
-        >
+        />
+        <Space className="app-actions" style={{ flex: '0 0 auto' }}>
           <Button
             type="text"
-            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            onClick={() => setCollapsed(!collapsed)}
+            icon={themeMode === 'dark' ? <BulbFilled /> : <BulbOutlined />}
+            onClick={toggleTheme}
+            title={themeMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
           />
-          <Space>
+          <Popconfirm
+            title="确认退出"
+            description="确定要退出登录吗？"
+            onConfirm={handleLogout}
+            okText="确定"
+            cancelText="取消"
+          >
             <Button
               type="text"
-              icon={themeMode === 'dark' ? <BulbFilled /> : <BulbOutlined />}
-              onClick={toggleTheme}
-              title={themeMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
-            />
-            <Popconfirm
-              title="确认退出"
-              description="确定要退出登录吗？"
-              onConfirm={handleLogout}
-              okText="确定"
-              cancelText="取消"
+              icon={<LogoutOutlined />}
             >
-              <Button
-                type="text"
-                icon={<LogoutOutlined />}
-              >
-                {!collapsed && '登出'}
-              </Button>
-            </Popconfirm>
-          </Space>
-        </Header>
-        <Content
-          className="app-content"
-          style={{
-            margin: 20,
-            padding: 20,
-            overflow: 'auto',
-            minHeight: 0,
-          }}
-        >
-          {children}
-        </Content>
-      </AntLayout>
+              登出
+            </Button>
+          </Popconfirm>
+        </Space>
+      </Header>
+      <Content
+        className="app-content"
+        style={{
+          margin: 20,
+          padding: 20,
+          overflow: 'auto',
+          minHeight: 0,
+        }}
+      >
+        {children}
+      </Content>
     </AntLayout>
   );
 }

@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typography, Tooltip, Spin, Pagination, Tabs } from 'antd';
-import { StopOutlined, ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined } from '@ant-design/icons';
-import { jobGetTask, jobGetTaskCurrent, jobDeleteTask, jobPut } from '../../api/job';
+import {
+  DeleteOutlined, EyeOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined,
+  ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined,
+} from '@ant-design/icons';
+import { jobGetTask, jobGetTaskCurrent, jobDeleteTask, jobTaskAction } from '../../api/job';
 import dayjs from 'dayjs';
 import type { CurrentTaskData, CurrentTaskView, TaskItem, TaskRecord } from '../../types';
+import { filterCurrentTaskFromHistory, getTaskItemKey, mergeTaskItems, mergeTaskRecords } from './taskRows';
 
 const { Text } = Typography;
 
@@ -100,7 +104,17 @@ function isCurrentTaskData(data: CurrentTaskData | TaskItem[] | null): data is C
   return !!data && !Array.isArray(data) && Array.isArray(data.doingTask);
 }
 
-export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTaskDetail?: (taskId: number) => void }) {
+type TaskListView = 'all' | 'realtime' | 'history';
+
+export default function TaskList({
+  jobId,
+  onTaskDetail,
+  view = 'all',
+}: {
+  jobId: string;
+  onTaskDetail?: (taskId: number) => void;
+  view?: TaskListView;
+}) {
   const { message } = App.useApp();
   const [list, setList] = useState<TaskRecord[]>([]);
   const [total, setTotal] = useState(0);
@@ -116,7 +130,11 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
   const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
   const activeTabRef = useRef(activeTab);
   const tabRequestRef = useRef(0);
+  const listRequestRef = useRef(0);
+  const listLoadingRequestRef = useRef(0);
   const lastLoadedTabRef = useRef<{ status: number; taskCreateTime?: number } | null>(null);
+  const showRealtime = view === 'all' || view === 'realtime';
+  const showHistory = view === 'all' || view === 'history';
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -156,15 +174,21 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     return { remainSize, doneSize, speed, speedAvg, remainTime };
   }, []);
 
-  const fetchList = useCallback(async () => {
+  const fetchList = useCallback(async (showLoading = false) => {
     if (!jobId) return;
-    setLoading(true);
+    const requestID = ++listRequestRef.current;
+    const loadingRequestID = showLoading ? ++listLoadingRequestRef.current : 0;
+    if (showLoading) setLoading(true);
     try {
       const res = await jobGetTask({ id: jobId, pageSize, pageNum: page });
-      setList(res.data?.dataList || []);
-      setTotal(res.data?.count || 0);
+      if (requestID === listRequestRef.current) {
+        setList((previous) => mergeTaskRecords(previous, res.data?.dataList || []));
+        setTotal(res.data?.count || 0);
+      }
     } catch { /* ignore */ }
-    setLoading(false);
+    if (showLoading && loadingRequestID === listLoadingRequestRef.current) {
+      setLoading(false);
+    }
   }, [jobId, page, pageSize]);
 
   const fetchCurrent = useCallback(async () => {
@@ -194,7 +218,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     // 运行中 Tab 直接用 doingTask，不请求后端
     if (status === 1) {
       if (activeTabRef.current === status) {
-        setTabTaskList(task.doingTask || []);
+        setTabTaskList((previous) => mergeTaskItems(previous, task.doingTask || []));
         setTabLoading(false);
       }
       return;
@@ -202,7 +226,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     try {
       const res = await jobGetTaskCurrent({ id: jobId, status });
       if (activeTabRef.current === status && requestID === tabRequestRef.current) {
-        setTabTaskList(Array.isArray(res.data) ? res.data : []);
+        setTabTaskList((previous) => mergeTaskItems(previous, Array.isArray(res.data) ? res.data : []));
       }
     } catch {
       if (showLoading && activeTabRef.current === status && requestID === tabRequestRef.current) {
@@ -233,7 +257,24 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     }
   }, [tabTaskList.length, tabTaskPage]);
 
-  useEffect(() => { fetchList(); }, [fetchList]);
+  useEffect(() => {
+    setPage(1);
+    setTabTaskPage(1);
+    setList([]);
+    setTotal(0);
+    setCurrentTask(null);
+    prevTaskRef.current = null;
+    lastLoadedTabRef.current = null;
+  }, [jobId]);
+
+  useEffect(() => {
+    if (showHistory) fetchList(true);
+  }, [fetchList, showHistory]);
+  useEffect(() => {
+    if (!showHistory) return undefined;
+    const pollID = setInterval(() => fetchList(false), 3000);
+    return () => { clearInterval(pollID); };
+  }, [fetchList, showHistory]);
   useEffect(() => {
     fetchCurrent();
     const pollID = setInterval(fetchCurrent, 3000);
@@ -269,14 +310,20 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     try {
       await jobDeleteTask(taskId);
       message.success('删除成功');
-      fetchList();
+      fetchList(false);
     } catch { /* ignore */ }
   };
 
-  const handleAbort = async () => {
+  const handleTaskAction = async (
+    taskId: number,
+    action: 'pause' | 'restart' | 'retryFailed',
+    successText: string,
+  ) => {
     try {
-      await jobPut({ id: jobId, pause: true, abort: true });
-      message.success('已中止');
+      await jobTaskAction(taskId, action);
+      message.success(successText);
+      fetchList(false);
+      fetchCurrent();
     } catch { /* ignore */ }
   };
 
@@ -299,13 +346,51 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     },
     { title: '总计', dataIndex: 'allNum', key: 'allNum', width: 80 },
     {
-      title: '操作', key: 'action', width: 120,
+      title: '操作', key: 'action', width: 136,
       render: (_: unknown, record: TaskRecord) => (
-        <Space>
-          <Button size="small" onClick={() => onTaskDetail?.(record.id)}>详情</Button>
-          <Popconfirm title="确认删除此任务？" onConfirm={() => handleDeleteTask(record.id)}>
-            <Button size="small" danger>删除</Button>
-          </Popconfirm>
+        <Space size={4} wrap>
+          <Tooltip title="详情">
+            <Button
+              size="small"
+              type="text"
+              icon={<EyeOutlined />}
+              aria-label="详情"
+              onClick={() => onTaskDetail?.(record.id)}
+            />
+          </Tooltip>
+          {record.status === 7 && (
+            <Tooltip title="继续">
+              <Button
+                size="small"
+                type="text"
+                icon={<PlayCircleOutlined />}
+                aria-label="继续"
+                onClick={() => handleTaskAction(record.id, 'restart', '已提交继续执行')}
+              />
+            </Tooltip>
+          )}
+          {(record.failNum || 0) > 0 && (
+            <Tooltip title="重试失败">
+              <Button
+                size="small"
+                type="text"
+                icon={<ReloadOutlined />}
+                aria-label="重试失败"
+                onClick={() => handleTaskAction(record.id, 'retryFailed', '已提交失败项重试')}
+              />
+            </Tooltip>
+          )}
+          <Tooltip title="删除">
+            <Popconfirm title="确认删除此任务？" onConfirm={() => handleDeleteTask(record.id)}>
+              <Button
+                size="small"
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+                aria-label="删除"
+              />
+            </Popconfirm>
+          </Tooltip>
         </Space>
       ),
     },
@@ -332,7 +417,7 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
                   <div>目标: {dstPath}</div>
                 </div>
               );
-              const rowKey = `${t.id || t.fileName || t.dstPath || t.srcPath || 'task'}_${i}`;
+              const rowKey = getTaskItemKey(t, i);
 
               return (
                 <div className="task-progress-file-row" key={rowKey}>
@@ -384,6 +469,13 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     </Spin>
   );
 
+  const historyList = useMemo(
+    () => filterCurrentTaskFromHistory(list, currentTask),
+    [currentTask, list],
+  );
+  const hiddenCurrentTaskCount = list.length - historyList.length;
+  const historyTotal = Math.max(0, total - hiddenCurrentTaskCount);
+
   const displayDuration = currentTask
     ? Math.max(currentTask.duration || 0, currentTask.createTime ? nowTick - currentTask.createTime : 0)
     : 0;
@@ -424,89 +516,101 @@ export default function TaskList({ jobId, onTaskDetail }: { jobId: string; onTas
     },
   ] : [];
 
+  const realtimeContent = currentTask ? (
+    <>
+      <div className="page-header">
+        <Space>
+          <Button
+            icon={<PauseCircleOutlined />}
+            onClick={() => handleTaskAction(currentTask.taskId, 'pause', '已暂停')}
+          >
+            暂停
+          </Button>
+        </Space>
+      </div>
+      <Card
+        className="task-progress-card"
+        size="small"
+        title="实时进度"
+        extra={(
+          <Tag color={currentTask.scanFinish ? 'success' : 'processing'}>
+            {currentTask.scanFinish ? '扫描完成，同步中' : '进行中'}
+          </Tag>
+        )}
+        style={{ marginBottom: 12 }}
+      >
+        {scanProgress && (
+          <div className="task-progress-scan">
+            <div className="task-progress-scan-header">
+              <Text strong className="task-progress-scan-title"><FolderOpenOutlined /> 目录扫描</Text>
+              <Space size={10} wrap className="task-progress-scan-counts">
+                <Text type="secondary">{scanProgress.totalDirs} 个目录</Text>
+              </Space>
+            </div>
+          </div>
+        )}
+
+        <div className="task-progress-metrics">
+          {progressMetrics.map((item) => (
+            <div className="task-progress-metric" key={item.key}>
+              <Text type="secondary" className="task-progress-metric-label">
+                {item.icon}
+                {item.label}
+              </Text>
+              <Text strong className="task-progress-metric-value">{item.value}</Text>
+            </div>
+          ))}
+        </div>
+
+        <Tabs
+          className="task-progress-tabs"
+          size="small"
+          activeKey={String(activeTab)}
+          onChange={(key) => handleTabChange(Number(key))}
+          items={statusTabs.map((tab) => ({
+            key: String(tab.key),
+            label: `${tab.label} (${currentTask.num?.[tab.numKey] || 0})`,
+            children: tab.key === activeTab ? renderCurrentTaskItems() : null,
+          }))}
+        />
+        <Text type="secondary" className="task-progress-start-time">
+          开始: {currentTask.createTime ? dayjs.unix(currentTask.createTime).format('HH:mm:ss') : '--'}
+        </Text>
+      </Card>
+    </>
+  ) : (
+    <Empty
+      image={Empty.PRESENTED_IMAGE_SIMPLE}
+      description={<Text type="secondary">当前没有正在同步的任务</Text>}
+    />
+  );
+
+  const historyContent = historyList.length === 0 && !loading ? (
+    <Empty
+      description={<Text type="secondary">暂无历史任务记录，执行完成后将在此显示</Text>}
+    />
+  ) : (
+    <Table
+      dataSource={historyList}
+      columns={columns}
+      rowKey="id"
+      loading={loading}
+      pagination={{
+        current: page,
+        pageSize,
+        total: historyTotal,
+        onChange: (p, ps) => { setPage(p); setPageSize(ps); },
+        showSizeChanger: true,
+        showTotal: (t) => `共 ${t} 条`,
+      }}
+      size="middle"
+    />
+  );
+
   return (
     <div>
-      {currentTask && (
-        <div className="page-header">
-          <Space>
-            <Button icon={<StopOutlined />} danger onClick={handleAbort}>中止</Button>
-          </Space>
-        </div>
-      )}
-
-      {currentTask && (
-        <Card
-          className="task-progress-card"
-          size="small"
-          title="实时进度"
-          extra={(
-            <Tag color={currentTask.scanFinish ? 'success' : 'processing'}>
-              {currentTask.scanFinish ? '扫描完成，同步中' : '进行中'}
-            </Tag>
-          )}
-          style={{ marginBottom: 12 }}
-        >
-          {scanProgress && (
-            <div className="task-progress-scan">
-              <div className="task-progress-scan-header">
-                <Text strong className="task-progress-scan-title"><FolderOpenOutlined /> 目录扫描</Text>
-                <Space size={10} wrap className="task-progress-scan-counts">
-                  <Text type="secondary">{scanProgress.totalDirs} 个目录</Text>
-                </Space>
-              </div>
-            </div>
-          )}
-
-          <div className="task-progress-metrics">
-            {progressMetrics.map((item) => (
-              <div className="task-progress-metric" key={item.key}>
-                <Text type="secondary" className="task-progress-metric-label">
-                  {item.icon}
-                  {item.label}
-                </Text>
-                <Text strong className="task-progress-metric-value">{item.value}</Text>
-              </div>
-            ))}
-          </div>
-
-          <Tabs
-            className="task-progress-tabs"
-            size="small"
-            activeKey={String(activeTab)}
-            onChange={(key) => handleTabChange(Number(key))}
-            items={statusTabs.map((tab) => ({
-              key: String(tab.key),
-              label: `${tab.label} (${currentTask.num?.[tab.numKey] || 0})`,
-              children: tab.key === activeTab ? renderCurrentTaskItems() : null,
-            }))}
-          />
-          <Text type="secondary" className="task-progress-start-time">
-            开始: {currentTask.createTime ? dayjs.unix(currentTask.createTime).format('HH:mm:ss') : '--'}
-          </Text>
-        </Card>
-      )}
-
-      {list.length === 0 && !loading ? (
-        <Empty
-          description={<Text type="secondary">暂无任务记录，执行同步任务后将在此显示任务进度</Text>}
-        />
-      ) : (
-        <Table
-          dataSource={list}
-          columns={columns}
-          rowKey="id"
-          loading={loading}
-          pagination={{
-            current: page,
-            pageSize,
-            total,
-            onChange: (p, ps) => { setPage(p); setPageSize(ps); },
-            showSizeChanger: true,
-            showTotal: (t) => `共 ${t} 条`,
-          }}
-          size="middle"
-        />
-      )}
+      {showRealtime && realtimeContent}
+      {showHistory && historyContent}
     </div>
   );
 }

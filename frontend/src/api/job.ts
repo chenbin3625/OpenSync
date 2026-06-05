@@ -29,6 +29,10 @@ export function jobDeleteTask(taskId: number | string) {
   return request.delete('/job', { params: { taskId } }) as Promise<ApiResponse<null>>;
 }
 
+export function jobTaskAction(taskId: number | string, action: 'pause' | 'restart' | 'retryFailed') {
+  return request.put('/job', { taskId: String(taskId), action }) as Promise<ApiResponse<null>>;
+}
+
 export function jobGetTaskItem(params: Record<string, unknown>) {
   return request.get('/job', { params }) as Promise<ApiResponse<PageData<TaskItem>>>;
 }

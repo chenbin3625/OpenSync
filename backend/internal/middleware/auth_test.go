@@ -98,3 +98,22 @@ func TestSetAuthCookieUsesHttpOnlyCookie(t *testing.T) {
 		t.Fatalf("cookie Secure = false on HTTPS request, want true")
 	}
 }
+
+func TestAuthRequiredReturnsHTTP401WhenCookieMissing(t *testing.T) {
+	withAuthTestConfig(t)
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(AuthRequired())
+	router.GET("/svr/user", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/svr/user", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}

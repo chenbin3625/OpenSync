@@ -2,70 +2,93 @@ import axios from 'axios';
 import { message } from 'antd';
 import { useStore } from '../stores/useStore';
 
+type ApiEnvelope = {
+  code?: number;
+  msg?: string;
+  data?: unknown;
+};
+
+const serializeParams = (params: Record<string, unknown>) => {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, val]) => {
+    if (val === undefined || val === null || val === '') return;
+    if (Array.isArray(val)) {
+      val.forEach((item) => {
+        if (item !== undefined && item !== null && item !== '') {
+          searchParams.append(key, String(item));
+        }
+      });
+      return;
+    }
+    searchParams.append(key, String(val));
+  });
+  return searchParams.toString();
+};
+
+const isApiEnvelope = (data: unknown): data is ApiEnvelope => (
+  !!data && typeof data === 'object' && ('code' in data || 'msg' in data || 'data' in data)
+);
+
+const redirectToLogin = () => {
+  useStore.getState().setUserInfo(null);
+  useStore.getState().setAuthChecked(true);
+  window.location.hash = '#/login';
+};
+
+const rejectApiEnvelope = (data: ApiEnvelope, fallbackStatus?: number) => {
+  const code = data.code ?? fallbackStatus ?? 200;
+  const msg = data.msg || 'Error';
+
+  if (code === 401 || fallbackStatus === 401) {
+    redirectToLogin();
+    return Promise.reject(new Error(msg));
+  }
+  if (code !== 200) {
+    message.error(msg);
+    return Promise.reject(new Error(msg));
+  }
+  return null;
+};
+
 const service = axios.create({
   baseURL: '/svr',
   timeout: 90000,
   headers: {
     'Content-Type': 'application/json;charset=utf-8',
   },
-});
-
-// Request interceptor
-service.interceptors.request.use(
-  (config) => {
-    // For GET requests, serialize params into URL
-    if (config.method === 'get' && config.params) {
-      const searchParams = new URLSearchParams();
-      Object.entries(config.params).forEach(([key, val]) => {
-        if (val !== undefined && val !== null && val !== '') {
-          searchParams.append(key, String(val));
-        }
-      });
-      const qs = searchParams.toString();
-      if (qs) {
-        config.url = config.url + '?' + qs;
-        config.params = undefined;
-      }
-    }
-    return config;
+  paramsSerializer: {
+    serialize: serializeParams,
   },
-  (error) => Promise.reject(error)
-);
+});
 
 // Response interceptor
 service.interceptors.response.use(
   (res) => {
-    const code = res.data.code || 200;
-    const msg = res.data.msg || 'Error';
-
-    if (code === 401) {
-      // Clear auth state and redirect to login
-      useStore.getState().setUserInfo(null);
-      useStore.getState().setAuthChecked(true);
-      window.location.hash = '#/login';
-      return Promise.reject(new Error(msg));
-    } else if (code === 500) {
-      message.error(msg);
-      return Promise.reject(new Error(msg));
-    } else if (code !== 200) {
-      message.error(msg);
-      return Promise.reject(new Error(msg));
+    if (isApiEnvelope(res.data)) {
+      const rejection = rejectApiEnvelope(res.data, res.status);
+      if (rejection) return rejection;
     }
     return res.data;
   },
   (error) => {
+    const status = error.response?.status;
+    const data = error.response?.data;
+    if (isApiEnvelope(data)) {
+      const rejection = rejectApiEnvelope(data, status);
+      if (rejection) return rejection;
+    }
+
     let msg = error.message;
     if (msg === 'Network Error') {
       msg = 'Connection error';
     } else if (msg.includes('timeout')) {
       msg = 'Request timeout';
     }
-    if (error.response?.status === 401) {
-      useStore.getState().setUserInfo(null);
-      useStore.getState().setAuthChecked(true);
-      window.location.hash = '#/login';
+    if (status === 401) {
+      redirectToLogin();
+    } else {
+      message.error(msg);
     }
-    message.error(msg);
     return Promise.reject(error);
   }
 );

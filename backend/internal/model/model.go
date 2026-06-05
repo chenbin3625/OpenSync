@@ -45,6 +45,8 @@ type Job struct {
 	StartDate     string `json:"start_date" db:"start_date"`
 	EndDate       string `json:"end_date" db:"end_date"`
 	Exclude       string `json:"exclude" db:"exclude"`
+	MinFileSize   int64  `json:"minFileSize" db:"minFileSize"`
+	MaxFileSize   int64  `json:"maxFileSize" db:"maxFileSize"`
 	CreateTime    int64  `json:"createTime" db:"createTime"`
 }
 

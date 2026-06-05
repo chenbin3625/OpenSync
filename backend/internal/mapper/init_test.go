@@ -7,7 +7,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestMigrateDBTxRollsBackWhenMigrationFails(t *testing.T) {
+func TestMigrateDBTxSkipsLegacyRenameWhenSpeedColumnMissing(t *testing.T) {
 	testDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open() error: %v", err)
@@ -26,15 +26,87 @@ func TestMigrateDBTxRollsBackWhenMigrationFails(t *testing.T) {
 		t.Fatalf("insert user: %v", err)
 	}
 
-	if err := migrateDBTx(testDB, 250520); err == nil {
-		t.Fatalf("migrateDBTx() returned nil error, want failure")
+	if _, err := testDB.Exec(`CREATE TABLE job(
+		id integer primary key autoincrement,
+		useCacheT integer DEFAULT 0
+	)`); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	if err := migrateDBTx(testDB, 250520); err != nil {
+		t.Fatalf("migrateDBTx() error: %v", err)
 	}
 
 	var version int64
 	if err := testDB.QueryRow("SELECT sqlVersion FROM user_list LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read sqlVersion: %v", err)
 	}
-	if version != 250520 {
-		t.Fatalf("sqlVersion = %d, want rollback to keep 250520", version)
+	if version != currentVersion {
+		t.Fatalf("sqlVersion = %d, want currentVersion %d", version, currentVersion)
 	}
+
+	for _, column := range []string{"scanIntervalT", "useCacheS", "scanIntervalS"} {
+		if !tableHasColumn(testDB, "job", column) {
+			t.Fatalf("job table missing migrated column %q", column)
+		}
+	}
+}
+
+func TestMigrateDBTxAddsJobFileSizeRangeColumns(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE user_list(
+		id integer primary key autoincrement,
+		userName text,
+		passwd text,
+		sqlVersion integer
+	)`); err != nil {
+		t.Fatalf("create user_list: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO user_list(userName, passwd, sqlVersion) VALUES ('admin', 'x', 250608)"); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	if _, err := testDB.Exec(`CREATE TABLE job(
+		id integer primary key autoincrement,
+		exclude text DEFAULT NULL
+	)`); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	if err := migrateDBTx(testDB, 250608); err != nil {
+		t.Fatalf("migrateDBTx() error: %v", err)
+	}
+
+	for _, column := range []string{"minFileSize", "maxFileSize"} {
+		if !tableHasColumn(testDB, "job", column) {
+			t.Fatalf("job table missing migrated column %q", column)
+		}
+	}
+}
+
+func tableHasColumn(db *sql.DB, tableName, columnName string) bool {
+	rows, err := db.Query("PRAGMA table_info(" + tableName + ")")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false
+		}
+		if name == columnName {
+			return true
+		}
+	}
+	return false
 }

@@ -27,11 +27,11 @@ func errorRecovery() gin.HandlerFunc {
 			if r := recover(); r != nil {
 				switch e := r.(type) {
 				case string:
-					c.JSON(http.StatusOK, model.Error(e))
+					c.JSON(http.StatusInternalServerError, model.Error(e))
 				case error:
-					c.JSON(http.StatusOK, model.Error(e.Error()))
+					c.JSON(http.StatusInternalServerError, model.Error(e.Error()))
 				default:
-					c.JSON(http.StatusOK, model.Error(fmt.Sprintf("%v", e)))
+					c.JSON(http.StatusInternalServerError, model.Error(fmt.Sprintf("%v", e)))
 				}
 				c.Abort()
 			}
@@ -88,6 +88,10 @@ func main() {
 	// User routes
 	r.GET("/svr/user", handler.GetUser)
 	r.PUT("/svr/user", handler.EditPassword)
+
+	// System config routes
+	r.GET("/svr/system/config", handler.GetSystemConfig)
+	r.PUT("/svr/system/config", handler.UpdateSystemConfig)
 
 	// Language routes
 	r.GET("/svr/language", handler.GetLanguage)

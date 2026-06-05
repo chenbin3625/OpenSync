@@ -81,6 +81,9 @@ func FetchAllToTable(query string, args ...interface{}) ([]map[string]interface{
 		}
 		results = append(results, row)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
 

@@ -51,13 +51,15 @@ func GetJobByTaskID(taskID int64) (map[string]interface{}, error) {
 func AddJob(job map[string]interface{}) (int64, error) {
 	return ExecuteInsert(
 		`INSERT INTO job (enable, remark, srcPath, dstPath, alistId, useCacheT, scanIntervalT, useCacheS, scanIntervalS,
-		 method, interval, isCron, year, month, day, week, day_of_week, hour, minute, second, start_date, end_date, exclude)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 method, interval, isCron, year, month, day, week, day_of_week, hour, minute, second, start_date, end_date, exclude,
+		 minFileSize, maxFileSize)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job["enable"], job["remark"], job["srcPath"], job["dstPath"], job["alistId"],
 		job["useCacheT"], job["scanIntervalT"], job["useCacheS"], job["scanIntervalS"],
 		job["method"], job["interval"], job["isCron"],
 		job["year"], job["month"], job["day"], job["week"], job["day_of_week"],
 		job["hour"], job["minute"], job["second"], job["start_date"], job["end_date"], job["exclude"],
+		job["minFileSize"], job["maxFileSize"],
 	)
 }
 
@@ -66,12 +68,13 @@ func UpdateJob(job map[string]interface{}) error {
 	return ExecuteUpdate(
 		`UPDATE job SET enable=?, remark=?, srcPath=?, dstPath=?, alistId=?, useCacheT=?, scanIntervalT=?,
 		 useCacheS=?, scanIntervalS=?, method=?, interval=?, isCron=?, year=?, month=?, day=?, week=?,
-		 day_of_week=?, hour=?, minute=?, second=?, start_date=?, end_date=?, exclude=? WHERE id=?`,
+		 day_of_week=?, hour=?, minute=?, second=?, start_date=?, end_date=?, exclude=?, minFileSize=?, maxFileSize=? WHERE id=?`,
 		job["enable"], job["remark"], job["srcPath"], job["dstPath"], job["alistId"],
 		job["useCacheT"], job["scanIntervalT"], job["useCacheS"], job["scanIntervalS"],
 		job["method"], job["interval"], job["isCron"],
 		job["year"], job["month"], job["day"], job["week"], job["day_of_week"],
 		job["hour"], job["minute"], job["second"], job["start_date"], job["end_date"], job["exclude"],
+		job["minFileSize"], job["maxFileSize"],
 		job["id"],
 	)
 }
@@ -281,6 +284,16 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 	}
 
 	return map[string]interface{}{"dataList": dataList, "count": toInt64(count)}, nil
+}
+
+// GetFailedJobTaskItems returns failed task items that can be retried.
+func GetFailedJobTaskItems(taskID int64) ([]map[string]interface{}, error) {
+	return FetchAllToTable(
+		`SELECT * FROM job_task_item
+		 WHERE taskId=? AND status=7
+		 ORDER BY createTime ASC, id ASC`,
+		taskID,
+	)
 }
 
 // GetJobTaskCountByStatus counts task items by status
