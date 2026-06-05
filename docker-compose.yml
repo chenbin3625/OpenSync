@@ -1,6 +1,6 @@
 services:
   opensync:
-    image: ghcr.io/chenbin3625/opensync:latest
+    image: chenbin3625/opensync:latest
     container_name: opensync
     restart: unless-stopped
     ports:
