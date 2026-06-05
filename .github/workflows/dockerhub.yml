@@ -1,0 +1,90 @@
+name: Docker Hub
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish, for example 1.4.0 or v1.4.0
+        required: true
+        default: "1.4.0"
+      ref:
+        description: Git ref to build
+        required: true
+        default: "v1.4.0"
+      repository:
+        description: Docker Hub repository
+        required: true
+        default: chenbin3625/opensync
+      latest:
+        description: Also publish latest
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish Docker Hub image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Docker Hub secrets
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::Missing DOCKERHUB_USERNAME or DOCKERHUB_TOKEN repository secret."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Prepare Docker tags
+        id: tags
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          version="${version#v}"
+          repository="${{ inputs.repository }}"
+
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like 1.4.0 or v1.4.0."
+            exit 1
+          fi
+
+          minor="${version%.*}"
+
+          {
+            echo "tags<<EOF"
+            echo "$repository:$version"
+            echo "$repository:$minor"
+            if [ "${{ inputs.latest }}" = "true" ]; then
+              echo "$repository:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
