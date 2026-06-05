@@ -1,0 +1,54 @@
+name: Docker Hub Description
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Docker Hub repository
+        required: true
+        default: chenbin3625/opensync
+      readme:
+        description: Markdown file used as Docker Hub overview
+        required: true
+        default: .dockerhub/README.md
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: Update Docker Hub description
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Docker Hub secrets
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::Missing DOCKERHUB_USERNAME or DOCKERHUB_TOKEN repository secret."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check overview length
+        shell: bash
+        run: |
+          count="$(wc -m < "${{ inputs.readme }}")"
+          echo "Docker Hub overview length: $count characters"
+          if [ "$count" -gt 25000 ]; then
+            echo "::error::Docker Hub overview must be 25000 characters or fewer."
+            exit 1
+          fi
+
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ inputs.repository }}
+          short-description: 飞牛 NAS 下的群晖 Cloud Sync 平替，基于 AList / OpenList 的自动同步工具。
+          readme-filepath: ${{ inputs.readme }}
