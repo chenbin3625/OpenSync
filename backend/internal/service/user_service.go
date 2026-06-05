@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"log"
 	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
@@ -60,9 +61,23 @@ func CheckPwd(userID int64, passwd string, userName string) map[string]interface
 	CheckPwdTime()
 	user := GetUser(userID, userName)
 	cfg := config.GetConfig()
-	if crypto.PasswordToMD5(passwd, cfg.Server.PasswdStr) != fmt.Sprintf("%v", user["passwd"]) {
+	storedHash := fmt.Sprintf("%v", user["passwd"])
+	if !crypto.CheckPassword(passwd, storedHash, cfg.Server.PasswdStr) {
 		AddPwdError()
 		panic(i18n.G("passwd_wrong"))
+	}
+	if !crypto.IsModernPasswordHash(storedHash) {
+		newHash, err := crypto.HashPassword(passwd)
+		if err != nil {
+			log.Printf("Failed to upgrade password hash: %v", err)
+		} else {
+			userID := toInt64(user["id"])
+			if err := mapper.ResetPasswd(userID, newHash); err != nil {
+				log.Printf("Failed to persist upgraded password hash: %v", err)
+			} else {
+				user["passwd"] = newHash
+			}
+		}
 	}
 	return user
 }
@@ -70,8 +85,13 @@ func CheckPwd(userID int64, passwd string, userName string) map[string]interface
 // EditPasswd changes user password
 func EditPasswd(userID int64, passwd string, oldPasswd string) {
 	CheckPwd(userID, oldPasswd, "")
-	cfg := config.GetConfig()
-	mapper.ResetPasswd(userID, crypto.PasswordToMD5(passwd, cfg.Server.PasswdStr))
+	hash, err := crypto.HashPassword(passwd)
+	if err != nil {
+		panic(err.Error())
+	}
+	if err := mapper.ResetPasswd(userID, hash); err != nil {
+		panic(err.Error())
+	}
 }
 
 // ResetPasswd resets user password (with secret key verification)
@@ -84,10 +104,22 @@ func ResetPasswd(userName string, key string, passwd string) string {
 	}
 	if passwd == "" {
 		newPasswd := crypto.GeneratePassword(8)
-		mapper.ResetPasswd(toInt64(user["id"]), crypto.PasswordToMD5(newPasswd, cfg.Server.PasswdStr))
+		hash, err := crypto.HashPassword(newPasswd)
+		if err != nil {
+			panic(err.Error())
+		}
+		if err := mapper.ResetPasswd(toInt64(user["id"]), hash); err != nil {
+			panic(err.Error())
+		}
 		return newPasswd
 	}
-	mapper.ResetPasswd(toInt64(user["id"]), crypto.PasswordToMD5(passwd, cfg.Server.PasswdStr))
+	hash, err := crypto.HashPassword(passwd)
+	if err != nil {
+		panic(err.Error())
+	}
+	if err := mapper.ResetPasswd(toInt64(user["id"]), hash); err != nil {
+		panic(err.Error())
+	}
 	return ""
 }
 

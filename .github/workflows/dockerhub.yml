@@ -6,13 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version to publish, for example 1.4.0 or v1.4.0
+        description: Version to publish, for example 1.4.1 or v1.4.1
         required: true
-        default: "1.4.0"
+        default: "1.4.1"
       ref:
         description: Git ref to build
         required: true
-        default: "v1.4.0"
+        default: "v1.4.1"
       repository:
         description: Docker Hub repository
         required: true
@@ -73,7 +73,7 @@ jobs:
           fi
 
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Version must look like 1.4.0 or v1.4.0."
+            echo "::error::Version must look like 1.4.1 or v1.4.1."
             exit 1
           fi
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"opensync/internal/i18n"
 	"strings"
+	"time"
 )
 
 // GetJobList gets paginated job list
@@ -105,7 +106,37 @@ func DeleteJob(jobID int64) error {
 // GetJobTaskList gets paginated task list for a job
 func GetJobTaskList(params map[string]interface{}) (map[string]interface{}, error) {
 	jobID := params["id"]
-	return FetchAllToPage("SELECT * FROM job_task WHERE jobId=? ORDER BY createTime DESC", params, jobID)
+	where := "WHERE jobId=?"
+	args := []interface{}{jobID}
+
+	if status, ok := params["status"]; ok {
+		where += " AND status=?"
+		args = append(args, toInt(status))
+	}
+	if startTime, ok := params["startTime"]; ok {
+		start := toInt(startTime)
+		if start > 0 {
+			where += " AND COALESCE(NULLIF(runTime, 0), createTime) >= ?"
+			args = append(args, start)
+		}
+	}
+	if endTime, ok := params["endTime"]; ok {
+		end := toInt(endTime)
+		if end > 0 {
+			where += " AND COALESCE(NULLIF(runTime, 0), createTime) <= ?"
+			args = append(args, end)
+		}
+	}
+	if keyword, ok := params["keyword"]; ok {
+		kw := strings.TrimSpace(fmt.Sprintf("%v", keyword))
+		if kw != "" {
+			where += " AND CAST(id AS TEXT) LIKE ? ESCAPE '\\'"
+			args = append(args, "%"+escapeLike(kw)+"%")
+		}
+	}
+
+	baseSQL := fmt.Sprintf("SELECT * FROM job_task %s ORDER BY createTime DESC", where)
+	return FetchAllToPage(baseSQL, params, args...)
 }
 
 // GetJobTaskByID gets task by ID
@@ -199,6 +230,11 @@ func UpdateJobTaskNumMany(taskNums []map[string]interface{}) error {
 	return ExecuteMany("UPDATE job_task SET taskNum=? WHERE id=?", argsList)
 }
 
+// UpdateJobTaskStatusAndNum updates final status and cached counts in one write.
+func UpdateJobTaskStatusAndNum(taskID int64, status int, errMsg *string, taskNum string) error {
+	return ExecuteUpdate("UPDATE job_task SET status=?, errMsg=?, taskNum=? WHERE id=?", status, errMsg, taskNum, taskID)
+}
+
 // --- Job Task Item ---
 
 // AddJobTaskItemMany batch inserts task items
@@ -208,14 +244,19 @@ func AddJobTaskItemMany(items []map[string]interface{}) error {
 	}
 	argsList := make([][]interface{}, 0, len(items))
 	for _, item := range items {
+		createTime := item["createTime"]
+		if createTime == nil {
+			createTime = time.Now().Unix()
+		}
 		argsList = append(argsList, []interface{}{
 			item["taskId"], item["srcPath"], item["dstPath"], item["isPath"], item["fileName"],
 			item["fileSize"], item["type"], item["alistTaskId"], item["status"], item["errMsg"],
+			createTime,
 		})
 	}
 	return ExecuteMany(
-		`INSERT INTO job_task_item (taskId, srcPath, dstPath, isPath, fileName, fileSize, type, alistTaskId, status, errMsg)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO job_task_item (taskId, srcPath, dstPath, isPath, fileName, fileSize, type, alistTaskId, status, errMsg, createTime)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		argsList,
 	)
 }
@@ -291,6 +332,82 @@ func GetFailedJobTaskItems(taskID int64) ([]map[string]interface{}, error) {
 	return FetchAllToTable(
 		`SELECT * FROM job_task_item
 		 WHERE taskId=? AND status=7
+		 ORDER BY createTime ASC, id ASC`,
+		taskID,
+	)
+}
+
+// CountJobTaskItemsByStatuses counts task items matching any of the given statuses.
+func CountJobTaskItemsByStatuses(taskID int64, statuses []int) (int64, error) {
+	if len(statuses) == 0 {
+		return 0, nil
+	}
+	clause, args := statusInClause(statuses)
+	query := fmt.Sprintf("SELECT COUNT(id) FROM job_task_item WHERE taskId=? AND status IN (%s)", clause)
+	queryArgs := append([]interface{}{taskID}, args...)
+	count, err := FetchFirstVal(query, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	return toInt64(count), nil
+}
+
+// ForEachJobTaskItemsByStatuses reads task items in bounded batches.
+func ForEachJobTaskItemsByStatuses(taskID int64, statuses []int, batchSize int, fn func([]map[string]interface{}) error) error {
+	if len(statuses) == 0 {
+		return nil
+	}
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	clause, statusArgs := statusInClause(statuses)
+	lastCreateTime := int64(-1)
+	lastID := int64(0)
+
+	for {
+		query := fmt.Sprintf(
+			`SELECT * FROM job_task_item
+			 WHERE taskId=? AND status IN (%s)
+			   AND (createTime > ? OR (createTime = ? AND id > ?))
+			 ORDER BY createTime ASC, id ASC
+			 LIMIT %d`,
+			clause,
+			batchSize,
+		)
+		args := append([]interface{}{taskID}, statusArgs...)
+		args = append(args, lastCreateTime, lastCreateTime, lastID)
+		items, err := FetchAllToTable(query, args...)
+		if err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			return nil
+		}
+		if err := fn(items); err != nil {
+			return err
+		}
+		last := items[len(items)-1]
+		lastCreateTime = toInt64(last["createTime"])
+		lastID = toInt64(last["id"])
+	}
+}
+
+func statusInClause(statuses []int) (string, []interface{}) {
+	placeholders := make([]string, 0, len(statuses))
+	args := make([]interface{}, 0, len(statuses))
+	for _, status := range statuses {
+		placeholders = append(placeholders, "?")
+		args = append(args, status)
+	}
+	return strings.Join(placeholders, ","), args
+}
+
+// GetResumableJobTaskItems returns interrupted task items that can continue
+// without scanning the job again.
+func GetResumableJobTaskItems(taskID int64) ([]map[string]interface{}, error) {
+	return FetchAllToTable(
+		`SELECT * FROM job_task_item
+		 WHERE taskId=? AND status IN (0, 1, 4)
 		 ORDER BY createTime ASC, id ASC`,
 		taskID,
 	)

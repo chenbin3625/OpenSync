@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { filterCurrentTaskFromHistory, getTaskItemKey, mergeTaskItems, mergeTaskRecords } from '../src/pages/Home/taskRows.ts';
+import {
+  filterCurrentTaskFromHistory,
+  filterRunningTaskRows,
+  getTaskItemKey,
+  mergeTaskItems,
+  mergeTaskRecords,
+  shouldPollRealtime,
+} from '../src/pages/Home/taskRows.ts';
 import type { TaskItem, TaskRecord } from '../src/types.ts';
 
 test('mergeTaskRecords keeps unchanged task row references during refresh', () => {
@@ -48,4 +55,22 @@ test('filterCurrentTaskFromHistory removes the active running task from history 
   const filtered = filterCurrentTaskFromHistory(rows, { createTime: 300 });
 
   assert.deepEqual(filtered.map((row) => row.id), [11, 10]);
+});
+
+test('filterRunningTaskRows removes active rows when history view does not poll realtime state', () => {
+  const rows: TaskRecord[] = [
+    { id: 12, status: 1, createTime: 300, runTime: 300, successNum: 1, failNum: 0, allNum: 3 },
+    { id: 11, status: 0, createTime: 200, runTime: 200, successNum: 0, failNum: 0, allNum: 3 },
+    { id: 10, status: 2, createTime: 100, runTime: 100, successNum: 2, failNum: 0, allNum: 2 },
+  ];
+
+  const filtered = filterRunningTaskRows(rows);
+
+  assert.deepEqual(filtered.map((row) => row.id), [10]);
+});
+
+test('shouldPollRealtime only enables polling for views that render realtime content', () => {
+  assert.equal(shouldPollRealtime('all'), true);
+  assert.equal(shouldPollRealtime('realtime'), true);
+  assert.equal(shouldPollRealtime('history'), false);
 });

@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/pkg/crypto"
 	"time"
@@ -25,8 +24,10 @@ func InitSQL() string {
 	if err != nil {
 		// First run - create all tables
 		passwd = crypto.GeneratePassword(8)
-		cfg := config.GetConfig()
-		encPasswd := crypto.PasswordToMD5(passwd, cfg.Server.PasswdStr)
+		encPasswd, err := crypto.HashPassword(passwd)
+		if err != nil {
+			log.Fatalf("Failed to hash initial admin password: %v", err)
+		}
 
 		stmts := []string{
 			fmt.Sprintf(`CREATE TABLE user_list(
@@ -149,6 +150,7 @@ func ensureIndexes(db *sql.DB) {
 		"CREATE INDEX IF NOT EXISTS idx_job_task_status_job ON job_task(status, jobId)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_time ON job_task_item(taskId, createTime DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status ON job_task_item(taskId, status)",
+		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status_time ON job_task_item(taskId, status, createTime DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_type ON job_task_item(taskId, type)",
 	}
 	for _, stmt := range indexes {

@@ -2,10 +2,83 @@ package mapper
 
 import (
 	"database/sql"
+	"reflect"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
+
+func TestGetResumableJobTaskItemsReturnsOnlyInterruptedItemsInOriginalOrder(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE job_task_item(
+		id integer primary key autoincrement,
+		taskId integer,
+		srcPath text,
+		dstPath text,
+		isPath integer,
+		fileName text,
+		fileSize integer,
+		type integer,
+		alistTaskId text,
+		status integer,
+		errMsg text,
+		createTime integer
+	)`); err != nil {
+		t.Fatalf("create job_task_item: %v", err)
+	}
+
+	rows := []struct {
+		id         int
+		status     int
+		createTime int
+		fileName   string
+	}{
+		{1, 2, 100, "done.txt"},
+		{2, 4, 90, "canceled.txt"},
+		{3, 7, 80, "failed.txt"},
+		{4, 0, 70, "waiting.txt"},
+		{5, 1, 60, "running.txt"},
+	}
+	for _, row := range rows {
+		if _, err := testDB.Exec(
+			`INSERT INTO job_task_item(id, taskId, fileName, status, createTime)
+			 VALUES (?, 10, ?, ?, ?)`,
+			row.id, row.fileName, row.status, row.createTime,
+		); err != nil {
+			t.Fatalf("insert job_task_item %d: %v", row.id, err)
+		}
+	}
+
+	oldDB := db
+	db = testDB
+	defer func() {
+		db = oldDB
+	}()
+
+	items, err := GetResumableJobTaskItems(10)
+	if err != nil {
+		t.Fatalf("GetResumableJobTaskItems() error: %v", err)
+	}
+
+	got := make([]string, 0, len(items))
+	for _, item := range items {
+		got = append(got, item["fileName"].(string))
+	}
+	want := []string{"running.txt", "waiting.txt", "canceled.txt"}
+	if len(got) != len(want) {
+		t.Fatalf("resumable items = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("resumable items = %v, want %v", got, want)
+		}
+	}
+}
 
 func TestDeleteJobRollsBackWhenChildDeleteFails(t *testing.T) {
 	testDB, err := sql.Open("sqlite", ":memory:")
@@ -57,5 +130,246 @@ func TestDeleteJobRollsBackWhenChildDeleteFails(t *testing.T) {
 	}
 	if taskCount != 1 {
 		t.Fatalf("job_task count = %d, want rollback to keep 1", taskCount)
+	}
+}
+
+func TestGetJobTaskListAppliesHistoryFilters(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE job_task(
+		id integer primary key autoincrement,
+		jobId integer,
+		status integer,
+		runTime integer,
+		createTime integer
+	)`); err != nil {
+		t.Fatalf("create job_task: %v", err)
+	}
+
+	rows := []struct {
+		id         int
+		jobID      int
+		status     int
+		runTime    int
+		createTime int
+	}{
+		{101, 1, 2, 100, 90},
+		{202, 1, 6, 200, 190},
+		{302, 1, 2, 300, 290},
+		{402, 2, 2, 300, 290},
+	}
+	for _, row := range rows {
+		if _, err := testDB.Exec(
+			"INSERT INTO job_task(id, jobId, status, runTime, createTime) VALUES (?, ?, ?, ?, ?)",
+			row.id, row.jobID, row.status, row.runTime, row.createTime,
+		); err != nil {
+			t.Fatalf("insert job_task %d: %v", row.id, err)
+		}
+	}
+
+	oldDB := db
+	db = testDB
+	defer func() {
+		db = oldDB
+	}()
+
+	result, err := GetJobTaskList(map[string]interface{}{
+		"id":        int64(1),
+		"status":    "2",
+		"startTime": "150",
+		"endTime":   "350",
+		"keyword":   "02",
+		"pageSize":  "10",
+		"pageNum":   "1",
+	})
+	if err != nil {
+		t.Fatalf("GetJobTaskList() error: %v", err)
+	}
+
+	dataList := result["dataList"].([]map[string]interface{})
+	if len(dataList) != 1 {
+		t.Fatalf("dataList len = %d, want 1: %#v", len(dataList), dataList)
+	}
+	if gotID := dataList[0]["id"]; gotID != int64(302) {
+		t.Fatalf("matched task id = %v, want 302", gotID)
+	}
+	if gotCount := result["count"]; gotCount != int64(1) {
+		t.Fatalf("count = %v, want 1", gotCount)
+	}
+}
+
+func TestUpdateJobTaskStatusAndNumWritesStatusAndTaskNumTogether(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE job_task(
+		id integer primary key autoincrement,
+		status integer,
+		errMsg text,
+		taskNum text
+	)`); err != nil {
+		t.Fatalf("create job_task: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO job_task(id, status) VALUES (10, 1)"); err != nil {
+		t.Fatalf("insert job_task: %v", err)
+	}
+
+	oldDB := db
+	db = testDB
+	defer func() {
+		db = oldDB
+	}()
+
+	errMsg := "copy failed"
+	if err := UpdateJobTaskStatusAndNum(10, 3, &errMsg, `{"failNum":1}`); err != nil {
+		t.Fatalf("UpdateJobTaskStatusAndNum() error: %v", err)
+	}
+
+	var status int
+	var gotErrMsg string
+	var taskNum string
+	if err := testDB.QueryRow("SELECT status, errMsg, taskNum FROM job_task WHERE id=10").Scan(&status, &gotErrMsg, &taskNum); err != nil {
+		t.Fatalf("read job_task: %v", err)
+	}
+	if status != 3 || gotErrMsg != errMsg || taskNum != `{"failNum":1}` {
+		t.Fatalf("row = status %d errMsg %q taskNum %q, want 3/%q/{failNum}", status, gotErrMsg, taskNum, errMsg)
+	}
+}
+
+func TestAddJobTaskItemManyPersistsProvidedCreateTime(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE job_task_item(
+		id integer primary key autoincrement,
+		taskId integer,
+		srcPath text,
+		dstPath text,
+		isPath integer,
+		fileName text,
+		fileSize integer,
+		type integer,
+		alistTaskId text,
+		status integer,
+		errMsg text,
+		createTime integer DEFAULT 1
+	)`); err != nil {
+		t.Fatalf("create job_task_item: %v", err)
+	}
+
+	oldDB := db
+	db = testDB
+	defer func() {
+		db = oldDB
+	}()
+
+	if err := AddJobTaskItemMany([]map[string]interface{}{
+		{
+			"taskId":      int64(10),
+			"srcPath":     "/src/",
+			"dstPath":     "/dst/",
+			"isPath":      0,
+			"fileName":    "movie.mkv",
+			"fileSize":    int64(1024),
+			"type":        0,
+			"alistTaskId": "copy-1",
+			"status":      2,
+			"errMsg":      nil,
+			"createTime":  int64(123456),
+		},
+	}); err != nil {
+		t.Fatalf("AddJobTaskItemMany() error: %v", err)
+	}
+
+	var createTime int64
+	if err := testDB.QueryRow("SELECT createTime FROM job_task_item WHERE taskId=10").Scan(&createTime); err != nil {
+		t.Fatalf("read createTime: %v", err)
+	}
+	if createTime != 123456 {
+		t.Fatalf("createTime = %d, want provided value 123456", createTime)
+	}
+}
+
+func TestForEachJobTaskItemsByStatusesReadsBatchesInCreateOrder(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE job_task_item(
+		id integer primary key autoincrement,
+		taskId integer,
+		srcPath text,
+		dstPath text,
+		isPath integer,
+		fileName text,
+		fileSize integer,
+		type integer,
+		alistTaskId text,
+		status integer,
+		errMsg text,
+		createTime integer
+	)`); err != nil {
+		t.Fatalf("create job_task_item: %v", err)
+	}
+
+	rows := []struct {
+		id         int
+		status     int
+		createTime int
+		fileName   string
+	}{
+		{1, 7, 20, "failed-b.txt"},
+		{2, 2, 10, "success.txt"},
+		{3, 7, 10, "failed-a.txt"},
+		{4, 4, 30, "aborted.txt"},
+		{5, 7, 30, "failed-c.txt"},
+	}
+	for _, row := range rows {
+		if _, err := testDB.Exec(
+			`INSERT INTO job_task_item(id, taskId, fileName, status, createTime)
+			 VALUES (?, 10, ?, ?, ?)`,
+			row.id, row.fileName, row.status, row.createTime,
+		); err != nil {
+			t.Fatalf("insert job_task_item %d: %v", row.id, err)
+		}
+	}
+
+	oldDB := db
+	db = testDB
+	defer func() {
+		db = oldDB
+	}()
+
+	var got []string
+	var batchSizes []int
+	err = ForEachJobTaskItemsByStatuses(10, []int{7}, 2, func(items []map[string]interface{}) error {
+		batchSizes = append(batchSizes, len(items))
+		for _, item := range items {
+			got = append(got, item["fileName"].(string))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ForEachJobTaskItemsByStatuses() error: %v", err)
+	}
+
+	want := []string{"failed-a.txt", "failed-b.txt", "failed-c.txt"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("items = %v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(batchSizes, []int{2, 1}) {
+		t.Fatalf("batch sizes = %v, want [2 1]", batchSizes)
 	}
 }

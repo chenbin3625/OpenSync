@@ -24,20 +24,34 @@ func GetJob(c *gin.Context) {
 		// Check for current (real-time progress)
 		current := c.Query("current")
 		if current != "" {
-			status := c.Query("status")
-			var statusPtr *string
-			if status != "" {
-				statusPtr = &status
+			req := map[string]interface{}{
+				"status":   c.Query("status"),
+				"pageSize": c.Query("pageSize"),
+				"pageNum":  c.Query("pageNum"),
 			}
-			result := service.GetJobCurrent(id, statusPtr)
+			for k, v := range req {
+				if v == "" {
+					delete(req, k)
+				}
+			}
+			result := service.GetJobCurrent(id, req)
 			c.JSON(http.StatusOK, model.Success(result))
 			return
 		}
 		// Task list for this job
 		req := map[string]interface{}{
-			"id":       id,
-			"pageSize": c.Query("pageSize"),
-			"pageNum":  c.Query("pageNum"),
+			"id":        id,
+			"pageSize":  c.Query("pageSize"),
+			"pageNum":   c.Query("pageNum"),
+			"status":    c.Query("status"),
+			"keyword":   c.Query("keyword"),
+			"startTime": c.Query("startTime"),
+			"endTime":   c.Query("endTime"),
+		}
+		for k, v := range req {
+			if v == "" {
+				delete(req, k)
+			}
 		}
 		result := service.GetTaskList(req)
 		c.JSON(http.StatusOK, model.Success(result))
@@ -120,6 +134,8 @@ func UpdateJob(c *gin.Context) {
 		switch req.Action {
 		case "pause":
 			service.PauseTask(taskID)
+		case "resume":
+			service.ResumeTask(taskID)
 		case "restart":
 			service.RestartTask(taskID)
 		case "retryFailed":

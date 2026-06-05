@@ -1,6 +1,7 @@
 package service
 
 import (
+	"opensync/internal/i18n"
 	"testing"
 	"time"
 )
@@ -115,5 +116,55 @@ func TestWaitUntilIdleTimesOutWhileTaskStillRunning(t *testing.T) {
 
 	if client.waitUntilIdle(20 * time.Millisecond) {
 		t.Fatalf("waitUntilIdle() = true, want false while task is still running")
+	}
+}
+
+func TestRemoveJobClientRejectsRunningJobWithoutStoppingIt(t *testing.T) {
+	client := &JobClient{
+		JobID:     99,
+		Job:       map[string]interface{}{"id": int64(99), "enable": 1, "isCron": 2},
+		Scheduler: NewScheduler(),
+	}
+	defer client.Scheduler.Stop()
+
+	task := &JobTask{TaskID: 100}
+	task.initRuntime()
+	client.setCurrentTask(task)
+	if !client.tryMarkDoing() {
+		t.Fatalf("tryMarkDoing() = false, want true")
+	}
+
+	jobClientListMu.Lock()
+	previousClients := jobClientList
+	jobClientList = map[int64]*JobClient{client.JobID: client}
+	jobClientListMu.Unlock()
+	defer func() {
+		jobClientListMu.Lock()
+		jobClientList = previousClients
+		jobClientListMu.Unlock()
+	}()
+
+	panicCh := make(chan interface{}, 1)
+	go func() {
+		defer func() {
+			panicCh <- recover()
+		}()
+		RemoveJobClient(client.JobID)
+	}()
+
+	select {
+	case recovered := <-panicCh:
+		if recovered != i18n.G("job_running_cannot_delete") {
+			t.Fatalf("RemoveJobClient() panic = %#v, want %q", recovered, i18n.G("job_running_cannot_delete"))
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("RemoveJobClient() did not reject running job immediately")
+	}
+
+	if task.isBreak() {
+		t.Fatalf("RemoveJobClient() requested task break while rejecting delete")
+	}
+	if got := toInt(client.Job["enable"]); got != 1 {
+		t.Fatalf("job enable after rejected delete = %d, want 1", got)
 	}
 }

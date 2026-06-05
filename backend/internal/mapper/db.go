@@ -47,6 +47,15 @@ func GetDB() *sql.DB {
 	return db
 }
 
+// SetDBForTest swaps the package database handle and returns a restore function.
+func SetDBForTest(testDB *sql.DB) func() {
+	oldDB := db
+	db = testDB
+	return func() {
+		db = oldDB
+	}
+}
+
 // FetchAllToTable executes a query and returns results as []map[string]interface{}
 func FetchAllToTable(query string, args ...interface{}) ([]map[string]interface{}, error) {
 	rows, err := GetDB().Query(query, args...)

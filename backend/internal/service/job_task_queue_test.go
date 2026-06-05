@@ -2,12 +2,18 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"opensync/internal/config"
+	"opensync/internal/mapper"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestCopyQueueKeepsFIFOAndCompacts(t *testing.T) {
@@ -360,6 +366,147 @@ func TestFlushPendingTaskItemsPersistsOverflowInOneBatch(t *testing.T) {
 	}
 }
 
+func TestTaskSubmitMarksTaskFailedWhenFinishedItemPersistenceFails(t *testing.T) {
+	oldPersist := persistJobTaskItems
+	defer func() {
+		persistJobTaskItems = oldPersist
+	}()
+	persistJobTaskItems = func([]map[string]interface{}) error {
+		return errors.New("write failed")
+	}
+
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+
+	client := &JobClient{}
+	client.tryMarkDoing()
+	jt := &JobTask{
+		TaskID:     10,
+		JobClient:  client,
+		CreateTime: float64(time.Now().Unix()),
+		Finish: []map[string]interface{}{
+			{
+				"taskId":     int64(10),
+				"srcPath":    "/src/",
+				"dstPath":    "/dst/",
+				"isPath":     0,
+				"fileName":   "failed.txt",
+				"fileSize":   int64(1),
+				"type":       0,
+				"status":     7,
+				"createTime": int64(100),
+			},
+		},
+	}
+	jt.initRuntime()
+	jt.ScanFinish.Store(true)
+	client.setCurrentTask(jt)
+
+	jt.taskSubmit()
+
+	status, errMsg := readServiceTaskStatus(t, testDB, 10)
+	if status != 6 {
+		t.Fatalf("task status = %d, want 6 after persistence failure", status)
+	}
+	if !strings.Contains(errMsg, "write failed") {
+		t.Fatalf("errMsg = %q, want persistence error", errMsg)
+	}
+}
+
+func TestJobTaskStartRecoversPanickingSyncWorker(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+
+	client := &JobClient{
+		Job: map[string]interface{}{"enable": 1, "isCron": 2},
+	}
+	if !client.tryMarkDoing() {
+		t.Fatalf("tryMarkDoing() = false, want true")
+	}
+	jt := &JobTask{
+		TaskID:     10,
+		JobClient:  client,
+		Job:        map[string]interface{}{"srcPath": "/src", "dstPath": "/dst"},
+		CreateTime: float64(time.Now().Unix()),
+		Finish:     make([]map[string]interface{}, 0),
+		Waiting:    newCopyQueue(),
+	}
+	jt.initRuntime()
+	client.setCurrentTask(jt)
+
+	jt.Start()
+
+	if !client.waitUntilIdle(time.Second) {
+		t.Fatalf("job client stayed busy after worker panic")
+	}
+	status, errMsg := readServiceTaskStatus(t, testDB, 10)
+	if status != 6 {
+		t.Fatalf("task status = %d, want 6 after worker panic", status)
+	}
+	if !strings.Contains(errMsg, "panic") {
+		t.Fatalf("errMsg = %q, want panic details", errMsg)
+	}
+}
+
+func newServiceTaskStatusTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = testDB.Close()
+	})
+
+	if _, err := testDB.Exec(`CREATE TABLE job_task(
+		id integer primary key autoincrement,
+		jobId integer,
+		status integer DEFAULT 1,
+		errMsg text,
+		runTime integer,
+		taskNum text,
+		createTime integer DEFAULT 1
+	)`); err != nil {
+		t.Fatalf("create job_task: %v", err)
+	}
+	if _, err := testDB.Exec(`CREATE TABLE job_task_item(
+		id integer primary key autoincrement,
+		taskId integer,
+		srcPath text,
+		dstPath text,
+		isPath integer,
+		fileName text,
+		fileSize integer,
+		type integer,
+		alistTaskId text,
+		status integer,
+		errMsg text,
+		createTime integer DEFAULT 1
+	)`); err != nil {
+		t.Fatalf("create job_task_item: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO job_task(id, jobId, status, runTime) VALUES (10, 1, 1, 100)"); err != nil {
+		t.Fatalf("insert job_task: %v", err)
+	}
+	return testDB
+}
+
+func mapperDBForServiceTest(testDB *sql.DB) func() {
+	return mapper.SetDBForTest(testDB)
+}
+
+func readServiceTaskStatus(t *testing.T, testDB *sql.DB, taskID int64) (int, string) {
+	t.Helper()
+	var status int
+	var errMsg sql.NullString
+	if err := testDB.QueryRow("SELECT status, errMsg FROM job_task WHERE id=?", taskID).Scan(&status, &errMsg); err != nil {
+		t.Fatalf("read job_task: %v", err)
+	}
+	return status, errMsg.String
+}
+
 func TestNewTaskContextUsesConfiguredTimeoutHours(t *testing.T) {
 	ctx, cancel := newTaskContext(2)
 	defer cancel()
@@ -435,6 +582,117 @@ func TestGetCurrentIncludesTaskIDForTaskActions(t *testing.T) {
 
 	if current["taskId"] != int64(123) {
 		t.Fatalf("taskId = %v, want 123", current["taskId"])
+	}
+}
+
+func TestGetCurrentDoesNotCacheFinishedTaskLists(t *testing.T) {
+	jt := &JobTask{
+		TaskID:     123,
+		CreateTime: float64(time.Now().Unix()),
+		Finish:     make([]map[string]interface{}, 0),
+		Waiting:    newCopyQueue(),
+	}
+	jt.initRuntime()
+
+	for i := 0; i < 3; i++ {
+		jt.CopyHook("/src/", "/dst/", "done.txt", int64(10), "", 2, nil, 0, 0, int64(100+i))
+	}
+
+	current := jt.GetCurrent()
+
+	if current["doingTask"] == nil {
+		t.Fatalf("doingTask missing from current payload")
+	}
+	if tasks := jt.CurrentTasks[2]; len(tasks) != 0 {
+		t.Fatalf("cached success task list len = %d, want 0 so polling avoids finished-list snapshots", len(tasks))
+	}
+}
+
+func TestGetCurrentByStatusPagePaginatesRecentFinishedItems(t *testing.T) {
+	jt := &JobTask{
+		TaskID:     123,
+		CreateTime: float64(time.Now().Unix()),
+		Finish:     make([]map[string]interface{}, 0),
+		Waiting:    newCopyQueue(),
+	}
+	jt.initRuntime()
+
+	for i := 0; i < 5; i++ {
+		jt.CopyHook("/src/", "/dst/", "done.txt", int64(10), "", 2, nil, 0, 0, int64(100+i))
+	}
+
+	page := jt.GetCurrentByStatusPage(2, 2, 2)
+	items := page["dataList"].([]map[string]interface{})
+
+	if page["count"] != 5 {
+		t.Fatalf("count = %v, want 5", page["count"])
+	}
+	if len(items) != 2 {
+		t.Fatalf("page item len = %d, want 2", len(items))
+	}
+	if items[0]["createTime"] != int64(102) || items[1]["createTime"] != int64(101) {
+		t.Fatalf("page createTimes = %v, %v; want 102, 101", items[0]["createTime"], items[1]["createTime"])
+	}
+}
+
+func TestSyncRetryItemsReadsRetrySourceInBatches(t *testing.T) {
+	oldForEach := forEachJobTaskItemsByStatuses
+	defer func() {
+		forEachJobTaskItemsByStatuses = oldForEach
+	}()
+
+	var batchSizes []int
+	forEachJobTaskItemsByStatuses = func(taskID int64, statuses []int, batchSize int, fn func([]map[string]interface{}) error) error {
+		if taskID != 55 {
+			t.Fatalf("taskID = %d, want 55", taskID)
+		}
+		if len(statuses) != 1 || statuses[0] != 7 {
+			t.Fatalf("statuses = %v, want [7]", statuses)
+		}
+		if batchSize <= 0 {
+			t.Fatalf("batchSize = %d, want positive", batchSize)
+		}
+		batches := [][]map[string]interface{}{
+			{
+				{"type": 0, "srcPath": "/src/", "dstPath": "/dst/", "fileName": "one.txt", "fileSize": int64(1)},
+				{"type": 0, "srcPath": "/src/", "dstPath": "/dst/", "fileName": "two.txt", "fileSize": int64(2)},
+			},
+			{
+				{"type": 0, "srcPath": "/src/", "dstPath": "/dst/", "fileName": "three.txt", "fileSize": int64(3)},
+			},
+		}
+		for _, batch := range batches {
+			batchSizes = append(batchSizes, len(batch))
+			if err := fn(batch); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	jt := &JobTask{
+		TaskID:            123,
+		Job:               map[string]interface{}{},
+		RetrySourceTaskID: 55,
+		RetryStatuses:     []int{7},
+		Waiting:           newCopyQueue(),
+	}
+	jt.initRuntime()
+
+	jt.syncRetryItems()
+
+	items := jt.Waiting.snapshot()
+	if len(items) != 3 {
+		t.Fatalf("queued retry items = %d, want 3", len(items))
+	}
+	if items[0].FileName != "one.txt" || items[1].FileName != "two.txt" || items[2].FileName != "three.txt" {
+		t.Fatalf("queued file names = %q, %q, %q; want one/two/three", items[0].FileName, items[1].FileName, items[2].FileName)
+	}
+	if got := batchSizes; len(got) != 2 || got[0] != 2 || got[1] != 1 {
+		t.Fatalf("batch sizes = %v, want [2 1]", got)
+	}
+	if !jt.ScanFinish.Load() {
+		t.Fatalf("ScanFinish = false, want true after retry source is exhausted")
 	}
 }
 

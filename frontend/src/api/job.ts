@@ -18,7 +18,7 @@ export function jobDelete(data: Record<string, unknown>) {
 }
 
 export function jobGetTaskCurrent(params: Record<string, unknown>) {
-  return request.get('/job', { params: { ...params, current: 1 } }) as Promise<ApiResponse<CurrentTaskData | TaskItem[] | null>>;
+  return request.get('/job', { params: { ...params, current: 1 } }) as Promise<ApiResponse<CurrentTaskData | PageData<TaskItem> | TaskItem[] | null>>;
 }
 
 export function jobGetTask(params: Record<string, unknown>) {
@@ -29,7 +29,7 @@ export function jobDeleteTask(taskId: number | string) {
   return request.delete('/job', { params: { taskId } }) as Promise<ApiResponse<null>>;
 }
 
-export function jobTaskAction(taskId: number | string, action: 'pause' | 'restart' | 'retryFailed') {
+export function jobTaskAction(taskId: number | string, action: 'pause' | 'resume' | 'restart' | 'retryFailed') {
   return request.put('/job', { taskId: String(taskId), action }) as Promise<ApiResponse<null>>;
 }
 

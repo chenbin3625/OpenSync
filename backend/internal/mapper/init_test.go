@@ -88,6 +88,38 @@ func TestMigrateDBTxAddsJobFileSizeRangeColumns(t *testing.T) {
 	}
 }
 
+func TestEnsureIndexesCreatesTaskStatusTimeIndex(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE job_task(
+		id integer primary key autoincrement,
+		jobId integer,
+		status integer,
+		createTime integer
+	)`); err != nil {
+		t.Fatalf("create job_task: %v", err)
+	}
+	if _, err := testDB.Exec(`CREATE TABLE job_task_item(
+		id integer primary key autoincrement,
+		taskId integer,
+		status integer,
+		type integer,
+		createTime integer
+	)`); err != nil {
+		t.Fatalf("create job_task_item: %v", err)
+	}
+
+	ensureIndexes(testDB)
+
+	if !indexExists(testDB, "idx_job_task_item_task_status_time") {
+		t.Fatalf("expected idx_job_task_item_task_status_time to exist")
+	}
+}
+
 func tableHasColumn(db *sql.DB, tableName, columnName string) bool {
 	rows, err := db.Query("PRAGMA table_info(" + tableName + ")")
 	if err != nil {
@@ -109,4 +141,10 @@ func tableHasColumn(db *sql.DB, tableName, columnName string) bool {
 		}
 	}
 	return false
+}
+
+func indexExists(db *sql.DB, indexName string) bool {
+	var name string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='index' AND name=?", indexName).Scan(&name)
+	return err == nil && name == indexName
 }

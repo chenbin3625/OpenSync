@@ -696,6 +696,7 @@ export default function Home() {
             <Spin spinning={loading && list.length === 0}>
               <Menu
                 mode="inline"
+                style={{ borderInlineEnd: 0 }}
                 selectedKeys={selectedJobId ? [String(selectedJobId)] : []}
                 onClick={({ key }) => {
                   updateHomeRouteState({ jobId: Number(key) });
@@ -1015,8 +1016,7 @@ export default function Home() {
         placement="bottom"
         open={!!taskDetailDrawerTaskId}
         onClose={() => setTaskDetailDrawerTaskId('')}
-        height="min(78vh, 720px)"
-        styles={{ body: { padding: 16 } }}
+        styles={{ wrapper: { height: '90vh' }, body: { padding: 16 } }}
         destroyOnClose
       >
         <TaskDetail key={taskDetailDrawerTaskId} taskId={taskDetailDrawerTaskId} embedded />

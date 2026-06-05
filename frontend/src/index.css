@@ -231,6 +231,10 @@ body,
   padding: 6px 0;
 }
 
+.task-progress-card-extra {
+  justify-content: flex-end;
+}
+
 .task-progress-card .ant-card-body {
   padding: 10px 12px 8px;
 }
@@ -368,6 +372,16 @@ body,
 
 .task-progress-start-time {
   font-size: 12px;
+}
+
+.task-history-filters {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.task-history-time-range {
+  width: 260px;
 }
 
 .app-logo-mark {
@@ -557,6 +571,17 @@ body,
   .task-detail-filters .ant-input-search,
   .task-detail-filters .ant-select {
     flex: 1 1 160px;
+    min-width: 0;
+  }
+
+  .task-history-filters {
+    justify-content: flex-start;
+  }
+
+  .task-history-filters .ant-input-search,
+  .task-history-filters .ant-select,
+  .task-history-time-range {
+    flex: 1 1 180px;
     min-width: 0;
   }
 

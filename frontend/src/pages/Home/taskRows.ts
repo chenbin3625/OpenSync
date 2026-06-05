@@ -1,5 +1,7 @@
 import type { TaskItem, TaskRecord } from '../../types';
 
+export type TaskListView = 'all' | 'realtime' | 'history';
+
 type CurrentTaskIdentity = {
   createTime?: number | null;
 } | null | undefined;
@@ -73,4 +75,12 @@ export function filterCurrentTaskFromHistory(
     const taskCreateTime = Number(task.createTime || task.runTime || 0);
     return !(taskCreateTime === currentCreateTime && runningHistoryStatuses.has(task.status));
   });
+}
+
+export function filterRunningTaskRows(history: TaskRecord[]): TaskRecord[] {
+  return history.filter((task) => !runningHistoryStatuses.has(task.status));
+}
+
+export function shouldPollRealtime(view: TaskListView): boolean {
+  return view === 'all' || view === 'realtime';
 }

@@ -1,13 +1,22 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typography, Tooltip, Spin, Pagination, Tabs } from 'antd';
+import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typography, Tooltip, Spin, Pagination, Tabs, DatePicker, Input, Select } from 'antd';
 import {
   DeleteOutlined, EyeOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined,
   ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined,
 } from '@ant-design/icons';
 import { jobGetTask, jobGetTaskCurrent, jobDeleteTask, jobTaskAction } from '../../api/job';
 import dayjs from 'dayjs';
-import type { CurrentTaskData, CurrentTaskView, TaskItem, TaskRecord } from '../../types';
-import { filterCurrentTaskFromHistory, getTaskItemKey, mergeTaskItems, mergeTaskRecords } from './taskRows';
+import type { Dayjs } from 'dayjs';
+import type { CurrentTaskData, CurrentTaskView, PageData, TaskItem, TaskRecord } from '../../types';
+import {
+  filterCurrentTaskFromHistory,
+  filterRunningTaskRows,
+  getTaskItemKey,
+  mergeTaskItems,
+  mergeTaskRecords,
+  shouldPollRealtime,
+  type TaskListView,
+} from './taskRows';
 
 const { Text } = Typography;
 
@@ -50,6 +59,11 @@ const statusNames: Record<number, string> = {
   0: '等待中', 1: '运行中', 2: '成功', 3: '部分失败',
   4: '已中止', 5: '超时', 6: '失败', 7: '已停止', 8: '无需同步',
 };
+const historyStatusOptions = [2, 3, 4, 5, 6, 7, 8].map((value) => ({
+  value,
+  label: statusNames[value],
+}));
+type HistoryTimeRange = [Dayjs | null, Dayjs | null] | null;
 
 /** 实时任务 Tab 状态定义 */
 const statusTabs = [
@@ -100,11 +114,13 @@ function TaskInlineText({
   );
 }
 
-function isCurrentTaskData(data: CurrentTaskData | TaskItem[] | null): data is CurrentTaskData {
-  return !!data && !Array.isArray(data) && Array.isArray(data.doingTask);
+function isCurrentTaskData(data: CurrentTaskData | PageData<TaskItem> | TaskItem[] | null): data is CurrentTaskData {
+  return !!data && !Array.isArray(data) && 'doingTask' in data && Array.isArray(data.doingTask);
 }
 
-type TaskListView = 'all' | 'realtime' | 'history';
+function isTaskItemPage(data: CurrentTaskData | PageData<TaskItem> | TaskItem[] | null): data is PageData<TaskItem> {
+  return !!data && !Array.isArray(data) && 'dataList' in data && Array.isArray(data.dataList);
+}
 
 export default function TaskList({
   jobId,
@@ -121,10 +137,15 @@ export default function TaskList({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<number | undefined>(undefined);
+  const [historyKeywordInput, setHistoryKeywordInput] = useState('');
+  const [historyKeywordFilter, setHistoryKeywordFilter] = useState('');
+  const [historyTimeRange, setHistoryTimeRange] = useState<HistoryTimeRange>(null);
   const [currentTask, setCurrentTask] = useState<CurrentTaskView | null>(null);
   const prevTaskRef = useRef<CurrentTaskView | null>(null);
   const [activeTab, setActiveTab] = useState<number>(1);
   const [tabTaskList, setTabTaskList] = useState<TaskItem[]>([]);
+  const [tabTaskTotal, setTabTaskTotal] = useState(0);
   const [tabLoading, setTabLoading] = useState(false);
   const [tabTaskPage, setTabTaskPage] = useState(1);
   const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
@@ -132,8 +153,8 @@ export default function TaskList({
   const tabRequestRef = useRef(0);
   const listRequestRef = useRef(0);
   const listLoadingRequestRef = useRef(0);
-  const lastLoadedTabRef = useRef<{ status: number; taskCreateTime?: number } | null>(null);
-  const showRealtime = view === 'all' || view === 'realtime';
+  const lastLoadedTabRef = useRef<{ status: number; taskCreateTime?: number; page: number } | null>(null);
+  const showRealtime = shouldPollRealtime(view);
   const showHistory = view === 'all' || view === 'history';
 
   useEffect(() => {
@@ -180,7 +201,13 @@ export default function TaskList({
     const loadingRequestID = showLoading ? ++listLoadingRequestRef.current : 0;
     if (showLoading) setLoading(true);
     try {
-      const res = await jobGetTask({ id: jobId, pageSize, pageNum: page });
+      const params: Record<string, unknown> = { id: jobId, pageSize, pageNum: page };
+      if (historyStatusFilter !== undefined) params.status = historyStatusFilter;
+      if (historyKeywordFilter.trim()) params.keyword = historyKeywordFilter.trim();
+      if (historyTimeRange?.[0]) params.startTime = historyTimeRange[0].startOf('day').unix();
+      if (historyTimeRange?.[1]) params.endTime = historyTimeRange[1].endOf('day').unix();
+
+      const res = await jobGetTask(params);
       if (requestID === listRequestRef.current) {
         setList((previous) => mergeTaskRecords(previous, res.data?.dataList || []));
         setTotal(res.data?.count || 0);
@@ -189,7 +216,7 @@ export default function TaskList({
     if (showLoading && loadingRequestID === listLoadingRequestRef.current) {
       setLoading(false);
     }
-  }, [jobId, page, pageSize]);
+  }, [historyKeywordFilter, historyStatusFilter, historyTimeRange, jobId, page, pageSize]);
 
   const fetchCurrent = useCallback(async () => {
     if (!jobId) return;
@@ -208,29 +235,46 @@ export default function TaskList({
   }, [calcProgress, jobId]);
 
   /** 获取 Tab 对应状态的任务列表 */
-  const fetchTabTasks = useCallback(async (status: number, task: CurrentTaskView | null, showLoading = false) => {
+  const fetchTabTasks = useCallback(async (status: number, task: CurrentTaskView | null, pageNum: number, showLoading = false) => {
     if (!jobId || !task) return;
     const requestID = ++tabRequestRef.current;
     if (showLoading) {
       setTabTaskList([]);
+      setTabTaskTotal(0);
       setTabLoading(true);
     }
     // 运行中 Tab 直接用 doingTask，不请求后端
     if (status === 1) {
       if (activeTabRef.current === status) {
-        setTabTaskList((previous) => mergeTaskItems(previous, task.doingTask || []));
+        const doingTask = task.doingTask || [];
+        setTabTaskList((previous) => mergeTaskItems(previous, doingTask));
+        setTabTaskTotal(doingTask.length);
         setTabLoading(false);
       }
       return;
     }
     try {
-      const res = await jobGetTaskCurrent({ id: jobId, status });
+      const res = await jobGetTaskCurrent({
+        id: jobId,
+        status,
+        pageSize: TAB_TASK_PAGE_SIZE,
+        pageNum,
+      });
       if (activeTabRef.current === status && requestID === tabRequestRef.current) {
-        setTabTaskList((previous) => mergeTaskItems(previous, Array.isArray(res.data) ? res.data : []));
+        const data = res.data || null;
+        if (isTaskItemPage(data)) {
+          setTabTaskList((previous) => mergeTaskItems(previous, data.dataList || []));
+          setTabTaskTotal(data.count || 0);
+        } else {
+          const rows = Array.isArray(data) ? data : [];
+          setTabTaskList((previous) => mergeTaskItems(previous, rows));
+          setTabTaskTotal(rows.length);
+        }
       }
     } catch {
       if (showLoading && activeTabRef.current === status && requestID === tabRequestRef.current) {
         setTabTaskList([]);
+        setTabTaskTotal(0);
       }
     }
     if (activeTabRef.current === status && requestID === tabRequestRef.current) {
@@ -246,16 +290,18 @@ export default function TaskList({
 
   const pagedTabTaskList = useMemo(() => {
     const sortedList = [...tabTaskList].sort((a, b) => getTaskCreateTime(b) - getTaskCreateTime(a));
+    if (activeTab !== 1) return sortedList;
     const start = (tabTaskPage - 1) * TAB_TASK_PAGE_SIZE;
     return sortedList.slice(start, start + TAB_TASK_PAGE_SIZE);
-  }, [tabTaskList, tabTaskPage]);
+  }, [activeTab, tabTaskList, tabTaskPage]);
 
   useEffect(() => {
-    const maxPage = Math.max(1, Math.ceil(tabTaskList.length / TAB_TASK_PAGE_SIZE));
+    const totalRows = activeTab === 1 ? tabTaskList.length : tabTaskTotal;
+    const maxPage = Math.max(1, Math.ceil(totalRows / TAB_TASK_PAGE_SIZE));
     if (tabTaskPage > maxPage) {
       setTabTaskPage(maxPage);
     }
-  }, [tabTaskList.length, tabTaskPage]);
+  }, [activeTab, tabTaskList.length, tabTaskPage, tabTaskTotal]);
 
   useEffect(() => {
     setPage(1);
@@ -263,6 +309,8 @@ export default function TaskList({
     setList([]);
     setTotal(0);
     setCurrentTask(null);
+    setTabTaskList([]);
+    setTabTaskTotal(0);
     prevTaskRef.current = null;
     lastLoadedTabRef.current = null;
   }, [jobId]);
@@ -276,10 +324,11 @@ export default function TaskList({
     return () => { clearInterval(pollID); };
   }, [fetchList, showHistory]);
   useEffect(() => {
+    if (!showRealtime) return undefined;
     fetchCurrent();
     const pollID = setInterval(fetchCurrent, 3000);
     return () => { clearInterval(pollID); };
-  }, [fetchCurrent]);
+  }, [fetchCurrent, showRealtime]);
   useEffect(() => {
     if (!currentTask) return;
     const tickID = setInterval(() => {
@@ -291,6 +340,7 @@ export default function TaskList({
   useEffect(() => {
     if (!currentTask) {
       setTabTaskList([]);
+      setTabTaskTotal(0);
       setTabLoading(false);
       lastLoadedTabRef.current = null;
       return;
@@ -298,13 +348,15 @@ export default function TaskList({
     const lastLoadedTab = lastLoadedTabRef.current;
     const showLoading = !lastLoadedTab ||
       lastLoadedTab.status !== activeTab ||
-      lastLoadedTab.taskCreateTime !== currentTask.createTime;
+      lastLoadedTab.taskCreateTime !== currentTask.createTime ||
+      lastLoadedTab.page !== tabTaskPage;
     lastLoadedTabRef.current = {
       status: activeTab,
       taskCreateTime: currentTask.createTime,
+      page: tabTaskPage,
     };
-    fetchTabTasks(activeTab, currentTask, showLoading);
-  }, [activeTab, currentTask, fetchTabTasks]);
+    fetchTabTasks(activeTab, currentTask, tabTaskPage, showLoading);
+  }, [activeTab, currentTask, fetchTabTasks, tabTaskPage]);
 
   const handleDeleteTask = async (taskId: number) => {
     try {
@@ -316,7 +368,7 @@ export default function TaskList({
 
   const handleTaskAction = async (
     taskId: number,
-    action: 'pause' | 'restart' | 'retryFailed',
+    action: 'pause' | 'resume' | 'restart' | 'retryFailed',
     successText: string,
   ) => {
     try {
@@ -326,6 +378,24 @@ export default function TaskList({
       fetchCurrent();
     } catch { /* ignore */ }
   };
+
+  const handleHistoryKeywordSearch = (value: string) => {
+    setHistoryKeywordFilter(value.trim());
+    setPage(1);
+  };
+
+  const resetHistoryFilters = () => {
+    setHistoryStatusFilter(undefined);
+    setHistoryKeywordInput('');
+    setHistoryKeywordFilter('');
+    setHistoryTimeRange(null);
+    setPage(1);
+  };
+
+  const hasHistoryFilters = historyStatusFilter !== undefined ||
+    !!historyKeywordFilter ||
+    !!historyTimeRange?.[0] ||
+    !!historyTimeRange?.[1];
 
   const columns = [
     {
@@ -365,7 +435,7 @@ export default function TaskList({
                 type="text"
                 icon={<PlayCircleOutlined />}
                 aria-label="继续"
-                onClick={() => handleTaskAction(record.id, 'restart', '已提交继续执行')}
+                onClick={() => handleTaskAction(record.id, 'resume', '已提交继续执行')}
               />
             </Tooltip>
           )}
@@ -454,12 +524,12 @@ export default function TaskList({
           </div>
         </div>
       )}
-      {tabTaskList.length > 0 && (
+      {tabTaskTotal > 0 && (
         <Pagination
           className="task-progress-pagination"
           current={tabTaskPage}
           pageSize={TAB_TASK_PAGE_SIZE}
-          total={tabTaskList.length}
+          total={tabTaskTotal}
           onChange={setTabTaskPage}
           showTotal={(t) => `共 ${t} 条`}
           showSizeChanger={false}
@@ -470,8 +540,8 @@ export default function TaskList({
   );
 
   const historyList = useMemo(
-    () => filterCurrentTaskFromHistory(list, currentTask),
-    [currentTask, list],
+    () => showRealtime ? filterCurrentTaskFromHistory(list, currentTask) : filterRunningTaskRows(list),
+    [currentTask, list, showRealtime],
   );
   const hiddenCurrentTaskCount = list.length - historyList.length;
   const historyTotal = Math.max(0, total - hiddenCurrentTaskCount);
@@ -533,9 +603,14 @@ export default function TaskList({
         size="small"
         title="实时进度"
         extra={(
-          <Tag color={currentTask.scanFinish ? 'success' : 'processing'}>
-            {currentTask.scanFinish ? '扫描完成，同步中' : '进行中'}
-          </Tag>
+          <Space size={8} wrap className="task-progress-card-extra">
+            <Text type="secondary" className="task-progress-start-time">
+              开始: {currentTask.createTime ? dayjs.unix(currentTask.createTime).format('HH:mm:ss') : '--'}
+            </Text>
+            <Tag color={currentTask.scanFinish ? 'success' : 'processing'}>
+              {currentTask.scanFinish ? '扫描完成，同步中' : '进行中'}
+            </Tag>
+          </Space>
         )}
         style={{ marginBottom: 12 }}
       >
@@ -573,9 +648,6 @@ export default function TaskList({
             children: tab.key === activeTab ? renderCurrentTaskItems() : null,
           }))}
         />
-        <Text type="secondary" className="task-progress-start-time">
-          开始: {currentTask.createTime ? dayjs.unix(currentTask.createTime).format('HH:mm:ss') : '--'}
-        </Text>
       </Card>
     </>
   ) : (
@@ -585,7 +657,7 @@ export default function TaskList({
     />
   );
 
-  const historyContent = historyList.length === 0 && !loading ? (
+  const historyBody = historyList.length === 0 && !loading ? (
     <Empty
       description={<Text type="secondary">暂无历史任务记录，执行完成后将在此显示</Text>}
     />
@@ -605,6 +677,46 @@ export default function TaskList({
       }}
       size="middle"
     />
+  );
+
+  const historyContent = (
+    <>
+      <Space wrap className="task-history-filters">
+        <Input.Search
+          placeholder="任务 ID"
+          allowClear
+          style={{ width: 180 }}
+          value={historyKeywordInput}
+          onChange={(event) => {
+            setHistoryKeywordInput(event.target.value);
+            if (!event.target.value) handleHistoryKeywordSearch('');
+          }}
+          onSearch={handleHistoryKeywordSearch}
+        />
+        <Select
+          placeholder="任务状态"
+          allowClear
+          style={{ width: 140 }}
+          value={historyStatusFilter}
+          onChange={(value) => {
+            setHistoryStatusFilter(value);
+            setPage(1);
+          }}
+          options={historyStatusOptions}
+        />
+        <DatePicker.RangePicker
+          className="task-history-time-range"
+          value={historyTimeRange || undefined}
+          onChange={(value) => {
+            setHistoryTimeRange(value as HistoryTimeRange);
+            setPage(1);
+          }}
+          placeholder={['开始日期', '结束日期']}
+        />
+        <Button onClick={resetHistoryFilters} disabled={!hasHistoryFilters}>重置</Button>
+      </Space>
+      {historyBody}
+    </>
   );
 
   return (

@@ -220,6 +220,9 @@ func DoJobManual(jobID int64) {
 // RemoveJobClient deletes a job
 func RemoveJobClient(jobID int64) {
 	client := GetJobClientByID(jobID)
+	if client.isBusy() {
+		panic(i18n.G("job_running_cannot_delete"))
+	}
 	client.StopJob(true)
 	if !client.waitUntilIdle(2 * time.Minute) {
 		panic(i18n.G("job_delete_wait_timeout"))
@@ -267,13 +270,45 @@ func PauseTask(taskID int64) {
 	task.requestBreak()
 }
 
+// ResumeTask continues interrupted items from a stopped historical task.
+func ResumeTask(taskID int64) {
+	job, err := mapper.GetJobByTaskID(taskID)
+	if err != nil {
+		panic(err.Error())
+	}
+	task, err := mapper.GetJobTaskByID(taskID)
+	if err != nil {
+		panic(err.Error())
+	}
+	client := GetJobClientByID(toInt64(job["id"]))
+	if !client.enabled() {
+		panic(i18n.G("disabled_job_cannot_run"))
+	}
+	if resumeNeedsFullScan(task) {
+		client.DoManual()
+		return
+	}
+	count, err := countJobTaskItemsByStatuses(taskID, []int{0, 1, 4})
+	if err != nil {
+		panic(err.Error())
+	}
+	if count == 0 {
+		panic(i18n.G("no_resumable_task_items"))
+	}
+	client.DoResumeTaskItems(taskID)
+}
+
 // RestartTask starts a fresh full run for the job that owns the task.
 func RestartTask(taskID int64) {
 	job, err := mapper.GetJobByTaskID(taskID)
 	if err != nil {
 		panic(err.Error())
 	}
-	DoJobManual(toInt64(job["id"]))
+	client := GetJobClientByID(toInt64(job["id"]))
+	if !client.enabled() {
+		panic(i18n.G("disabled_job_cannot_run"))
+	}
+	client.DoManual()
 }
 
 // RetryFailedTask starts a fresh run that only retries failed items from the task.
@@ -286,11 +321,14 @@ func RetryFailedTask(taskID int64) {
 	if !client.enabled() {
 		panic(i18n.G("disabled_job_cannot_run"))
 	}
-	items, err := mapper.GetFailedJobTaskItems(taskID)
+	count, err := countJobTaskItemsByStatuses(taskID, []int{7})
 	if err != nil {
 		panic(err.Error())
 	}
-	client.DoRetryItems(items)
+	if count == 0 {
+		panic(i18n.G("no_failed_task_items"))
+	}
+	client.DoRetryTaskItems(taskID)
 }
 
 // GetJobList returns paginated job list
@@ -303,17 +341,71 @@ func GetJobList(params map[string]interface{}) map[string]interface{} {
 }
 
 // GetJobCurrent returns real-time task progress
-func GetJobCurrent(jobID int64, status *string) interface{} {
+func GetJobCurrent(jobID int64, params map[string]interface{}) interface{} {
 	client := GetJobClientByID(jobID)
 	taskClient := client.currentTask()
 	if taskClient != nil {
-		if status == nil || *status == "" {
+		status, hasStatus := params["status"]
+		if !hasStatus || fmt.Sprintf("%v", status) == "" {
 			return taskClient.GetCurrent()
 		}
-		statusInt := toInt(*status)
+		statusInt := toInt(status)
+		pageSize := toInt(params["pageSize"])
+		pageNum := toInt(params["pageNum"])
+		if pageSize > 0 && pageNum > 0 {
+			return taskClient.GetCurrentByStatusPage(statusInt, pageSize, pageNum)
+		}
 		return taskClient.GetCurrentByStatus(statusInt)
 	}
 	return nil
+}
+
+func resumeNeedsFullScan(task map[string]interface{}) bool {
+	taskNumRaw, ok := task["taskNum"]
+	if !ok || taskNumRaw == nil {
+		return true
+	}
+	taskNumStr := strings.TrimSpace(fmt.Sprintf("%v", taskNumRaw))
+	if taskNumStr == "" {
+		return true
+	}
+
+	var taskNum map[string]interface{}
+	if err := json.Unmarshal([]byte(taskNumStr), &taskNum); err != nil {
+		return true
+	}
+	scanFinish, ok := boolValue(taskNum["scanFinish"])
+	if !ok {
+		return true
+	}
+	return !scanFinish
+}
+
+func boolValue(value interface{}) (bool, bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1":
+			return true, true
+		case "false", "0":
+			return false, true
+		}
+	case int:
+		if v == 0 || v == 1 {
+			return v == 1, true
+		}
+	case int64:
+		if v == 0 || v == 1 {
+			return v == 1, true
+		}
+	case float64:
+		if v == 0 || v == 1 {
+			return v == 1, true
+		}
+	}
+	return false, false
 }
 
 // GetTaskList returns paginated task list with task num info

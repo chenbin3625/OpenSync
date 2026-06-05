@@ -11,6 +11,7 @@ import (
 	"opensync/internal/mapper"
 	"path"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ const (
 	defaultRealtimeFinishedItems = 1000
 	maxRealtimeFinishedItems     = 50000
 	maxPersistTaskItemBatch      = 500
+	retryTaskItemBatchSize       = 500
 	defaultMaxRetries            = 0
 	maxCopyRetries               = 10
 )
@@ -35,6 +37,8 @@ const (
 var errScanAborted = errors.New("scan aborted")
 
 var persistJobTaskItems = mapper.AddJobTaskItemMany
+var forEachJobTaskItemsByStatuses = mapper.ForEachJobTaskItemsByStatuses
+var countJobTaskItemsByStatuses = mapper.CountJobTaskItemsByStatuses
 var copyRetryDelay = defaultCopyRetryDelay
 
 type taskRuntimeLimits struct {
@@ -509,6 +513,11 @@ type JobTask struct {
 	CurrentTasks map[int][]map[string]interface{}
 	CurrentMu    sync.RWMutex
 	RetryItems   []map[string]interface{}
+
+	RetrySourceTaskID int64
+	RetryStatuses     []int
+	FatalMu           sync.Mutex
+	FatalErr          *string
 }
 
 // NewJobTask creates and starts a new task
@@ -555,8 +564,64 @@ func newTaskContext(timeoutHours int) (context.Context, context.CancelFunc) {
 }
 
 func (jt *JobTask) Start() {
-	go jt.sync()
-	go jt.taskSubmit()
+	jt.startWorker("scan", jt.sync)
+	jt.startWorker("submit", jt.taskSubmit)
+}
+
+func (jt *JobTask) startWorker(name string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				jt.handleWorkerPanic(name, r)
+			}
+		}()
+		fn()
+	}()
+}
+
+func (jt *JobTask) handleWorkerPanic(name string, recovered interface{}) {
+	errMsg := workerPanicMessage(name, recovered)
+	log.Printf("Task %d %s", jt.TaskID, errMsg)
+	jt.setFatalError(errMsg)
+	jt.ScanFinish.Store(true)
+	jt.requestBreak()
+	if name == "submit" {
+		jt.finishFailedTask(errMsg)
+	}
+}
+
+func workerPanicMessage(name string, recovered interface{}) string {
+	return fmt.Sprintf("%s worker panic: %v", name, recovered)
+}
+
+func (jt *JobTask) recoverWorkerPanic(name string, errTarget *error) {
+	if r := recover(); r != nil {
+		errMsg := workerPanicMessage(name, r)
+		if errTarget != nil {
+			*errTarget = errors.New(errMsg)
+		}
+		jt.handleWorkerPanic(name, r)
+	}
+}
+
+func (jt *JobTask) setFatalError(errMsg string) {
+	jt.FatalMu.Lock()
+	defer jt.FatalMu.Unlock()
+	if jt.FatalErr != nil {
+		return
+	}
+	msg := errMsg
+	jt.FatalErr = &msg
+}
+
+func (jt *JobTask) fatalError() *string {
+	jt.FatalMu.Lock()
+	defer jt.FatalMu.Unlock()
+	if jt.FatalErr == nil {
+		return nil
+	}
+	msg := *jt.FatalErr
+	return &msg
 }
 
 func scanConcurrencyLimit() int {
@@ -714,66 +779,25 @@ func (jt *JobTask) scanProgress() map[string]int64 {
 
 // GetCurrent returns real-time task progress
 func (jt *JobTask) GetCurrent() map[string]interface{} {
+	jt.initRuntime()
 	now := time.Now().Unix()
 	jt.LastWatching.Store(now)
 
-	waitingItems := jt.Waiting.snapshot()
-	waits := make([]map[string]interface{}, len(waitingItems))
-	for i, w := range waitingItems {
-		waits[i] = jt.copyItemToMap(w)
-	}
+	waits := jt.waitingTaskMaps()
+	dos := jt.doingTaskMaps()
 
-	jt.DoingMu.Lock()
-	dos := make([]map[string]interface{}, 0, len(jt.Doing))
-	for _, d := range jt.Doing {
-		dos = append(dos, jt.copyItemToMap(d))
-	}
-	jt.DoingMu.Unlock()
-
-	allTask := make([]map[string]interface{}, 0)
-	allTask = append(allTask, waits...)
-	allTask = append(allTask, dos...)
-	jt.FinishMu.Lock()
-	allTask = append(allTask, jt.Finish...)
-	jt.FinishMu.Unlock()
-
-	keyValSpace := map[string]int{
-		"wait":    0,
-		"running": 1,
-		"success": 2,
-		"fail":    7,
-		"other":   -1,
-	}
-
-	currentTasks := make(map[int][]map[string]interface{})
-	for _, v := range keyValSpace {
-		currentTasks[v] = make([]map[string]interface{}, 0)
-	}
-
-	otkStatus := map[int]bool{3: true, 4: true, 5: true, 6: true, 8: true, 9: true}
-	otk := make([]map[string]interface{}, 0)
-	grouped := make(map[int][]map[string]interface{})
-	for _, task := range allTask {
-		s := task["status"].(int)
-		grouped[s] = append(grouped[s], task)
-	}
-	for status, tasks := range grouped {
-		if otkStatus[status] {
-			otk = append(otk, tasks...)
-		} else {
-			currentTasks[status] = tasks
-		}
-	}
-	currentTasks[-1] = otk
 	jt.CurrentMu.Lock()
-	jt.CurrentTasks = currentTasks
+	jt.CurrentTasks = map[int][]map[string]interface{}{
+		0: waits,
+		1: dos,
+	}
 	jt.CurrentMu.Unlock()
 
 	result := map[string]interface{}{
 		"taskId":     jt.TaskID,
 		"scanFinish": jt.ScanFinish.Load(),
 		"scan":       jt.scanProgress(),
-		"doingTask":  currentTasks[1],
+		"doingTask":  dos,
 		"createTime": int(jt.CreateTime),
 		"duration":   int(float64(now) - jt.CreateTime),
 		"firstSync":  nil,
@@ -786,34 +810,126 @@ func (jt *JobTask) GetCurrent() map[string]interface{} {
 
 	numMap := result["num"].(map[string]int)
 	sizeMap := result["size"].(map[string]int64)
-	for key, val := range keyValSpace {
-		tasks := currentTasks[val]
-		if val == 0 || val == 1 {
-			numMap[key] = len(tasks)
-			var totalSize int64
-			for _, t := range tasks {
-				if t["fileSize"] != nil && t["type"].(int) != 1 {
-					totalSize += toInt64Val(t["fileSize"])
-				}
-			}
-			sizeMap[key] = totalSize
-			continue
-		}
-		count, size := jt.finishedAggregateForStatus(val)
-		numMap[key] = count
-		sizeMap[key] = size
+	numMap["wait"] = len(waits)
+	sizeMap["wait"] = taskListSize(waits)
+	numMap["running"] = len(dos)
+	sizeMap["running"] = taskListSize(dos)
+
+	for _, item := range []struct {
+		key    string
+		status int
+	}{
+		{"success", 2},
+		{"fail", 7},
+		{"other", -1},
+	} {
+		count, size := jt.finishedAggregateForStatus(item.status)
+		numMap[item.key] = count
+		sizeMap[item.key] = size
 	}
 	return result
 }
 
 // GetCurrentByStatus returns tasks filtered by status
 func (jt *JobTask) GetCurrentByStatus(status int) []map[string]interface{} {
-	jt.CurrentMu.RLock()
-	defer jt.CurrentMu.RUnlock()
-	if tasks, ok := jt.CurrentTasks[status]; ok {
-		return append([]map[string]interface{}(nil), tasks...)
+	jt.initRuntime()
+	return jt.currentTasksForStatus(status)
+}
+
+func (jt *JobTask) GetCurrentByStatusPage(status, pageSize, pageNum int) map[string]interface{} {
+	jt.initRuntime()
+	tasks := jt.currentTasksForStatus(status)
+	count := len(tasks)
+	if pageSize > 0 && pageNum > 0 {
+		start := (pageNum - 1) * pageSize
+		if start >= count {
+			tasks = []map[string]interface{}{}
+		} else {
+			end := start + pageSize
+			if end > count {
+				end = count
+			}
+			tasks = tasks[start:end]
+		}
 	}
-	return []map[string]interface{}{}
+	return map[string]interface{}{
+		"dataList": tasks,
+		"count":    count,
+	}
+}
+
+func (jt *JobTask) waitingTaskMaps() []map[string]interface{} {
+	waitingItems := jt.Waiting.snapshot()
+	waits := make([]map[string]interface{}, len(waitingItems))
+	for i, w := range waitingItems {
+		waits[i] = jt.copyItemToMap(w)
+	}
+	return waits
+}
+
+func (jt *JobTask) doingTaskMaps() []map[string]interface{} {
+	jt.DoingMu.Lock()
+	defer jt.DoingMu.Unlock()
+
+	dos := make([]map[string]interface{}, 0, len(jt.Doing))
+	for _, d := range jt.Doing {
+		dos = append(dos, jt.copyItemToMap(d))
+	}
+	return dos
+}
+
+func (jt *JobTask) currentTasksForStatus(status int) []map[string]interface{} {
+	var tasks []map[string]interface{}
+	switch status {
+	case 0:
+		tasks = jt.waitingTaskMaps()
+	case 1:
+		tasks = jt.doingTaskMaps()
+	case -1:
+		tasks = jt.finishedTaskMaps(func(status int) bool {
+			return status != 0 && status != 1 && status != 2 && status != 7
+		})
+	default:
+		tasks = jt.finishedTaskMaps(func(itemStatus int) bool {
+			return itemStatus == status
+		})
+	}
+	sortTaskMapsByCreateTimeDesc(tasks)
+	return tasks
+}
+
+func (jt *JobTask) finishedTaskMaps(match func(status int) bool) []map[string]interface{} {
+	jt.FinishMu.Lock()
+	defer jt.FinishMu.Unlock()
+
+	tasks := make([]map[string]interface{}, 0)
+	for _, item := range jt.Finish {
+		if match(toInt(item["status"])) {
+			tasks = append(tasks, item)
+		}
+	}
+	return tasks
+}
+
+func sortTaskMapsByCreateTimeDesc(tasks []map[string]interface{}) {
+	sort.SliceStable(tasks, func(i, j int) bool {
+		left := toInt64Val(tasks[i]["createTime"])
+		right := toInt64Val(tasks[j]["createTime"])
+		if left == right {
+			return toInt64Val(tasks[i]["id"]) > toInt64Val(tasks[j]["id"])
+		}
+		return left > right
+	})
+}
+
+func taskListSize(tasks []map[string]interface{}) int64 {
+	var totalSize int64
+	for _, task := range tasks {
+		if task["fileSize"] != nil && toInt(task["type"]) != 1 {
+			totalSize += toInt64Val(task["fileSize"])
+		}
+	}
+	return totalSize
 }
 
 func (jt *JobTask) currentTasksSnapshot() map[int][]map[string]interface{} {
@@ -879,8 +995,10 @@ func (jt *JobTask) taskSubmit() {
 	}
 	jt.copyWG.Wait()
 
+	var persistErr error
 	if err := jt.flushPendingTaskItems(); err != nil {
 		log.Printf("Failed to save pending task items for task %d: %v", jt.TaskID, err)
+		persistErr = err
 	}
 
 	// Batch save finish items
@@ -891,12 +1009,35 @@ func (jt *JobTask) taskSubmit() {
 	if len(finish) > 0 {
 		if err := persistJobTaskItems(finish); err != nil {
 			log.Printf("Failed to save task items for task %d: %v", jt.TaskID, err)
+			if persistErr == nil {
+				persistErr = err
+			}
 		}
 	}
 
+	if fatalErr := jt.fatalError(); fatalErr != nil {
+		jt.finishFailedTask(*fatalErr)
+		return
+	}
+	if persistErr != nil {
+		jt.finishFailedTask(taskPersistenceErrorMessage(persistErr))
+		return
+	}
 	jt.updateTaskStatus()
 	jt.JobClient.markDone()
 	jt.JobClient.clearCurrentTask(jt)
+}
+
+func taskPersistenceErrorMessage(err error) string {
+	return fmt.Sprintf("failed to save task items: %v", err)
+}
+
+func (jt *JobTask) finishFailedTask(errMsg string) {
+	UpdateJobTaskStatusSimple(jt.TaskID, 6, &errMsg)
+	if jt.JobClient != nil {
+		jt.JobClient.markDone()
+		jt.JobClient.clearCurrentTask(jt)
+	}
 }
 
 func (jt *JobTask) doingLen() int {
@@ -919,6 +1060,7 @@ func (jt *JobTask) startCopyItem(item *CopyItem) {
 	jt.copyWG.Add(1)
 	go func() {
 		defer jt.copyWG.Done()
+		defer jt.recoverWorkerPanic("copy", nil)
 		item.DoIt()
 	}()
 }
@@ -1025,7 +1167,7 @@ func (jt *JobTask) finishedAggregateForStatus(status int) (int, int64) {
 }
 
 func (jt *JobTask) sync() {
-	if len(jt.RetryItems) > 0 {
+	if jt.hasRetrySource() {
 		jt.syncRetryItems()
 		return
 	}
@@ -1062,7 +1204,29 @@ func (jt *JobTask) sync() {
 	jt.ScanFinish.Store(true)
 }
 
+func (jt *JobTask) hasRetrySource() bool {
+	return len(jt.RetryItems) > 0 || jt.RetrySourceTaskID > 0
+}
+
 func (jt *JobTask) syncRetryItems() {
+	if jt.RetrySourceTaskID > 0 {
+		err := forEachJobTaskItemsByStatuses(jt.RetrySourceTaskID, jt.RetryStatuses, retryTaskItemBatchSize, func(items []map[string]interface{}) error {
+			for _, item := range items {
+				if jt.isBreak() {
+					return errScanAborted
+				}
+				jt.retryTaskItem(item)
+			}
+			return nil
+		})
+		if err != nil && !errors.Is(err, errScanAborted) {
+			errMsg := err.Error()
+			jt.CopyHook("", "", "", nil, "", 7, &errMsg, 1, 0, time.Now().Unix())
+		}
+		jt.ScanFinish.Store(true)
+		return
+	}
+
 	for _, item := range jt.RetryItems {
 		if jt.isBreak() {
 			break
@@ -1278,10 +1442,12 @@ func (jt *JobTask) listSrcAndDst(srcPath, dstPath string, spec *ignore.GitIgnore
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		defer jt.recoverWorkerPanic("source scan", &srcErr)
 		srcFiles, srcErr = jt.listDir(srcPath, firstDst, spec, srcRootPath, true)
 	}()
 	go func() {
 		defer wg.Done()
+		defer jt.recoverWorkerPanic("destination scan", &dstErr)
 		dstFiles, dstErr = jt.listDir(dstPath, firstDst, spec, dstRootPath, false)
 	}()
 	wg.Wait()
@@ -1322,6 +1488,7 @@ func (jt *JobTask) runChildScanWorks(children []scanWork, spec *ignore.GitIgnore
 			go func() {
 				defer wg.Done()
 				defer jt.releaseScanBranchSlot()
+				defer jt.recoverWorkerPanic("child scan", nil)
 				jt.runScanWork(child, spec)
 			}()
 			continue
@@ -1502,8 +1669,12 @@ func (jt *JobTask) updateTaskStatus() {
 	taskNum := GetCuTaskNum(jt.TaskID)
 	failOrOtherNum := toInt(taskNum["failNum"]) + toInt(taskNum["otherNum"])
 	status := finalTaskStatus(jt.isBreak(), jt.context().Err(), failOrOtherNum)
+	duration := taskDuration(jt.CreateTime)
+	taskNum["duration"] = duration
+	taskNum["scanFinish"] = jt.ScanFinish.Load()
+	taskNum["scan"] = jt.scanProgress()
 
-	UpdateJobTaskStatusFinal(jt.TaskID, status, nil, jt.CreateTime)
+	finishJobTaskStatus(jt.TaskID, status, nil, taskNum, duration, jt.CreateTime)
 }
 
 func finalTaskStatus(isBreak bool, ctxErr error, failOrOtherNum int) int {
@@ -1543,6 +1714,12 @@ func (jc *JobClient) isDoing() bool {
 	jc.mu.Lock()
 	defer jc.mu.Unlock()
 	return jc.JobDoing
+}
+
+func (jc *JobClient) isBusy() bool {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return jc.JobDoing || jc.CurrentJobTask != nil
 }
 
 func (jc *JobClient) markDone() {
@@ -1681,6 +1858,14 @@ func (jc *JobClient) runMarkedJob() {
 }
 
 func (jc *JobClient) runMarkedJobWithRetryItems(retryItems []map[string]interface{}) {
+	jc.runMarkedJobWithRetryConfig(retryItems, 0, nil)
+}
+
+func (jc *JobClient) runMarkedJobWithRetrySource(sourceTaskID int64, statuses []int) {
+	jc.runMarkedJobWithRetryConfig(nil, sourceTaskID, statuses)
+}
+
+func (jc *JobClient) runMarkedJobWithRetryConfig(retryItems []map[string]interface{}, sourceTaskID int64, statuses []int) {
 	taskID := int64(0)
 	defer func() {
 		if r := recover(); r != nil {
@@ -1705,6 +1890,10 @@ func (jc *JobClient) runMarkedJobWithRetryItems(retryItems []map[string]interfac
 	task := newJobTask(taskID, jc)
 	if len(retryItems) > 0 {
 		task.RetryItems = cloneTaskRows(retryItems)
+	}
+	if sourceTaskID > 0 {
+		task.RetrySourceTaskID = sourceTaskID
+		task.RetryStatuses = append([]int(nil), statuses...)
 	}
 	jc.setCurrentTask(task)
 	task.Start()
@@ -1750,6 +1939,31 @@ func (jc *JobClient) DoRetryItems(items []map[string]interface{}) {
 	go jc.runMarkedJobWithRetryItems(items)
 }
 
+func (jc *JobClient) DoRetryTaskItems(sourceTaskID int64) {
+	if !jc.tryMarkDoing() {
+		panic(i18n.G("job_running"))
+	}
+	go jc.runMarkedJobWithRetrySource(sourceTaskID, []int{7})
+}
+
+// DoResumeItems triggers a manual execution for interrupted items from a stopped task.
+func (jc *JobClient) DoResumeItems(items []map[string]interface{}) {
+	if len(items) == 0 {
+		panic(i18n.G("no_resumable_task_items"))
+	}
+	if !jc.tryMarkDoing() {
+		panic(i18n.G("job_running"))
+	}
+	go jc.runMarkedJobWithRetryItems(items)
+}
+
+func (jc *JobClient) DoResumeTaskItems(sourceTaskID int64) {
+	if !jc.tryMarkDoing() {
+		panic(i18n.G("job_running"))
+	}
+	go jc.runMarkedJobWithRetrySource(sourceTaskID, []int{0, 1, 4})
+}
+
 // ResumeJob enables and resumes the job
 func (jc *JobClient) ResumeJob() {
 	if toInt(jc.Job["isCron"]) == 2 {
@@ -1793,10 +2007,7 @@ func (jc *JobClient) StopJob(remove bool) {
 
 // UpdateJobTaskStatusFinal updates task status after completion with notification
 func UpdateJobTaskStatusFinal(taskID int64, status int, currentTasks map[int][]map[string]interface{}, createTime float64) {
-	var duration int
-	if createTime > 0 {
-		duration = int(float64(time.Now().Unix()) - createTime)
-	}
+	duration := taskDuration(createTime)
 
 	var taskNum map[string]interface{}
 	var errMsg *string
@@ -1831,24 +2042,29 @@ func UpdateJobTaskStatusFinal(taskID int64, status int, currentTasks map[int][]m
 		taskNum["duration"] = duration
 	}
 
-	mapper.UpdateJobTaskStatus(taskID, status, errMsg)
+	finishJobTaskStatus(taskID, status, errMsg, taskNum, duration, createTime)
+}
+
+func finishJobTaskStatus(taskID int64, status int, errMsg *string, taskNum map[string]interface{}, duration int, createTime float64) {
 	taskNumJSON, _ := json.Marshal(taskNum)
-	mapper.UpdateJobTaskNumMany([]map[string]interface{}{
-		{"taskId": taskID, "taskNum": string(taskNumJSON)},
-	})
+	mapper.UpdateJobTaskStatusAndNum(taskID, status, errMsg, string(taskNumJSON))
 
 	// Send notifications
 	SendTaskNotification(taskID, status, taskNum, duration, createTime)
 }
 
+func taskDuration(createTime float64) int {
+	if createTime <= 0 {
+		return 0
+	}
+	return int(float64(time.Now().Unix()) - createTime)
+}
+
 // UpdateJobTaskStatusSimple updates task status with error message
 func UpdateJobTaskStatusSimple(taskID int64, status int, errMsg *string) {
-	mapper.UpdateJobTaskStatus(taskID, status, errMsg)
 	taskNum := GetCuTaskNum(taskID)
 	taskNumJSON, _ := json.Marshal(taskNum)
-	mapper.UpdateJobTaskNumMany([]map[string]interface{}{
-		{"taskId": taskID, "taskNum": string(taskNumJSON)},
-	})
+	mapper.UpdateJobTaskStatusAndNum(taskID, status, errMsg, string(taskNumJSON))
 }
 
 // GetCuTaskNum gets current task counts from DB

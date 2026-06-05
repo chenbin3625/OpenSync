@@ -154,7 +154,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.4.0
+image: chenbin3625/opensync:1.4.1
 ```
 
 ## Docker 命令部署
@@ -173,7 +173,7 @@ docker run -d \
 ## 升级说明
 
 1. 备份当前挂载的 `data/` 目录。
-2. 拉取最新镜像或指定 `1.4.0` 镜像。
+2. 拉取最新镜像或指定 `1.4.1` 镜像。
 3. 重新启动容器。
 4. 首次启动会自动执行数据库迁移，新增任务文件大小过滤字段。
 
@@ -292,7 +292,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.4.0`
+- `chenbin3625/opensync:1.4.1`
 - `chenbin3625/opensync:1.4`
 
 镜像支持以下平台：
