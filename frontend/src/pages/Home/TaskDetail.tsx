@@ -259,7 +259,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
   };
 
   const content = (
-    <>
+    <div className={embedded ? 'task-detail-panel is-embedded' : 'task-detail-panel'}>
       <div className="page-header task-detail-header">
         {embedded ? (
           <span />
@@ -323,6 +323,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
         />
       ) : (
         <Table
+          className="task-detail-table"
           dataSource={list}
           columns={columns}
           rowKey="id"
@@ -340,7 +341,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
           size="middle"
         />
       )}
-    </>
+    </div>
   );
 
   if (embedded) {

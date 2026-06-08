@@ -57,20 +57,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <Header
         className="app-header"
         style={{
-          padding: '0 20px',
+          padding: '0 18px',
           display: 'flex',
           alignItems: 'center',
-          gap: 16,
+          gap: 14,
           background: token.colorBgContainer,
           borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          height: 56,
-          lineHeight: '56px',
+          boxShadow: '0 8px 28px rgba(15, 23, 42, 0.05)',
+          height: 58,
+          lineHeight: '58px',
         }}
       >
         <div
           className="app-brand"
           style={{
-            height: 56,
+            height: 58,
             display: 'flex',
             alignItems: 'center',
             gap: 8,
@@ -103,7 +104,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             background: token.colorBgContainer,
             borderBottom: 'none',
             color: token.colorText,
-            lineHeight: '56px',
+            lineHeight: '58px',
           }}
         />
         <Space className="app-actions" style={{ flex: '0 0 auto' }}>
@@ -132,8 +133,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <Content
         className="app-content"
         style={{
-          margin: 20,
-          padding: 20,
+          margin: 18,
+          padding: 0,
           overflow: 'auto',
           minHeight: 0,
         }}

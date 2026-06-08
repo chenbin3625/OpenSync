@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Card, Row, Col, Button, Modal, Form, Input, Select, Switch, Space, Popconfirm, Tag, App, Empty, Typography, Descriptions, Tooltip,
+  Card, Button, Modal, Form, Input, Select, Switch, Space, Popconfirm, Tag, App, Empty, Typography, Descriptions, Tooltip,
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons';
 import { notifyGet, notifyPost, notifyPut, notifyDelete } from '../../api/notify';
@@ -11,10 +11,6 @@ const { Text } = Typography;
 
 const methodNames: Record<number, string> = {
   0: '自定义Webhook', 1: 'Server酱', 2: '钉钉', 3: '企业微信', 4: 'Lark (飞书)',
-};
-
-const methodIcons: Record<number, string> = {
-  0: '🔗', 1: '🐿️', 2: '💬', 3: '🏢', 4: '🐦',
 };
 
 type NotifyParams = Record<string, string | number | boolean | null | undefined>;
@@ -237,37 +233,32 @@ export default function Notify() {
   };
 
   return (
-    <Card className="page-card">
-      <div className="page-header">
-        <h2>通知配置</h2>
-        <Space>
+    <div className="ops-page-surface ops-resource-page">
+      <div className="ops-page-header">
+        <div className="ops-page-title-block">
+          <h2 className="ops-page-title">通知配置</h2>
+          <Text className="ops-page-kicker">配置任务完成、失败和无需同步时的消息渠道</Text>
+        </div>
+        <Space className="ops-page-actions">
           <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新增通知</Button>
         </Space>
       </div>
 
-      {list.length === 0 && !loading ? (
-        <Empty
-          description={<Text type="secondary">暂无通知渠道配置，添加后可在任务完成时接收通知</Text>}
-        />
-      ) : (
-        <Row gutter={[16, 16]}>
-          {list.map((item) => {
-            const params = parseParams(item);
-            return (
-              <Col xs={24} md={12} key={item.id}>
+      <div className="ops-page-main ops-page-panel">
+        {list.length === 0 && !loading ? (
+          <div className="ops-empty-surface">
+            <Empty
+              description={<Text type="secondary">暂无通知渠道配置，添加后可在任务完成时接收通知</Text>}
+            />
+          </div>
+        ) : (
+          <div className="ops-resource-grid">
+            {list.map((item) => {
+              const params = parseParams(item);
+              return (
                 <Card
+                  className="ops-resource-card"
                   hoverable
-                  title={`${methodIcons[item.method] || '📢'} ${methodNames[item.method] || `方式${item.method}`}`}
-                  extra={(
-                    <Space>
-                      <Tag color={item.enable === 1 ? 'success' : 'default'}>{item.enable === 1 ? '已启用' : '已禁用'}</Tag>
-                      <Switch
-                        checked={item.enable === 1}
-                        onChange={(checked) => handleToggleStatus(item, checked)}
-                        size="small"
-                      />
-                    </Space>
-                  )}
                   actions={[
                     <Tooltip title="测试发送" key="test">
                       <SendOutlined onClick={() => handleTestSend(item)} />
@@ -281,7 +272,30 @@ export default function Notify() {
                       </Tooltip>
                     </Popconfirm>,
                   ]}
+                  key={item.id}
                 >
+                  <div className="ops-resource-card-header">
+                    <div className="ops-resource-title">
+                      <span className="ops-resource-icon">
+                        <SendOutlined />
+                      </span>
+                      <span>
+                        <Text strong className="ops-resource-name">{methodNames[item.method] || `方式${item.method}`}</Text>
+                        <Text type="secondary" className="ops-resource-meta">{getParamSummary(item)}</Text>
+                      </span>
+                    </div>
+                    <Space>
+                      <Tag color={item.enable === 1 ? 'success' : 'default'}>
+                        {item.enable === 1 ? '已启用' : '已禁用'}
+                      </Tag>
+                      <Switch
+                        checked={item.enable === 1}
+                        onChange={(checked) => handleToggleStatus(item, checked)}
+                        size="small"
+                      />
+                    </Space>
+                  </div>
+
                   <Descriptions column={1} size="small">
                     <Descriptions.Item label="配置">
                       <Text type="secondary" ellipsis>{getParamSummary(item)}</Text>
@@ -296,11 +310,11 @@ export default function Notify() {
                     </Descriptions.Item>
                   </Descriptions>
                 </Card>
-              </Col>
-            );
-          })}
-        </Row>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <Modal
         title={editingItem ? '编辑通知' : '新增通知'}
@@ -325,6 +339,6 @@ export default function Notify() {
           {renderMethodFields()}
         </Form>
       </Modal>
-    </Card>
+    </div>
   );
 }

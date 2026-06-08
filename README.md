@@ -154,7 +154,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.4.1
+image: chenbin3625/opensync:1.5.0
 ```
 
 ## Docker 命令部署
@@ -173,7 +173,7 @@ docker run -d \
 ## 升级说明
 
 1. 备份当前挂载的 `data/` 目录。
-2. 拉取最新镜像或指定 `1.4.1` 镜像。
+2. 拉取最新镜像或指定 `1.5.0` 镜像。
 3. 重新启动容器。
 4. 首次启动会自动执行数据库迁移，新增任务文件大小过滤字段。
 
@@ -292,8 +292,8 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.4.1`
-- `chenbin3625/opensync:1.4`
+- `chenbin3625/opensync:1.5.0`
+- `chenbin3625/opensync:1.5`
 
 镜像支持以下平台：
 
@@ -322,4 +322,5 @@ OpenSync 默认推荐使用 Docker Hub 镜像：
 - 不要提交或公开 `backend/data`、Docker 挂载的 `data/` 目录或任何包含 AList / OpenList Token 的文件。
 - `data/secret.key` 会影响登录 Cookie 和敏感信息加解密，部署后应通过持久化目录保留。
 - 如果误分享了运行数据目录，请及时更换 AList / OpenList Token。
+- 1.5.0 重构了实时任务列表刷新逻辑，任务切换、Tab 切换和分页刷新时会减少旧数据残留和列表闪烁。
 - 文件大小过滤和运行配置属于 1.4.0 新增能力，旧版本升级后会自动补齐数据库字段。

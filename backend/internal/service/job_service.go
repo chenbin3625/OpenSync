@@ -288,7 +288,7 @@ func ResumeTask(taskID int64) {
 		client.DoManual()
 		return
 	}
-	count, err := countJobTaskItemsByStatuses(taskID, []int{0, 1, 4})
+	count, err := countJobTaskItemsByStatuses(taskID, taskStatusValues(taskStatusWaiting, taskStatusRunning, taskStatusStopped))
 	if err != nil {
 		panic(err.Error())
 	}
@@ -321,7 +321,7 @@ func RetryFailedTask(taskID int64) {
 	if !client.enabled() {
 		panic(i18n.G("disabled_job_cannot_run"))
 	}
-	count, err := countJobTaskItemsByStatuses(taskID, []int{7})
+	count, err := countJobTaskItemsByStatuses(taskID, taskStatusValues(taskStatusFailed))
 	if err != nil {
 		panic(err.Error())
 	}

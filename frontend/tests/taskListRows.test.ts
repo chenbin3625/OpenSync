@@ -3,10 +3,16 @@ import test from 'node:test';
 import {
   filterCurrentTaskFromHistory,
   filterRunningTaskRows,
+  getRealtimeTaskIdentity,
   getTaskItemKey,
   mergeTaskItems,
   mergeTaskRecords,
+  normalizeTaskItemPage,
+  shouldClearRealtimeRows,
+  shouldResetRealtimeTotal,
+  shouldReplaceRealtimeRows,
   shouldPollRealtime,
+  sortTaskItemsByCreateTimeDesc,
 } from '../src/pages/Home/taskRows.ts';
 import type { TaskItem, TaskRecord } from '../src/types.ts';
 
@@ -73,4 +79,117 @@ test('shouldPollRealtime only enables polling for views that render realtime con
   assert.equal(shouldPollRealtime('all'), true);
   assert.equal(shouldPollRealtime('realtime'), true);
   assert.equal(shouldPollRealtime('history'), false);
+});
+
+test('normalizeTaskItemPage accepts paged, array, and null realtime item payloads', () => {
+  assert.deepEqual(
+    normalizeTaskItemPage({ dataList: [{ id: 1, status: 2 }], count: 9 }),
+    { rows: [{ id: 1, status: 2 }], total: 9 },
+  );
+  assert.deepEqual(
+    normalizeTaskItemPage([{ id: 2, status: 7 }]),
+    { rows: [{ id: 2, status: 7 }], total: 1 },
+  );
+  assert.deepEqual(normalizeTaskItemPage(null), { rows: [], total: 0 });
+});
+
+test('sortTaskItemsByCreateTimeDesc sorts by create time and id fallback', () => {
+  const rows: TaskItem[] = [
+    { id: 1, status: 2, createTime: 100 },
+    { id: 2, status: 2, createTime: 300 },
+    { id: 3, status: 2, createTime: 300 },
+    { id: 4, status: 2, createTime: 200 },
+  ];
+
+  const sorted = sortTaskItemsByCreateTimeDesc(rows);
+
+  assert.deepEqual(sorted.map((row) => row.id), [3, 2, 4, 1]);
+  assert.notEqual(sorted, rows);
+});
+
+test('getRealtimeTaskIdentity combines task id and create time', () => {
+  assert.equal(getRealtimeTaskIdentity({ taskId: 10, createTime: 100 }), '10:100');
+  assert.equal(getRealtimeTaskIdentity(null), '0:0');
+});
+
+test('shouldReplaceRealtimeRows replaces rows only when task, tab, or page changes', () => {
+  assert.equal(shouldReplaceRealtimeRows(null, { status: 2, taskIdentity: '10:100', page: 1 }), true);
+  assert.equal(
+    shouldReplaceRealtimeRows(
+      { status: 2, taskIdentity: '10:100', page: 1 },
+      { status: 2, taskIdentity: '10:100', page: 1 },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldReplaceRealtimeRows(
+      { status: 2, taskIdentity: '10:100', page: 1 },
+      { status: 2, taskIdentity: '10:100', page: 2 },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldReplaceRealtimeRows(
+      { status: 2, taskIdentity: '10:100', page: 1 },
+      { status: 7, taskIdentity: '10:100', page: 1 },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldReplaceRealtimeRows(
+      { status: 2, taskIdentity: '10:100', page: 1 },
+      { status: 2, taskIdentity: '11:200', page: 1 },
+    ),
+    true,
+  );
+});
+
+test('shouldResetRealtimeTotal keeps pagination total when only page changes', () => {
+  assert.equal(shouldResetRealtimeTotal(null, { status: 2, taskIdentity: '10:100', page: 1 }), true);
+  assert.equal(
+    shouldResetRealtimeTotal(
+      { status: 2, taskIdentity: '10:100', page: 1 },
+      { status: 2, taskIdentity: '10:100', page: 2 },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldResetRealtimeTotal(
+      { status: 2, taskIdentity: '10:100', page: 1 },
+      { status: 7, taskIdentity: '10:100', page: 1 },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldResetRealtimeTotal(
+      { status: 2, taskIdentity: '10:100', page: 1 },
+      { status: 2, taskIdentity: '11:200', page: 1 },
+    ),
+    true,
+  );
+});
+
+test('shouldClearRealtimeRows keeps current rows visible when only page changes', () => {
+  assert.equal(shouldClearRealtimeRows(null, { status: 2, taskIdentity: '10:100', page: 1 }), true);
+  assert.equal(
+    shouldClearRealtimeRows(
+      { status: 2, taskIdentity: '10:100', page: 1 },
+      { status: 2, taskIdentity: '10:100', page: 2 },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldClearRealtimeRows(
+      { status: 2, taskIdentity: '10:100', page: 1 },
+      { status: 7, taskIdentity: '10:100', page: 1 },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldClearRealtimeRows(
+      { status: 2, taskIdentity: '10:100', page: 1 },
+      { status: 2, taskIdentity: '11:200', page: 1 },
+    ),
+    true,
+  );
 });

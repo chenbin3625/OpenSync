@@ -9,6 +9,7 @@ import {
   PlusOutlined, PlayCircleOutlined, DeleteOutlined,
   CaretRightOutlined, EditOutlined, QuestionCircleOutlined,
   CheckOutlined, PauseOutlined,
+  CalendarOutlined, DatabaseOutlined,
 } from '@ant-design/icons';
 import { jobGetJob, jobPost, jobPut, jobDelete } from '../../api/job';
 import { alistGet, alistGetPath } from '../../api/alist';
@@ -143,6 +144,8 @@ const formatJobPaths = (value: unknown, separator = '、') => {
   const paths = parseJobPathList(value);
   return paths.length > 0 ? paths.join(separator) : '';
 };
+
+const countJobPaths = (value: unknown) => parseJobPathList(value).length;
 
 const formatSize = (bytes: number) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -584,6 +587,28 @@ export default function Home() {
 
   const getJobName = (job: JobItem) => job.remark || `同步任务 #${job.id}`;
 
+  const renderSidebarJob = (job: JobItem) => {
+    const sourcePreview = formatJobPaths(job.srcPath) || '源目录未配置';
+    const targetCount = countJobPaths(job.dstPath);
+    return (
+      <div className="sync-sidebar-job">
+        <div className="sync-sidebar-job-title">
+          <span className="sync-sidebar-job-name">{getJobName(job)}</span>
+          <Tag color={statusColors[job.enable] || 'default'}>
+            {statusLabels[job.enable] || '未知'}
+          </Tag>
+        </div>
+        <div className="sync-sidebar-job-meta">
+          <span>{methodNames[job.method] || job.method}</span>
+          <span>{targetCount > 1 ? `${targetCount} 个目标` : formatSchedule(job)}</span>
+        </div>
+        <span className="sync-sidebar-job-path" title={sourcePreview}>
+          {sourcePreview}
+        </span>
+      </div>
+    );
+  };
+
   const renderSelectedJobEmpty = () => (
     <Empty
       image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -597,7 +622,7 @@ export default function Home() {
 
     return (
       <div className="sync-overview">
-        <Card className="sync-overview-summary">
+        <Card className="sync-overview-hero sync-overview-summary">
           <div className={`sync-status-badge ${selectedJob.enable === 1 ? 'is-enabled' : 'is-disabled'}`}>
             {selectedJob.enable === 1 ? <CheckOutlined /> : <PauseOutlined />}
           </div>
@@ -616,6 +641,20 @@ export default function Home() {
                 />
               )}
             </Space>
+            <div className="sync-summary-stat-grid">
+              <div className="sync-summary-stat">
+                <span className="sync-summary-stat-label">源目录</span>
+                <span className="sync-summary-stat-value">{countJobPaths(selectedJob.srcPath)} 个</span>
+              </div>
+              <div className="sync-summary-stat">
+                <span className="sync-summary-stat-label">目标目录</span>
+                <span className="sync-summary-stat-value">{countJobPaths(selectedJob.dstPath)} 个</span>
+              </div>
+              <div className="sync-summary-stat">
+                <span className="sync-summary-stat-label">调度</span>
+                <span className="sync-summary-stat-value">{formatSchedule(selectedJob)}</span>
+              </div>
+            </div>
           </div>
           <Space className="sync-overview-actions" wrap>
             <Button icon={<CaretRightOutlined />} onClick={() => handleRun(selectedJob.id)}>手动执行</Button>
@@ -631,49 +670,57 @@ export default function Home() {
           </Space>
         </Card>
 
-        <Card title="连接信息">
-          <Descriptions className="sync-job-descriptions" column={1} size="middle">
-            <Descriptions.Item label="引擎">
-              <Text type="secondary">{getAlistName(selectedJob.alistId)}</Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="源目录">
-              <Text ellipsis={{ tooltip: formatJobPaths(selectedJob.srcPath) }}>
-                {formatJobPaths(selectedJob.srcPath)}
-              </Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="目标">
-              <Text ellipsis={{ tooltip: formatJobPaths(selectedJob.dstPath, ' → ') }}>
-                {formatJobPaths(selectedJob.dstPath, ' → ')}
-              </Text>
-            </Descriptions.Item>
-          </Descriptions>
-        </Card>
+        <div className="sync-info-grid">
+          <Card
+            className="sync-info-card"
+            title={<span className="ops-section-title"><DatabaseOutlined />连接信息</span>}
+          >
+            <Descriptions className="sync-job-descriptions" column={1} size="middle">
+              <Descriptions.Item label="引擎">
+                <Text type="secondary">{getAlistName(selectedJob.alistId)}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="源目录">
+                <Text ellipsis={{ tooltip: formatJobPaths(selectedJob.srcPath) }}>
+                  {formatJobPaths(selectedJob.srcPath)}
+                </Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="目标">
+                <Text ellipsis={{ tooltip: formatJobPaths(selectedJob.dstPath, ' → ') }}>
+                  {formatJobPaths(selectedJob.dstPath, ' → ')}
+                </Text>
+              </Descriptions.Item>
+            </Descriptions>
+          </Card>
 
-        <Card title="同步设置">
-          <Descriptions className="sync-job-descriptions" column={1} size="middle">
-            <Descriptions.Item label="调度">
-              <Text type="secondary">{formatSchedule(selectedJob)}</Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="缓存">
-              <Text type="secondary">{formatCache(selectedJob.useCacheS, selectedJob.useCacheT)}</Text>
-            </Descriptions.Item>
-            {fileSizeRange ? (
-              <Descriptions.Item label="大小范围">
-                <Text type="secondary">{fileSizeRange}</Text>
+          <Card
+            className="sync-info-card"
+            title={<span className="ops-section-title"><CalendarOutlined />同步策略</span>}
+          >
+            <Descriptions className="sync-job-descriptions" column={1} size="middle">
+              <Descriptions.Item label="调度">
+                <Text type="secondary">{formatSchedule(selectedJob)}</Text>
               </Descriptions.Item>
-            ) : null}
-            {selectedJob.exclude ? (
-              <Descriptions.Item label="排除">
-                <JobExcludeText value={selectedJob.exclude} />
+              <Descriptions.Item label="缓存">
+                <Text type="secondary">{formatCache(selectedJob.useCacheS, selectedJob.useCacheT)}</Text>
               </Descriptions.Item>
-            ) : null}
-            <Descriptions.Item label="创建">
-              <Text type="secondary">
-                {selectedJob.createTime ? dayjs.unix(selectedJob.createTime).format('YYYY-MM-DD HH:mm') : '-'}
-              </Text>
-            </Descriptions.Item>
-          </Descriptions>
-        </Card>
+              {fileSizeRange ? (
+                <Descriptions.Item label="大小范围">
+                  <Text type="secondary">{fileSizeRange}</Text>
+                </Descriptions.Item>
+              ) : null}
+              {selectedJob.exclude ? (
+                <Descriptions.Item label="排除">
+                  <JobExcludeText value={selectedJob.exclude} />
+                </Descriptions.Item>
+              ) : null}
+              <Descriptions.Item label="创建">
+                <Text type="secondary">
+                  {selectedJob.createTime ? dayjs.unix(selectedJob.createTime).format('YYYY-MM-DD HH:mm') : '-'}
+                </Text>
+              </Descriptions.Item>
+            </Descriptions>
+          </Card>
+        </div>
       </div>
     );
   };
@@ -704,7 +751,7 @@ export default function Home() {
                 }}
                 items={list.map((job) => ({
                   key: String(job.id),
-                  label: getJobName(job),
+                  label: renderSidebarJob(job),
                 }))}
               />
             </Spin>
@@ -766,6 +813,7 @@ export default function Home() {
       </main>
 
       <Drawer
+        className="sync-job-drawer"
         title={editingJob ? '编辑同步任务' : '新建同步任务'}
         open={drawerVisible}
         onClose={() => setDrawerVisible(false)}
@@ -778,7 +826,7 @@ export default function Home() {
           </Space>
         }
       >
-        <Form form={form} layout="vertical">
+        <Form className="sync-job-form" form={form} layout="vertical">
           <Form.Item name="alistId" label="引擎" rules={[{ required: true, message: '请选择引擎' }]} style={compactItemStyle}>
             <Select
               placeholder="选择引擎"
@@ -1012,6 +1060,7 @@ export default function Home() {
       </Drawer>
 
       <Drawer
+        className="task-detail-drawer"
         title={`任务详情 — 任务 #${taskDetailDrawerTaskId}`}
         placement="bottom"
         open={!!taskDetailDrawerTaskId}

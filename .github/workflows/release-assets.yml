@@ -8,11 +8,11 @@ on:
       tag:
         description: GitHub release tag to upload assets to
         required: true
-        default: v1.4.1
+        default: v1.5.0
       ref:
         description: Git ref to build
         required: true
-        default: v1.4.1
+        default: v1.5.0
 
 permissions:
   contents: write

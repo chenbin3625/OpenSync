@@ -4,19 +4,20 @@ import {
   DeleteOutlined, EyeOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined,
   ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined,
 } from '@ant-design/icons';
-import { jobGetTask, jobGetTaskCurrent, jobDeleteTask, jobTaskAction } from '../../api/job';
+import { jobGetTask, jobDeleteTask, jobTaskAction } from '../../api/job';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
-import type { CurrentTaskData, CurrentTaskView, PageData, TaskItem, TaskRecord } from '../../types';
+import type { CurrentTaskView, TaskItem, TaskRecord } from '../../types';
 import {
   filterCurrentTaskFromHistory,
   filterRunningTaskRows,
   getTaskItemKey,
-  mergeTaskItems,
   mergeTaskRecords,
   shouldPollRealtime,
   type TaskListView,
 } from './taskRows';
+import { useRealtimeTask } from './useRealtimeTask';
+import { useRealtimeTaskItems } from './useRealtimeTaskItems';
 
 const { Text } = Typography;
 
@@ -74,10 +75,12 @@ const statusTabs = [
   { key: -1, label: '其他', numKey: 'other' },
 ] as const;
 
-function getTaskCreateTime(task: TaskItem): number {
-  const createTime = Number(task.createTime);
-  return Number.isFinite(createTime) ? createTime : 0;
-}
+type ProgressMetric = {
+  key: string;
+  label: string;
+  icon?: ReactNode;
+  value: string;
+};
 
 function displayText(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === '') return '--';
@@ -114,12 +117,211 @@ function TaskInlineText({
   );
 }
 
-function isCurrentTaskData(data: CurrentTaskData | PageData<TaskItem> | TaskItem[] | null): data is CurrentTaskData {
-  return !!data && !Array.isArray(data) && 'doingTask' in data && Array.isArray(data.doingTask);
+function RealtimeTaskItems({
+  activeTab,
+  loading,
+  page,
+  pageSize,
+  rows,
+  total,
+  visibleRows,
+  onPageChange,
+}: {
+  activeTab: number;
+  loading: boolean;
+  page: number;
+  pageSize: number;
+  rows: TaskItem[];
+  total: number;
+  visibleRows: TaskItem[];
+  onPageChange: (page: number) => void;
+}) {
+  const activeTabLabel = statusTabs.find((tab) => tab.key === activeTab)?.label || '';
+
+  return (
+    <Spin spinning={loading} size="small">
+      {rows.length === 0 ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={<Text type="secondary">暂无{activeTabLabel}任务</Text>}
+        />
+      ) : (
+        <div className="task-progress-list">
+          <div className="task-progress-file-rows">
+            {visibleRows.map((task, index) => {
+              const name = getTaskDisplayName(task);
+              const srcPath = displayText(task.srcPath);
+              const dstPath = displayText(task.dstPath);
+              const tooltip = (
+                <div>
+                  <div>文件: {name}</div>
+                  <div>来源: {srcPath}</div>
+                  <div>目标: {dstPath}</div>
+                </div>
+              );
+              const rowKey = getTaskItemKey(task, index);
+
+              return (
+                <div className="task-progress-file-row" key={rowKey}>
+                  <Tag color={task.type === 1 ? 'red' : task.type === 2 ? 'orange' : 'blue'}>
+                    {typeNames[task.type ?? 0] || '复制'}
+                  </Tag>
+                  <TaskInlineText className="task-progress-file-name" value={name} tooltip={tooltip} />
+                  <TaskInlineText className="task-progress-file-path" value={task.srcPath} tooltip={srcPath} type="secondary" />
+                  <TaskInlineText className="task-progress-file-path" value={task.dstPath} tooltip={dstPath} type="secondary" />
+                  <Text type="secondary" className="task-progress-file-size">
+                    {formatSize(task.fileSize || 0)}
+                  </Text>
+                  <span className="task-progress-file-state">
+                    {activeTab === 1 && (
+                      <Progress
+                        percent={Math.round(Number(task.progress || 0))}
+                        size="small"
+                      />
+                    )}
+                    {activeTab === 7 && task.errMsg && (
+                      <Tooltip title={task.errMsg}>
+                        <Text type="danger" ellipsis className="task-progress-file-error">失败原因</Text>
+                      </Tooltip>
+                    )}
+                    {activeTab !== 1 && !(activeTab === 7 && task.errMsg) && (
+                      <Text type="secondary">
+                        {task.createTime ? dayjs.unix(task.createTime).format('HH:mm:ss') : '--'}
+                      </Text>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {total > 0 && (
+        <Pagination
+          className="task-progress-pagination"
+          current={page}
+          pageSize={pageSize}
+          total={total}
+          onChange={onPageChange}
+          showTotal={(count) => `共 ${count} 条`}
+          showSizeChanger={false}
+          size="small"
+        />
+      )}
+    </Spin>
+  );
 }
 
-function isTaskItemPage(data: CurrentTaskData | PageData<TaskItem> | TaskItem[] | null): data is PageData<TaskItem> {
-  return !!data && !Array.isArray(data) && 'dataList' in data && Array.isArray(data.dataList);
+function RealtimeTaskCard({
+  activeTab,
+  currentTask,
+  metrics,
+  loading,
+  page,
+  pageSize,
+  rows,
+  total,
+  visibleRows,
+  onPause,
+  onPageChange,
+  onTabChange,
+}: {
+  activeTab: number;
+  currentTask: CurrentTaskView;
+  metrics: ProgressMetric[];
+  loading: boolean;
+  page: number;
+  pageSize: number;
+  rows: TaskItem[];
+  total: number;
+  visibleRows: TaskItem[];
+  onPause: () => void;
+  onPageChange: (page: number) => void;
+  onTabChange: (status: number) => void;
+}) {
+  const realtimeTotal = Object.values(currentTask.num || {})
+    .reduce((sum, value) => sum + Number(value || 0), 0);
+  const scanProgress = currentTask.scan;
+
+  return (
+    <Card
+      className="task-progress-card"
+      size="small"
+      title="实时进度"
+      extra={(
+        <Space size={8} wrap className="task-progress-card-extra">
+          <Tag color={currentTask.scanFinish ? 'success' : 'processing'}>
+            {currentTask.scanFinish ? '扫描完成，同步中' : '进行中'}
+          </Tag>
+        </Space>
+      )}
+      style={{ marginBottom: 12 }}
+    >
+      <div className="task-progress-hero">
+        <div>
+          <div className="task-progress-hero-title">
+            <ThunderboltOutlined />
+            任务 #{currentTask.taskId}
+          </div>
+          <div className="task-progress-hero-meta">
+            <span>开始: {currentTask.createTime ? dayjs.unix(currentTask.createTime).format('HH:mm:ss') : '--'}</span>
+            <span>明细: {realtimeTotal} 条</span>
+            <span>已完成: {currentTask.num?.success || 0} 条</span>
+            <span>失败: {currentTask.num?.fail || 0} 条</span>
+          </div>
+        </div>
+        <Button icon={<PauseCircleOutlined />} onClick={onPause}>
+          暂停
+        </Button>
+      </div>
+
+      {scanProgress && (
+        <div className="task-progress-scan">
+          <div className="task-progress-scan-header">
+            <Text strong className="task-progress-scan-title"><FolderOpenOutlined /> 目录扫描</Text>
+            <Space size={10} wrap className="task-progress-scan-counts">
+              <Text type="secondary">{scanProgress.totalDirs} 个目录</Text>
+            </Space>
+          </div>
+        </div>
+      )}
+
+      <div className="task-progress-metrics">
+        {metrics.map((item) => (
+          <div className="task-progress-metric" key={item.key}>
+            <Text type="secondary" className="task-progress-metric-label">
+              {item.icon}
+              {item.label}
+            </Text>
+            <Text strong className="task-progress-metric-value">{item.value}</Text>
+          </div>
+        ))}
+      </div>
+
+      <Tabs
+        className="task-progress-tabs"
+        size="small"
+        activeKey={String(activeTab)}
+        onChange={(key) => onTabChange(Number(key))}
+        items={statusTabs.map((tab) => ({
+          key: String(tab.key),
+          label: `${tab.label} (${currentTask.num?.[tab.numKey] || 0})`,
+          children: tab.key === activeTab ? (
+            <RealtimeTaskItems
+              activeTab={activeTab}
+              loading={loading}
+              page={page}
+              pageSize={pageSize}
+              rows={rows}
+              total={total}
+              visibleRows={visibleRows}
+              onPageChange={onPageChange}
+            />
+          ) : null,
+        }))}
+      />
+    </Card>
+  );
 }
 
 export default function TaskList({
@@ -141,59 +343,26 @@ export default function TaskList({
   const [historyKeywordInput, setHistoryKeywordInput] = useState('');
   const [historyKeywordFilter, setHistoryKeywordFilter] = useState('');
   const [historyTimeRange, setHistoryTimeRange] = useState<HistoryTimeRange>(null);
-  const [currentTask, setCurrentTask] = useState<CurrentTaskView | null>(null);
-  const prevTaskRef = useRef<CurrentTaskView | null>(null);
-  const [activeTab, setActiveTab] = useState<number>(1);
-  const [tabTaskList, setTabTaskList] = useState<TaskItem[]>([]);
-  const [tabTaskTotal, setTabTaskTotal] = useState(0);
-  const [tabLoading, setTabLoading] = useState(false);
-  const [tabTaskPage, setTabTaskPage] = useState(1);
-  const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
-  const activeTabRef = useRef(activeTab);
-  const tabRequestRef = useRef(0);
   const listRequestRef = useRef(0);
   const listLoadingRequestRef = useRef(0);
-  const lastLoadedTabRef = useRef<{ status: number; taskCreateTime?: number; page: number } | null>(null);
   const showRealtime = shouldPollRealtime(view);
   const showHistory = view === 'all' || view === 'history';
-
-  useEffect(() => {
-    activeTabRef.current = activeTab;
-  }, [activeTab]);
-
-  /** 计算速度与剩余信息 */
-  const calcProgress = useCallback((cur: CurrentTaskData) => {
-    const doingTask = cur.doingTask || [];
-    const doingSize = doingTask.reduce((sum, obj) => {
-      const progress = Number(obj.progress || 0);
-      return sum + (obj.fileSize || 0) * progress / 100.0;
-    }, 0);
-    const sizeMap = cur.size || {};
-    const remainSize = (sizeMap.running || 0) - doingSize + (sizeMap.wait || 0);
-    const doneSize = (sizeMap.success || 0) + doingSize;
-
-    // 瞬时速度
-    let speed = 0;
-    const prev = prevTaskRef.current;
-    if (prev && cur.duration !== prev.duration) {
-      speed = (doneSize - (prev.doneSize || 0)) / (cur.duration - prev.duration);
-    }
-
-    // 平均速度
-    let speedAvg = 0;
-    if (cur.firstSync && cur.duration > 0) {
-      const syncDuration = cur.duration - (cur.firstSync - cur.createTime);
-      if (syncDuration > 0) speedAvg = doneSize / syncDuration;
-    }
-
-    // 预计剩余时间
-    let remainTime = 0;
-    if (speedAvg > 0 && remainSize > 0) {
-      remainTime = Math.ceil(remainSize / speedAvg);
-    }
-
-    return { remainSize, doneSize, speed, speedAvg, remainTime };
-  }, []);
+  const { currentTask, nowTick, refreshCurrentTask } = useRealtimeTask(jobId, showRealtime);
+  const {
+    activeTab,
+    setActiveTab,
+    tabTaskList,
+    pagedTabTaskList,
+    tabTaskTotal,
+    tabTaskPage,
+    setTabTaskPage,
+    tabLoading,
+  } = useRealtimeTaskItems({
+    jobId,
+    enabled: showRealtime,
+    currentTask,
+    pageSize: TAB_TASK_PAGE_SIZE,
+  });
 
   const fetchList = useCallback(async (showLoading = false) => {
     if (!jobId) return;
@@ -218,101 +387,10 @@ export default function TaskList({
     }
   }, [historyKeywordFilter, historyStatusFilter, historyTimeRange, jobId, page, pageSize]);
 
-  const fetchCurrent = useCallback(async () => {
-    if (!jobId) return;
-    try {
-      const res = await jobGetTaskCurrent({ id: jobId });
-      const data = res.data || null;
-      if (isCurrentTaskData(data)) {
-        const progress = calcProgress(data);
-        prevTaskRef.current = { ...data, ...progress };
-        setCurrentTask({ ...data, ...progress });
-      } else {
-        setCurrentTask(null);
-        prevTaskRef.current = null;
-      }
-    } catch { /* keep the last visible realtime snapshot on transient polling errors */ }
-  }, [calcProgress, jobId]);
-
-  /** 获取 Tab 对应状态的任务列表 */
-  const fetchTabTasks = useCallback(async (status: number, task: CurrentTaskView | null, pageNum: number, showLoading = false) => {
-    if (!jobId || !task) return;
-    const requestID = ++tabRequestRef.current;
-    if (showLoading) {
-      setTabTaskList([]);
-      setTabTaskTotal(0);
-      setTabLoading(true);
-    }
-    // 运行中 Tab 直接用 doingTask，不请求后端
-    if (status === 1) {
-      if (activeTabRef.current === status) {
-        const doingTask = task.doingTask || [];
-        setTabTaskList((previous) => mergeTaskItems(previous, doingTask));
-        setTabTaskTotal(doingTask.length);
-        setTabLoading(false);
-      }
-      return;
-    }
-    try {
-      const res = await jobGetTaskCurrent({
-        id: jobId,
-        status,
-        pageSize: TAB_TASK_PAGE_SIZE,
-        pageNum,
-      });
-      if (activeTabRef.current === status && requestID === tabRequestRef.current) {
-        const data = res.data || null;
-        if (isTaskItemPage(data)) {
-          setTabTaskList((previous) => mergeTaskItems(previous, data.dataList || []));
-          setTabTaskTotal(data.count || 0);
-        } else {
-          const rows = Array.isArray(data) ? data : [];
-          setTabTaskList((previous) => mergeTaskItems(previous, rows));
-          setTabTaskTotal(rows.length);
-        }
-      }
-    } catch {
-      if (showLoading && activeTabRef.current === status && requestID === tabRequestRef.current) {
-        setTabTaskList([]);
-        setTabTaskTotal(0);
-      }
-    }
-    if (activeTabRef.current === status && requestID === tabRequestRef.current) {
-      setTabLoading(false);
-    }
-  }, [jobId]);
-
-  const handleTabChange = (status: number) => {
-    if (status === activeTab) return;
-    setActiveTab(status);
-    setTabTaskPage(1);
-  };
-
-  const pagedTabTaskList = useMemo(() => {
-    const sortedList = [...tabTaskList].sort((a, b) => getTaskCreateTime(b) - getTaskCreateTime(a));
-    if (activeTab !== 1) return sortedList;
-    const start = (tabTaskPage - 1) * TAB_TASK_PAGE_SIZE;
-    return sortedList.slice(start, start + TAB_TASK_PAGE_SIZE);
-  }, [activeTab, tabTaskList, tabTaskPage]);
-
-  useEffect(() => {
-    const totalRows = activeTab === 1 ? tabTaskList.length : tabTaskTotal;
-    const maxPage = Math.max(1, Math.ceil(totalRows / TAB_TASK_PAGE_SIZE));
-    if (tabTaskPage > maxPage) {
-      setTabTaskPage(maxPage);
-    }
-  }, [activeTab, tabTaskList.length, tabTaskPage, tabTaskTotal]);
-
   useEffect(() => {
     setPage(1);
-    setTabTaskPage(1);
     setList([]);
     setTotal(0);
-    setCurrentTask(null);
-    setTabTaskList([]);
-    setTabTaskTotal(0);
-    prevTaskRef.current = null;
-    lastLoadedTabRef.current = null;
   }, [jobId]);
 
   useEffect(() => {
@@ -323,41 +401,6 @@ export default function TaskList({
     const pollID = setInterval(() => fetchList(false), 3000);
     return () => { clearInterval(pollID); };
   }, [fetchList, showHistory]);
-  useEffect(() => {
-    if (!showRealtime) return undefined;
-    fetchCurrent();
-    const pollID = setInterval(fetchCurrent, 3000);
-    return () => { clearInterval(pollID); };
-  }, [fetchCurrent, showRealtime]);
-  useEffect(() => {
-    if (!currentTask) return;
-    const tickID = setInterval(() => {
-      setNowTick(Math.floor(Date.now() / 1000));
-    }, 1000);
-    return () => { clearInterval(tickID); };
-  }, [currentTask]);
-  // Tab 数据加载：currentTask 变化时更新运行中 Tab，切换 Tab 时加载对应数据
-  useEffect(() => {
-    if (!currentTask) {
-      setTabTaskList([]);
-      setTabTaskTotal(0);
-      setTabLoading(false);
-      lastLoadedTabRef.current = null;
-      return;
-    }
-    const lastLoadedTab = lastLoadedTabRef.current;
-    const showLoading = !lastLoadedTab ||
-      lastLoadedTab.status !== activeTab ||
-      lastLoadedTab.taskCreateTime !== currentTask.createTime ||
-      lastLoadedTab.page !== tabTaskPage;
-    lastLoadedTabRef.current = {
-      status: activeTab,
-      taskCreateTime: currentTask.createTime,
-      page: tabTaskPage,
-    };
-    fetchTabTasks(activeTab, currentTask, tabTaskPage, showLoading);
-  }, [activeTab, currentTask, fetchTabTasks, tabTaskPage]);
-
   const handleDeleteTask = async (taskId: number) => {
     try {
       await jobDeleteTask(taskId);
@@ -375,7 +418,7 @@ export default function TaskList({
       await jobTaskAction(taskId, action);
       message.success(successText);
       fetchList(false);
-      fetchCurrent();
+      refreshCurrentTask();
     } catch { /* ignore */ }
   };
 
@@ -466,79 +509,6 @@ export default function TaskList({
     },
   ];
 
-  const renderCurrentTaskItems = () => (
-    <Spin spinning={tabLoading && tabTaskList.length === 0} size="small">
-      {tabTaskList.length === 0 && !tabLoading ? (
-        <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description={<Text type="secondary">暂无{statusTabs.find(t => t.key === activeTab)?.label}任务</Text>}
-        />
-      ) : (
-        <div className="task-progress-list">
-          <div className="task-progress-file-rows">
-            {pagedTabTaskList.map((t, i) => {
-              const name = getTaskDisplayName(t);
-              const srcPath = displayText(t.srcPath);
-              const dstPath = displayText(t.dstPath);
-              const tooltip = (
-                <div>
-                  <div>文件: {name}</div>
-                  <div>来源: {srcPath}</div>
-                  <div>目标: {dstPath}</div>
-                </div>
-              );
-              const rowKey = getTaskItemKey(t, i);
-
-              return (
-                <div className="task-progress-file-row" key={rowKey}>
-                  <Tag color={t.type === 1 ? 'red' : t.type === 2 ? 'orange' : 'blue'}>
-                    {typeNames[t.type ?? 0] || '复制'}
-                  </Tag>
-                  <TaskInlineText className="task-progress-file-name" value={name} tooltip={tooltip} />
-                  <TaskInlineText className="task-progress-file-path" value={t.srcPath} tooltip={srcPath} type="secondary" />
-                  <TaskInlineText className="task-progress-file-path" value={t.dstPath} tooltip={dstPath} type="secondary" />
-                  <Text type="secondary" className="task-progress-file-size">
-                    {formatSize(t.fileSize || 0)}
-                  </Text>
-                  <span className="task-progress-file-state">
-                    {activeTab === 1 && (
-                      <Progress
-                        percent={Math.round(Number(t.progress || 0))}
-                        size="small"
-                      />
-                    )}
-                    {activeTab === 7 && t.errMsg && (
-                      <Tooltip title={t.errMsg}>
-                        <Text type="danger" ellipsis className="task-progress-file-error">失败原因</Text>
-                      </Tooltip>
-                    )}
-                    {activeTab !== 1 && !(activeTab === 7 && t.errMsg) && (
-                      <Text type="secondary">
-                        {t.createTime ? dayjs.unix(t.createTime).format('HH:mm:ss') : '--'}
-                      </Text>
-                    )}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {tabTaskTotal > 0 && (
-        <Pagination
-          className="task-progress-pagination"
-          current={tabTaskPage}
-          pageSize={TAB_TASK_PAGE_SIZE}
-          total={tabTaskTotal}
-          onChange={setTabTaskPage}
-          showTotal={(t) => `共 ${t} 条`}
-          showSizeChanger={false}
-          size="small"
-        />
-      )}
-    </Spin>
-  );
-
   const historyList = useMemo(
     () => showRealtime ? filterCurrentTaskFromHistory(list, currentTask) : filterRunningTaskRows(list),
     [currentTask, list, showRealtime],
@@ -549,7 +519,6 @@ export default function TaskList({
   const displayDuration = currentTask
     ? Math.max(currentTask.duration || 0, currentTask.createTime ? nowTick - currentTask.createTime : 0)
     : 0;
-  const scanProgress = currentTask?.scan;
   const progressMetrics = currentTask ? [
     {
       key: 'duration',
@@ -587,69 +556,20 @@ export default function TaskList({
   ] : [];
 
   const realtimeContent = currentTask ? (
-    <>
-      <div className="page-header">
-        <Space>
-          <Button
-            icon={<PauseCircleOutlined />}
-            onClick={() => handleTaskAction(currentTask.taskId, 'pause', '已暂停')}
-          >
-            暂停
-          </Button>
-        </Space>
-      </div>
-      <Card
-        className="task-progress-card"
-        size="small"
-        title="实时进度"
-        extra={(
-          <Space size={8} wrap className="task-progress-card-extra">
-            <Text type="secondary" className="task-progress-start-time">
-              开始: {currentTask.createTime ? dayjs.unix(currentTask.createTime).format('HH:mm:ss') : '--'}
-            </Text>
-            <Tag color={currentTask.scanFinish ? 'success' : 'processing'}>
-              {currentTask.scanFinish ? '扫描完成，同步中' : '进行中'}
-            </Tag>
-          </Space>
-        )}
-        style={{ marginBottom: 12 }}
-      >
-        {scanProgress && (
-          <div className="task-progress-scan">
-            <div className="task-progress-scan-header">
-              <Text strong className="task-progress-scan-title"><FolderOpenOutlined /> 目录扫描</Text>
-              <Space size={10} wrap className="task-progress-scan-counts">
-                <Text type="secondary">{scanProgress.totalDirs} 个目录</Text>
-              </Space>
-            </div>
-          </div>
-        )}
-
-        <div className="task-progress-metrics">
-          {progressMetrics.map((item) => (
-            <div className="task-progress-metric" key={item.key}>
-              <Text type="secondary" className="task-progress-metric-label">
-                {item.icon}
-                {item.label}
-              </Text>
-              <Text strong className="task-progress-metric-value">{item.value}</Text>
-            </div>
-          ))}
-        </div>
-
-        <Tabs
-          className="task-progress-tabs"
-          size="small"
-          activeKey={String(activeTab)}
-          onChange={(key) => handleTabChange(Number(key))}
-          items={statusTabs.map((tab) => ({
-            key: String(tab.key),
-            label: `${tab.label} (${currentTask.num?.[tab.numKey] || 0})`,
-            children: tab.key === activeTab ? renderCurrentTaskItems() : null,
-          }))}
-        />
-      </Card>
-    </>
+    <RealtimeTaskCard
+      activeTab={activeTab}
+      currentTask={currentTask}
+      metrics={progressMetrics}
+      loading={tabLoading}
+      page={tabTaskPage}
+      pageSize={TAB_TASK_PAGE_SIZE}
+      rows={tabTaskList}
+      total={tabTaskTotal}
+      visibleRows={pagedTabTaskList}
+      onPause={() => handleTaskAction(currentTask.taskId, 'pause', '已暂停')}
+      onPageChange={setTabTaskPage}
+      onTabChange={setActiveTab}
+    />
   ) : (
     <Empty
       image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -680,7 +600,7 @@ export default function TaskList({
   );
 
   const historyContent = (
-    <>
+    <div className="task-history-panel">
       <Space wrap className="task-history-filters">
         <Input.Search
           placeholder="任务 ID"
@@ -716,7 +636,7 @@ export default function TaskList({
         <Button onClick={resetHistoryFilters} disabled={!hasHistoryFilters}>重置</Button>
       </Space>
       {historyBody}
-    </>
+    </div>
   );
 
   return (
