@@ -52,16 +52,12 @@ export interface JobItem {
   method: number;
   interval: number;
   isCron: number;
-  year?: string | null;
   month?: string | null;
   day?: string | null;
-  week?: string | null;
   day_of_week?: string | null;
   hour?: string | null;
   minute?: string | null;
   second?: string | null;
-  start_date?: string | null;
-  end_date?: string | null;
   exclude?: string | null;
   minFileSize?: number;
   maxFileSize?: number;
@@ -175,6 +171,8 @@ export interface NotifyFormValues {
   needContent?: boolean;
   titleName?: string;
   contentName?: string;
+  body?: string;
+  headers?: string;
   notSendNull?: boolean;
   sendKey?: string;
   version?: string;

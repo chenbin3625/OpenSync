@@ -13,6 +13,7 @@ import (
 	"opensync/internal/mapper"
 	"opensync/internal/model"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,13 +23,51 @@ import (
 const cookieName = "open_sync"
 
 var sc *securecookie.SecureCookie
+var scMu sync.RWMutex
+
+const authUserCacheTTL = 15 * time.Second
+
+type authUserCacheEntry struct {
+	user      map[string]interface{}
+	userFull  map[string]interface{}
+	expiresAt time.Time
+}
+
+var (
+	authUserCache   = make(map[string]authUserCacheEntry)
+	authUserCacheMu sync.RWMutex
+)
 
 // InitSecureCookie initializes the secure cookie encoder
 func InitSecureCookie() {
 	cfg := config.GetConfig()
+	codec := newSecureCookie(cfg)
+	scMu.Lock()
+	sc = codec
+	scMu.Unlock()
+	ClearAuthUserCache()
+}
+
+func newSecureCookie(cfg *config.Config) *securecookie.SecureCookie {
 	hashKey := deriveCookieKey(cfg.Server.PasswdStr, "hash", 32)
 	blockKey := deriveCookieKey(cfg.Server.PasswdStr, "block", 16)
-	sc = securecookie.New(hashKey, blockKey)
+	codec := securecookie.New(hashKey, blockKey)
+	codec.MaxAge(cfg.Server.Expires * 86400)
+	return codec
+}
+
+func currentSecureCookie() *securecookie.SecureCookie {
+	scMu.RLock()
+	codec := sc
+	scMu.RUnlock()
+	if codec != nil {
+		return codec
+	}
+	InitSecureCookie()
+	scMu.RLock()
+	codec = sc
+	scMu.RUnlock()
+	return codec
 }
 
 // CookieUser represents the user data stored in cookie
@@ -73,12 +112,71 @@ func CookieUserMatches(cookieUser CookieUser, user map[string]interface{}) bool 
 	return hmac.Equal([]byte(cookieUser.Session), []byte(want))
 }
 
+func authUserCacheKey(cookieUser CookieUser) string {
+	return fmt.Sprintf("%d|%s|%s", cookieUser.ID, cookieUser.UserName, cookieUser.Session)
+}
+
+func copyAuthUserMap(src map[string]interface{}) map[string]interface{} {
+	dst := make(map[string]interface{}, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func publicAuthUser(user map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"id":         toInt64(user["id"]),
+		"userName":   fmt.Sprintf("%v", user["userName"]),
+		"createTime": user["createTime"],
+	}
+}
+
+func cachedAuthUser(cookieUser CookieUser) (map[string]interface{}, map[string]interface{}, bool) {
+	key := authUserCacheKey(cookieUser)
+	now := time.Now()
+
+	authUserCacheMu.RLock()
+	entry, ok := authUserCache[key]
+	authUserCacheMu.RUnlock()
+	if !ok {
+		return nil, nil, false
+	}
+	if now.After(entry.expiresAt) {
+		authUserCacheMu.Lock()
+		if current, ok := authUserCache[key]; ok && now.After(current.expiresAt) {
+			delete(authUserCache, key)
+		}
+		authUserCacheMu.Unlock()
+		return nil, nil, false
+	}
+
+	return copyAuthUserMap(entry.user), copyAuthUserMap(entry.userFull), true
+}
+
+func cacheAuthUser(cookieUser CookieUser, trueUser map[string]interface{}) {
+	key := authUserCacheKey(cookieUser)
+	authUserCacheMu.Lock()
+	authUserCache[key] = authUserCacheEntry{
+		user:      publicAuthUser(trueUser),
+		userFull:  copyAuthUserMap(trueUser),
+		expiresAt: time.Now().Add(authUserCacheTTL),
+	}
+	authUserCacheMu.Unlock()
+}
+
+func ClearAuthUserCache() {
+	authUserCacheMu.Lock()
+	authUserCache = make(map[string]authUserCacheEntry)
+	authUserCacheMu.Unlock()
+}
+
 // SetAuthCookie sets the signed auth cookie
 func SetAuthCookie(c *gin.Context, user map[string]interface{}) {
 	cfg := config.GetConfig()
 	cookieData := NewCookieUser(user)
 	jsonData, _ := json.Marshal(cookieData)
-	encoded, err := sc.Encode(cookieName, string(jsonData))
+	encoded, err := currentSecureCookie().Encode(cookieName, string(jsonData))
 	if err != nil {
 		log.Printf("Failed to encode cookie: %v", err)
 		return
@@ -146,7 +244,7 @@ func AuthRequired() gin.HandlerFunc {
 		}
 
 		var decoded string
-		if err := sc.Decode(cookieName, cookieVal, &decoded); err != nil {
+		if err := currentSecureCookie().Decode(cookieName, cookieVal, &decoded); err != nil {
 			ClearAuthCookie(c)
 			c.JSON(http.StatusUnauthorized, model.Unauthorized(i18n.G("login_expired")))
 			c.Abort()
@@ -158,6 +256,13 @@ func AuthRequired() gin.HandlerFunc {
 			ClearAuthCookie(c)
 			c.JSON(http.StatusUnauthorized, model.Unauthorized(i18n.G("login_expired")))
 			c.Abort()
+			return
+		}
+
+		if user, userFull, ok := cachedAuthUser(cUser); ok {
+			c.Set("user", user)
+			c.Set("userFull", userFull)
+			c.Next()
 			return
 		}
 
@@ -177,12 +282,9 @@ func AuthRequired() gin.HandlerFunc {
 			return
 		}
 
+		cacheAuthUser(cUser, trueUser)
 		// Store user info in context (without passwd/sqlVersion)
-		c.Set("user", map[string]interface{}{
-			"id":         toInt64(trueUser["id"]),
-			"userName":   fmt.Sprintf("%v", trueUser["userName"]),
-			"createTime": trueUser["createTime"],
-		})
+		c.Set("user", publicAuthUser(trueUser))
 		c.Set("userFull", trueUser)
 
 		c.Next()

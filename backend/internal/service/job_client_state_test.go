@@ -154,7 +154,8 @@ func TestRemoveJobClientRejectsRunningJobWithoutStoppingIt(t *testing.T) {
 
 	select {
 	case recovered := <-panicCh:
-		if recovered != i18n.G("job_running_cannot_delete") {
+		err, ok := recovered.(interface{ Error() string })
+		if !ok || err.Error() != i18n.G("job_running_cannot_delete") {
 			t.Fatalf("RemoveJobClient() panic = %#v, want %q", recovered, i18n.G("job_running_cannot_delete"))
 		}
 	case <-time.After(100 * time.Millisecond):

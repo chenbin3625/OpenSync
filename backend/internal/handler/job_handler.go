@@ -48,6 +48,9 @@ func GetJob(c *gin.Context) {
 			"startTime": c.Query("startTime"),
 			"endTime":   c.Query("endTime"),
 		}
+		if statusIn := c.QueryArray("statusIn"); len(statusIn) > 0 {
+			req["statusIn"] = statusIn
+		}
 		for k, v := range req {
 			if v == "" {
 				delete(req, k)

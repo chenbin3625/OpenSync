@@ -44,7 +44,8 @@ export default function Engine() {
 
   const handleEdit = (item: AlistItem) => {
     setEditingItem(item);
-    form.setFieldsValue({ url: item.url, remark: item.remark || '' });
+    form.resetFields();
+    form.setFieldsValue({ url: item.url, remark: item.remark || '', token: undefined });
     setModalVisible(true);
   };
 

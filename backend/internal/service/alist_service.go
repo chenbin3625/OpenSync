@@ -112,7 +112,7 @@ func panicAlistClientLoadError(err error) {
 	}
 	msg := i18n.G("add_alist_client_fail")
 	msg = strings.Replace(msg, "{}", err.Error(), 1)
-	panic(msg)
+	panicPublic(msg)
 }
 
 // UpdateClient updates an AList client
@@ -155,11 +155,11 @@ func UpdateClient(alist map[string]interface{}) {
 	oldURL := fmt.Sprintf("%v", alistOld["url"])
 	if oldURL != urlStr || hasToken {
 		if !hasToken {
-			panic(i18n.G("without_token"))
+			panicPublic(i18n.G("without_token"))
 		}
 		client, err := NewAlistClient(urlStr, fmt.Sprintf("%v", alist["token"]), alistID)
 		if err != nil {
-			panic(err.Error())
+			panicPublic(err.Error())
 		}
 		alistClientListMu.Lock()
 		alistClientList[alistID] = client
@@ -200,7 +200,7 @@ func AddClient(alist map[string]interface{}) {
 	client, err := NewAlistClient(urlStr, token, 0)
 	if err != nil {
 		log.Printf("Failed to add alist client: %v", err)
-		panic(err.Error())
+		panicPublic(err.Error())
 	}
 
 	remarkStr := ""
@@ -226,7 +226,7 @@ func RemoveClient(alistID int64) {
 		panic(err.Error())
 	}
 	if count > 0 {
-		panic(i18n.G("alist_in_use"))
+		panicPublic(i18n.G("alist_in_use"))
 	}
 
 	alistClientListMu.Lock()
@@ -242,7 +242,7 @@ func GetChildPath(alistID int64, path string) []map[string]string {
 	client := GetClientByID(alistID)
 	result, err := client.FilePathList(path)
 	if err != nil {
-		panic(err.Error())
+		panicPublic(err.Error())
 	}
 	return result
 }

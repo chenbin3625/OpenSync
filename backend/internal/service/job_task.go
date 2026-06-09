@@ -198,7 +198,9 @@ func (jt *JobTask) initRuntime() {
 }
 
 func (jt *JobTask) context() context.Context {
-	jt.initRuntime()
+	if jt.ctx == nil || jt.cancel == nil {
+		jt.ctx, jt.cancel = context.WithCancel(context.Background())
+	}
 	return jt.ctx
 }
 
@@ -211,17 +213,16 @@ func (jt *JobTask) isBreak() bool {
 }
 
 func (jt *JobTask) requestBreak() {
-	jt.initRuntime()
 	if !jt.BreakFlag.Swap(true) && jt.cancel != nil {
 		jt.cancel()
 	}
 }
 
 func (jt *JobTask) waitForBreak(d time.Duration) bool {
-	jt.initRuntime()
+	ctx := jt.context()
 	if d <= 0 {
 		select {
-		case <-jt.ctx.Done():
+		case <-ctx.Done():
 			return false
 		default:
 			return true
@@ -233,7 +234,7 @@ func (jt *JobTask) waitForBreak(d time.Duration) bool {
 	select {
 	case <-timer.C:
 		return true
-	case <-jt.ctx.Done():
+	case <-ctx.Done():
 		return false
 	}
 }

@@ -29,11 +29,14 @@ export function mergeTaskRecords(previous: TaskRecord[], next: TaskRecord[]): Ta
   if (previous.length === 0) return next;
 
   const previousByID = new Map(previous.map((task) => [task.id, task]));
-  return next.map((task) => {
+  let changed = previous.length !== next.length;
+  const merged = next.map((task, index) => {
     const existing = previousByID.get(task.id);
-    if (!existing) return task;
-    return sameTaskRecord(existing, task) ? existing : task;
+    const row = existing && sameTaskRecord(existing, task) ? existing : task;
+    if (row !== previous[index]) changed = true;
+    return row;
   });
+  return changed ? merged : previous;
 }
 
 export function getTaskItemKey(task: TaskItem, fallback = 0): string {
@@ -68,11 +71,14 @@ export function mergeTaskItems(previous: TaskItem[], next: TaskItem[]): TaskItem
   if (previous.length === 0) return next;
 
   const previousByKey = new Map(previous.map((task, index) => [getTaskItemKey(task, index), task]));
-  return next.map((task, index) => {
+  let changed = previous.length !== next.length;
+  const merged = next.map((task, index) => {
     const existing = previousByKey.get(getTaskItemKey(task, index));
-    if (!existing) return task;
-    return sameTaskItem(existing, task) ? existing : task;
+    const row = existing && sameTaskItem(existing, task) ? existing : task;
+    if (row !== previous[index]) changed = true;
+    return row;
   });
+  return changed ? merged : previous;
 }
 
 export function normalizeTaskItemPage(

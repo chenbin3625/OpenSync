@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"strconv"
@@ -21,22 +22,43 @@ var (
 )
 
 const maxPageSize = 500
+const sqliteMaxOpenConns = 4
 
 // InitDB initializes the database connection
 func InitDB() *sql.DB {
 	once.Do(func() {
 		cfg := config.GetConfig()
 		var err error
-		db, err = sql.Open("sqlite", cfg.DB.DBName)
+		db, err = sql.Open("sqlite", sqliteDSN(cfg.DB.DBName))
 		if err != nil {
 			log.Fatalf("Failed to open database: %v", err)
 		}
-		db.SetMaxOpenConns(1) // SQLite single writer
-		// Enable WAL mode
+		db.SetMaxOpenConns(sqliteMaxOpenConns)
+		db.SetMaxIdleConns(sqliteMaxOpenConns)
+		// Keep explicit PRAGMAs as a startup sanity pass; sqliteDSN applies
+		// them to each new pooled connection.
 		db.Exec("PRAGMA journal_mode=WAL")
 		db.Exec("PRAGMA busy_timeout=5000")
 	})
 	return db
+}
+
+func sqliteDSN(dbName string) string {
+	if dbName == ":memory:" {
+		return dbName
+	}
+	pragmas := url.Values{}
+	pragmas.Add("_pragma", "busy_timeout(5000)")
+	pragmas.Add("_pragma", "journal_mode(WAL)")
+	query := pragmas.Encode()
+	if strings.HasPrefix(dbName, "file:") {
+		sep := "?"
+		if strings.Contains(dbName, "?") {
+			sep = "&"
+		}
+		return dbName + sep + query
+	}
+	return "file:" + dbName + "?" + query
 }
 
 // GetDB returns the database connection

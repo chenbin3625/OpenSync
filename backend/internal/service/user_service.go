@@ -7,38 +7,81 @@ import (
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
 	"opensync/pkg/crypto"
+	"strings"
 	"sync"
 	"time"
 )
 
 var (
-	errPwd   []int64
+	errPwd   map[string][]int64
 	errPwdMu sync.Mutex
 )
 
 // CheckPwdTime checks if too many password errors in 5 minutes
 func CheckPwdTime() {
+	CheckPwdTimeForScope(defaultPwdErrorScope())
+}
+
+func CheckPwdTimeForScope(scope string) {
 	errPwdMu.Lock()
 	defer errPwdMu.Unlock()
 	now := time.Now().Unix()
+	scope = normalizePwdErrorScope(scope)
+	if errPwd == nil {
+		errPwd = make(map[string][]int64)
+	}
+
 	// Remove entries older than 5 minutes
-	cleaned := errPwd[:0]
-	for _, t := range errPwd {
+	failures := errPwd[scope]
+	cleaned := failures[:0]
+	for _, t := range failures {
 		if t+300 >= now {
 			cleaned = append(cleaned, t)
 		}
 	}
-	errPwd = cleaned
-	if len(errPwd) > 3 {
-		panic(i18n.G("passwd_wrong_max_time"))
+	errPwd[scope] = cleaned
+	if len(cleaned) > 3 {
+		panicPublic(i18n.G("passwd_wrong_max_time"))
 	}
 }
 
 // AddPwdError records a password error
 func AddPwdError() {
+	AddPwdErrorForScope(defaultPwdErrorScope())
+}
+
+func AddPwdErrorForScope(scope string) {
 	errPwdMu.Lock()
 	defer errPwdMu.Unlock()
-	errPwd = append(errPwd, time.Now().Unix())
+	scope = normalizePwdErrorScope(scope)
+	if errPwd == nil {
+		errPwd = make(map[string][]int64)
+	}
+	errPwd[scope] = append(errPwd[scope], time.Now().Unix())
+}
+
+func defaultPwdErrorScope() string {
+	return "default"
+}
+
+func normalizePwdErrorScope(scope string) string {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return defaultPwdErrorScope()
+	}
+	return scope
+}
+
+func passwordErrorScope(userID int64, userName string, clientScope string) string {
+	principal := strings.ToLower(strings.TrimSpace(userName))
+	if principal == "" && userID > 0 {
+		principal = fmt.Sprintf("id:%d", userID)
+	}
+	if principal == "" {
+		principal = "unknown"
+	}
+	clientScope = normalizePwdErrorScope(clientScope)
+	return principal + "|" + clientScope
 }
 
 // GetUser gets user by ID or username
@@ -51,6 +94,9 @@ func GetUser(userID int64, userName string) map[string]interface{} {
 		user, err = mapper.GetUserByName(userName)
 	}
 	if err != nil {
+		if err.Error() == i18n.G("user_not_found") {
+			panicPublic(err.Error())
+		}
 		panic(err.Error())
 	}
 	return user
@@ -58,13 +104,18 @@ func GetUser(userID int64, userName string) map[string]interface{} {
 
 // CheckPwd validates password and returns user info
 func CheckPwd(userID int64, passwd string, userName string) map[string]interface{} {
-	CheckPwdTime()
+	return CheckPwdScoped(userID, passwd, userName, "")
+}
+
+func CheckPwdScoped(userID int64, passwd string, userName string, clientScope string) map[string]interface{} {
+	scope := passwordErrorScope(userID, userName, clientScope)
+	CheckPwdTimeForScope(scope)
 	user := GetUser(userID, userName)
 	cfg := config.GetConfig()
 	storedHash := fmt.Sprintf("%v", user["passwd"])
 	if !crypto.CheckPassword(passwd, storedHash, cfg.Server.PasswdStr) {
-		AddPwdError()
-		panic(i18n.G("passwd_wrong"))
+		AddPwdErrorForScope(scope)
+		panicPublic(i18n.G("passwd_wrong"))
 	}
 	if !crypto.IsModernPasswordHash(storedHash) {
 		newHash, err := crypto.HashPassword(passwd)
@@ -100,7 +151,7 @@ func ResetPasswd(userName string, key string, passwd string) string {
 	cfg := config.GetConfig()
 	user := GetUser(0, userName)
 	if key != cfg.Server.PasswdStr {
-		panic(i18n.G("key_wrong"))
+		panicPublic(i18n.G("key_wrong"))
 	}
 	if passwd == "" {
 		newPasswd := crypto.GeneratePassword(8)

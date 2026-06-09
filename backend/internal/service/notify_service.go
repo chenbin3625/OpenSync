@@ -67,6 +67,11 @@ func DeleteNotify(notifyID int64) {
 
 // TestNotify sends a test notification
 func TestNotify(notify map[string]interface{}) {
+	defer func() {
+		if r := recover(); r != nil {
+			panicPublic(fmt.Sprintf("%v", r))
+		}
+	}()
 	msg := i18n.G("notify_test_msg")
 	sendNotify(notify, "OpenSync Test", msg, false)
 }

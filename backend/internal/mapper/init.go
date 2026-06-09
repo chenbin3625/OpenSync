@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const currentVersion = 260605
+const currentVersion = 260606
 
 // InitSQL initializes the database schema and runs migrations
 // Returns the initial admin password if first run, empty string otherwise
@@ -64,16 +64,12 @@ func InitSQL() string {
 				method integer,
 				interval integer,
 				isCron integer DEFAULT 0,
-				year text DEFAULT NULL,
 				month text DEFAULT NULL,
 				day text DEFAULT NULL,
-				week text DEFAULT NULL,
 				day_of_week text DEFAULT NULL,
 				hour text DEFAULT NULL,
 				minute text DEFAULT NULL,
 				second text DEFAULT NULL,
-				start_date text DEFAULT NULL,
-				end_date text DEFAULT NULL,
 				exclude text DEFAULT NULL,
 				minFileSize integer DEFAULT 0,
 				maxFileSize integer DEFAULT 0,
@@ -173,16 +169,12 @@ func migrationStatements(fromVersion int64) []string {
 		// For simplicity, just add new columns (old 'cron' column will remain unused)
 		stmts = append(stmts,
 			"ALTER TABLE job ADD COLUMN isCron integer DEFAULT 0",
-			"ALTER TABLE job ADD COLUMN year text DEFAULT NULL",
 			"ALTER TABLE job ADD COLUMN month text DEFAULT NULL",
 			"ALTER TABLE job ADD COLUMN day text DEFAULT NULL",
-			"ALTER TABLE job ADD COLUMN week text DEFAULT NULL",
 			"ALTER TABLE job ADD COLUMN day_of_week text DEFAULT NULL",
 			"ALTER TABLE job ADD COLUMN hour text DEFAULT NULL",
 			"ALTER TABLE job ADD COLUMN minute text DEFAULT NULL",
 			"ALTER TABLE job ADD COLUMN second text DEFAULT NULL",
-			"ALTER TABLE job ADD COLUMN start_date text DEFAULT NULL",
-			"ALTER TABLE job ADD COLUMN end_date text DEFAULT NULL",
 		)
 	}
 	if fromVersion < 240905 {
@@ -219,6 +211,14 @@ func migrationStatements(fromVersion int64) []string {
 		stmts = append(stmts,
 			"ALTER TABLE job ADD COLUMN minFileSize integer DEFAULT 0",
 			"ALTER TABLE job ADD COLUMN maxFileSize integer DEFAULT 0",
+		)
+	}
+	if fromVersion < 260606 {
+		stmts = append(stmts,
+			"ALTER TABLE job DROP COLUMN year",
+			"ALTER TABLE job DROP COLUMN week",
+			"ALTER TABLE job DROP COLUMN start_date",
+			"ALTER TABLE job DROP COLUMN end_date",
 		)
 	}
 	stmts = append(stmts, fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion))
@@ -269,6 +269,14 @@ func shouldSkipMigrationStatement(tx *sql.Tx, stmt string) bool {
 		return txTableHasColumn(tx, "job", "minFileSize")
 	case "ALTER TABLE job ADD COLUMN maxFileSize integer DEFAULT 0":
 		return txTableHasColumn(tx, "job", "maxFileSize")
+	case "ALTER TABLE job DROP COLUMN year":
+		return !txTableHasColumn(tx, "job", "year")
+	case "ALTER TABLE job DROP COLUMN week":
+		return !txTableHasColumn(tx, "job", "week")
+	case "ALTER TABLE job DROP COLUMN start_date":
+		return !txTableHasColumn(tx, "job", "start_date")
+	case "ALTER TABLE job DROP COLUMN end_date":
+		return !txTableHasColumn(tx, "job", "end_date")
 	default:
 		return false
 	}

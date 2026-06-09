@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // ServerConfig holds server configuration
@@ -37,7 +38,10 @@ type Config struct {
 	DB     DBConfig
 }
 
-var sysConfig *Config
+var (
+	sysConfig *Config
+	configMu  sync.RWMutex
+)
 
 const (
 	defaultPort                  = 8023
@@ -86,9 +90,19 @@ func GetPasswordStr() string {
 
 // GetConfig returns the global config (singleton)
 func GetConfig() *Config {
+	configMu.RLock()
+	cfg := sysConfig
+	configMu.RUnlock()
+	if cfg != nil {
+		return cfg
+	}
+
+	configMu.Lock()
+	defer configMu.Unlock()
 	if sysConfig != nil {
 		return sysConfig
 	}
+
 	passwdStr := GetPasswordStr()
 	dbname := "data/openSync.db"
 
@@ -169,6 +183,8 @@ func GetConfig() *Config {
 
 // SetConfigForTest swaps the process config for tests in other packages.
 func SetConfigForTest(cfg *Config) {
+	configMu.Lock()
+	defer configMu.Unlock()
 	sysConfig = cfg
 }
 
@@ -205,7 +221,12 @@ func UpdateSystemSettings(settings SystemSettings) error {
 	if err := writeConfigFile(nextServer); err != nil {
 		return err
 	}
-	cfg.Server = nextServer
+	configMu.Lock()
+	sysConfig = &Config{
+		DB:     cfg.DB,
+		Server: nextServer,
+	}
+	configMu.Unlock()
 	return nil
 }
 

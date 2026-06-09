@@ -1,8 +1,8 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useStore } from '../stores/useStore';
-import Layout from '../components/Layout';
 
+const Layout = lazy(() => import('../components/Layout'));
 const Login = lazy(() => import('../pages/Login'));
 const Home = lazy(() => import('../pages/Home'));
 const TaskDetail = lazy(() => import('../pages/Home/TaskDetail'));

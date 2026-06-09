@@ -202,6 +202,74 @@ func TestGetJobTaskListAppliesHistoryFilters(t *testing.T) {
 	}
 }
 
+func TestGetJobTaskListFiltersByStatusSet(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE job_task(
+		id integer primary key autoincrement,
+		jobId integer,
+		status integer,
+		runTime integer,
+		createTime integer
+	)`); err != nil {
+		t.Fatalf("create job_task: %v", err)
+	}
+
+	rows := []struct {
+		id     int
+		jobID  int
+		status int
+	}{
+		{101, 1, 0},
+		{102, 1, 1},
+		{103, 1, 2},
+		{104, 1, 7},
+		{105, 1, 8},
+		{201, 2, 2},
+	}
+	for _, row := range rows {
+		if _, err := testDB.Exec(
+			"INSERT INTO job_task(id, jobId, status, runTime, createTime) VALUES (?, ?, ?, ?, ?)",
+			row.id, row.jobID, row.status, row.id, row.id,
+		); err != nil {
+			t.Fatalf("insert job_task %d: %v", row.id, err)
+		}
+	}
+
+	oldDB := db
+	db = testDB
+	defer func() {
+		db = oldDB
+	}()
+
+	result, err := GetJobTaskList(map[string]interface{}{
+		"id":       int64(1),
+		"statusIn": []int{2, 3, 4, 5, 6, 7, 8},
+		"pageSize": "10",
+		"pageNum":  "1",
+	})
+	if err != nil {
+		t.Fatalf("GetJobTaskList() error: %v", err)
+	}
+
+	dataList := result["dataList"].([]map[string]interface{})
+	if gotCount := result["count"]; gotCount != int64(3) {
+		t.Fatalf("count = %v, want 3", gotCount)
+	}
+	if len(dataList) != 3 {
+		t.Fatalf("dataList len = %d, want 3: %#v", len(dataList), dataList)
+	}
+	gotIDs := []int64{dataList[0]["id"].(int64), dataList[1]["id"].(int64), dataList[2]["id"].(int64)}
+	wantIDs := []int64{105, 104, 103}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("matched task ids = %v, want %v", gotIDs, wantIDs)
+	}
+}
+
 func TestUpdateJobTaskStatusAndNumWritesStatusAndTaskNumTogether(t *testing.T) {
 	testDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {

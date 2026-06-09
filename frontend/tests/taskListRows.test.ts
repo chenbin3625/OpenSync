@@ -33,6 +33,21 @@ test('mergeTaskRecords keeps unchanged task row references during refresh', () =
   assert.equal(merged[1], existing[1]);
 });
 
+test('mergeTaskRecords reuses the previous array when refreshed rows are unchanged', () => {
+  const existing: TaskRecord[] = [
+    { id: 1, status: 2, successNum: 10, failNum: 0, allNum: 10, runTime: 100 },
+    { id: 2, status: 3, successNum: 9, failNum: 1, allNum: 10, runTime: 80 },
+  ];
+  const refreshed: TaskRecord[] = [
+    { id: 1, status: 2, successNum: 10, failNum: 0, allNum: 10, runTime: 100 },
+    { id: 2, status: 3, successNum: 9, failNum: 1, allNum: 10, runTime: 80 },
+  ];
+
+  const merged = mergeTaskRecords(existing, refreshed);
+
+  assert.equal(merged, existing);
+});
+
 test('mergeTaskItems keeps unchanged realtime file row references during refresh', () => {
   const existing: TaskItem[] = [
     { id: 10, status: 1, progress: 20, fileName: 'movie.mkv', fileSize: 1024 },
@@ -49,6 +64,21 @@ test('mergeTaskItems keeps unchanged realtime file row references during refresh
   assert.deepEqual(merged[0], refreshed[0]);
   assert.equal(merged[1], existing[1]);
   assert.equal(getTaskItemKey(refreshed[1], 1), 'copy-20');
+});
+
+test('mergeTaskItems reuses the previous array when refreshed rows are unchanged', () => {
+  const existing: TaskItem[] = [
+    { id: 10, status: 1, progress: 35, fileName: 'movie.mkv', fileSize: 1024 },
+    { alistTaskId: 'copy-20', status: 0, progress: 0, fileName: 'photo.jpg', srcPath: '/a', dstPath: '/b' },
+  ];
+  const refreshed: TaskItem[] = [
+    { id: 10, status: 1, progress: 35, fileName: 'movie.mkv', fileSize: 1024 },
+    { alistTaskId: 'copy-20', status: 0, progress: 0, fileName: 'photo.jpg', srcPath: '/a', dstPath: '/b' },
+  ];
+
+  const merged = mergeTaskItems(existing, refreshed);
+
+  assert.equal(merged, existing);
 });
 
 test('filterCurrentTaskFromHistory removes the active running task from history rows', () => {

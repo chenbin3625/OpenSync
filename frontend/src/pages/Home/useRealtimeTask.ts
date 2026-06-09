@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { jobGetTaskCurrent } from '../../api/job';
 import type { CurrentTaskData, CurrentTaskView, PageData, TaskItem } from '../../types';
+import { canPollCurrentDocument } from './pollingVisibility';
 
 function isCurrentTaskData(data: CurrentTaskData | PageData<TaskItem> | TaskItem[] | null): data is CurrentTaskData {
   return !!data && !Array.isArray(data) && 'doingTask' in data && Array.isArray(data.doingTask);
@@ -46,7 +47,7 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
   const requestRef = useRef(0);
 
   const refreshCurrentTask = useCallback(async () => {
-    if (!jobId) return;
+    if (!jobId || !canPollCurrentDocument()) return;
     const requestID = ++requestRef.current;
     try {
       const res = await jobGetTaskCurrent({ id: jobId });
@@ -82,7 +83,9 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
   useEffect(() => {
     if (!currentTask) return undefined;
     const tickID = setInterval(() => {
-      setNowTick(Math.floor(Date.now() / 1000));
+      if (canPollCurrentDocument()) {
+        setNowTick(Math.floor(Date.now() / 1000));
+      }
     }, 1000);
     return () => { clearInterval(tickID); };
   }, [currentTask]);

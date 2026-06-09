@@ -88,6 +88,56 @@ func TestMigrateDBTxAddsJobFileSizeRangeColumns(t *testing.T) {
 	}
 }
 
+func TestMigrateDBTxDropsUnusedCronColumns(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE user_list(
+		id integer primary key autoincrement,
+		userName text,
+		passwd text,
+		sqlVersion integer
+	)`); err != nil {
+		t.Fatalf("create user_list: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO user_list(userName, passwd, sqlVersion) VALUES ('admin', 'x', 260605)"); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	if _, err := testDB.Exec(`CREATE TABLE job(
+		id integer primary key autoincrement,
+		year text DEFAULT NULL,
+		month text DEFAULT NULL,
+		day text DEFAULT NULL,
+		week text DEFAULT NULL,
+		day_of_week text DEFAULT NULL,
+		hour text DEFAULT NULL,
+		minute text DEFAULT NULL,
+		second text DEFAULT NULL,
+		start_date text DEFAULT NULL,
+		end_date text DEFAULT NULL
+	)`); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	if err := migrateDBTx(testDB, 260605); err != nil {
+		t.Fatalf("migrateDBTx() error: %v", err)
+	}
+
+	for _, column := range []string{"year", "week", "start_date", "end_date"} {
+		if tableHasColumn(testDB, "job", column) {
+			t.Fatalf("job table still has unused cron column %q", column)
+		}
+	}
+	for _, column := range []string{"month", "day", "day_of_week", "hour", "minute", "second"} {
+		if !tableHasColumn(testDB, "job", column) {
+			t.Fatalf("job table missing active cron column %q", column)
+		}
+	}
+}
+
 func TestEnsureIndexesCreatesTaskStatusTimeIndex(t *testing.T) {
 	testDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {

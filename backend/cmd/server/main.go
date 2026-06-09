@@ -25,14 +25,13 @@ func errorRecovery() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if r := recover(); r != nil {
-				switch e := r.(type) {
-				case string:
-					c.JSON(http.StatusInternalServerError, model.Error(e))
-				case error:
-					c.JSON(http.StatusInternalServerError, model.Error(e.Error()))
-				default:
-					c.JSON(http.StatusInternalServerError, model.Error(fmt.Sprintf("%v", e)))
+				log.Printf("Recovered panic: %v", r)
+				if err, ok := r.(model.PublicError); ok {
+					c.JSON(http.StatusInternalServerError, model.Error(err.Error()))
+					c.Abort()
+					return
 				}
+				c.JSON(http.StatusInternalServerError, model.Error("internal server error"))
 				c.Abort()
 			}
 		}()

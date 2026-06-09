@@ -13,7 +13,16 @@ const methodNames: Record<number, string> = {
   0: '自定义Webhook', 1: 'Server酱', 2: '钉钉', 3: '企业微信', 4: 'Lark (飞书)',
 };
 
-type NotifyParams = Record<string, string | number | boolean | null | undefined>;
+type NotifyParamValue = string | number | boolean | Record<string, unknown> | null | undefined;
+type NotifyParams = Record<string, NotifyParamValue>;
+
+const notifyParamKeysByMethod: Record<number, Array<keyof NotifyFormValues>> = {
+  0: ['url', 'httpMethod', 'contentType', 'needContent', 'titleName', 'contentName', 'body', 'headers', 'notSendNull'],
+  1: ['sendKey', 'version', 'notSendNull'],
+  2: ['url', 'webhook', 'notSendNull'],
+  3: ['corpid', 'corpId', 'corpsecret', 'corpSecret', 'agentid', 'agentId', 'touser', 'toUser', 'notSendNull'],
+  4: ['url', 'webhook', 'notSendNull'],
+};
 
 const asNotifyParams = (value: unknown): NotifyParams => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -27,11 +36,72 @@ const paramString = (params: NotifyParams, key: string): string => {
   return value === undefined || value === null ? '' : String(value);
 };
 
-const paramsFromValues = (values: NotifyFormValues): NotifyParams => {
-  const params: NotifyParams = { ...values };
-  delete params.method;
-  delete params.enable;
-  return params;
+const jsonObjectString = (value: unknown): string => {
+  if (typeof value === 'string') {
+    try {
+      const parsed = parseOptionalJsonObject(value);
+      return parsed ? JSON.stringify(parsed, null, 2) : '';
+    } catch {
+      return value;
+    }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return '';
+  }
+  return JSON.stringify(value, null, 2);
+};
+
+const parseOptionalJsonObject = (value: unknown): Record<string, unknown> | undefined => {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  const text = String(value).trim();
+  if (!text) return undefined;
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('JSON 必须是对象');
+  }
+  return parsed as Record<string, unknown>;
+};
+
+const jsonObjectRule = {
+  validator(_: unknown, value: string | undefined) {
+    try {
+      parseOptionalJsonObject(value);
+      return Promise.resolve();
+    } catch {
+      return Promise.reject(new Error('请输入有效 JSON 对象'));
+    }
+  },
+};
+
+const pickNotifyParams = (method: number, params: NotifyParams): NotifyParams => {
+  const picked: NotifyParams = {};
+  notifyParamKeysByMethod[method]?.forEach((key) => {
+    const value = params[key];
+    if (value !== undefined && value !== null && value !== '') {
+      picked[key] = value;
+    }
+  });
+  return picked;
+};
+
+const getNotifyParamsFromValues = (values: NotifyFormValues): NotifyParams => {
+  const params = pickNotifyParams(values.method, values as unknown as NotifyParams);
+  return normalizeNotifyParams(values.method, params);
+};
+
+const getNotifyFormParams = (method: number, params: NotifyParams): NotifyParams => {
+  const normalized = normalizeNotifyParams(method, params);
+  const formParams = pickNotifyParams(method, normalized);
+  if (method === 0) {
+    formParams.httpMethod = paramString(normalized, 'method');
+    formParams.body = jsonObjectString(normalized.body);
+    formParams.headers = jsonObjectString(normalized.headers);
+  }
+  if (method === 2 || method === 4) {
+    formParams.url = paramString(normalized, 'url');
+  }
+  return formParams;
 };
 
 const normalizeNotifyParams = (method: number, params: NotifyParams): NotifyParams => {
@@ -42,6 +112,18 @@ const normalizeNotifyParams = (method: number, params: NotifyParams): NotifyPara
     normalized.needContent = normalized.needContent ?? true;
     normalized.titleName = normalized.titleName || 'title';
     normalized.contentName = normalized.contentName || 'content';
+    const body = parseOptionalJsonObject(normalized.body);
+    const headers = parseOptionalJsonObject(normalized.headers);
+    if (body) {
+      normalized.body = JSON.stringify(body);
+    } else {
+      delete normalized.body;
+    }
+    if (headers) {
+      normalized.headers = headers;
+    } else {
+      delete normalized.headers;
+    }
     delete normalized.httpMethod;
   }
   if (method === 2 || method === 4) {
@@ -93,10 +175,8 @@ export default function Notify() {
     setEditingItem(item);
     let params: NotifyParams = {};
     try { params = asNotifyParams(JSON.parse(item.params || '{}')); } catch { /* ignore */ }
-    params = normalizeNotifyParams(item.method, params);
-    if (item.method === 0) {
-      params.httpMethod = paramString(params, 'method');
-    }
+    params = getNotifyFormParams(item.method, params);
+    form.resetFields();
     form.setFieldsValue({ ...params, method: item.method, enable: item.enable === 1 });
     setMethod(item.method);
     setModalVisible(true);
@@ -122,8 +202,7 @@ export default function Notify() {
     try {
       const values = await form.validateFields() as NotifyFormValues;
       const m = values.method;
-      const params = paramsFromValues(values);
-      await notifyPost({ notify: { method: m, params: JSON.stringify(normalizeNotifyParams(m, params)) } });
+      await notifyPost({ notify: { method: m, params: JSON.stringify(getNotifyParamsFromValues(values)) } });
       message.success('测试消息已发送');
     } catch { /* ignore */ }
   };
@@ -132,12 +211,11 @@ export default function Notify() {
     try {
       const values = await form.validateFields() as NotifyFormValues;
       const m = values.method;
-      const params = paramsFromValues(values);
       const notifyData = {
         ...(editingItem ? { id: editingItem.id } : {}),
         enable: values.enable ? 1 : 0,
         method: m,
-        params: JSON.stringify(normalizeNotifyParams(m, params)),
+        params: JSON.stringify(getNotifyParamsFromValues(values)),
       };
       if (editingItem) {
         await notifyPut({ notify: notifyData });
@@ -178,6 +256,13 @@ export default function Notify() {
     }
   };
 
+  const handleMethodChange = (nextMethod: number) => {
+    const enable = form.getFieldValue('enable') ?? true;
+    form.resetFields();
+    form.setFieldsValue({ method: nextMethod, enable });
+    setMethod(nextMethod);
+  };
+
   const renderMethodFields = () => {
     switch (method) {
       case 0:
@@ -191,6 +276,12 @@ export default function Notify() {
             <Form.Item name="needContent" hidden initialValue={true}><Input /></Form.Item>
             <Form.Item name="titleName" hidden initialValue="title"><Input /></Form.Item>
             <Form.Item name="contentName" hidden initialValue="content"><Input /></Form.Item>
+            <Form.Item name="body" label="请求体模板" rules={[jsonObjectRule]}>
+              <Input.TextArea rows={5} placeholder={'{\n  "title": "{title}",\n  "content": "{content}"\n}'} />
+            </Form.Item>
+            <Form.Item name="headers" label="请求头 JSON" rules={[jsonObjectRule]}>
+              <Input.TextArea rows={4} placeholder={'{\n  "Authorization": "Bearer token"\n}'} />
+            </Form.Item>
             <Form.Item name="notSendNull" label="无需同步时不发送" valuePropName="checked"><Switch /></Form.Item>
           </>
         );
@@ -333,7 +424,7 @@ export default function Notify() {
       >
         <Form form={form} layout="vertical">
           <Form.Item name="method" label="通知方式" rules={[{ required: true }]}>
-            <Select onChange={(v) => setMethod(v)} options={Object.entries(methodNames).map(([k, v]) => ({ value: Number(k), label: v }))} />
+            <Select onChange={handleMethodChange} options={Object.entries(methodNames).map(([k, v]) => ({ value: Number(k), label: v }))} />
           </Form.Item>
           <Form.Item name="enable" label="启用" valuePropName="checked"><Switch /></Form.Item>
           {renderMethodFields()}

@@ -18,6 +18,7 @@ import {
 } from './taskRows';
 import { useRealtimeTask } from './useRealtimeTask';
 import { useRealtimeTaskItems } from './useRealtimeTaskItems';
+import { canPollCurrentDocument } from './pollingVisibility';
 
 const { Text } = Typography;
 
@@ -64,6 +65,7 @@ const historyStatusOptions = [2, 3, 4, 5, 6, 7, 8].map((value) => ({
   value,
   label: statusNames[value],
 }));
+const historyCompletedStatuses = [2, 3, 4, 5, 6, 7, 8];
 type HistoryTimeRange = [Dayjs | null, Dayjs | null] | null;
 
 /** 实时任务 Tab 状态定义 */
@@ -371,7 +373,11 @@ export default function TaskList({
     if (showLoading) setLoading(true);
     try {
       const params: Record<string, unknown> = { id: jobId, pageSize, pageNum: page };
-      if (historyStatusFilter !== undefined) params.status = historyStatusFilter;
+      if (historyStatusFilter !== undefined) {
+        params.status = historyStatusFilter;
+      } else {
+        params.statusIn = historyCompletedStatuses;
+      }
       if (historyKeywordFilter.trim()) params.keyword = historyKeywordFilter.trim();
       if (historyTimeRange?.[0]) params.startTime = historyTimeRange[0].startOf('day').unix();
       if (historyTimeRange?.[1]) params.endTime = historyTimeRange[1].endOf('day').unix();
@@ -398,18 +404,20 @@ export default function TaskList({
   }, [fetchList, showHistory]);
   useEffect(() => {
     if (!showHistory) return undefined;
-    const pollID = setInterval(() => fetchList(false), 3000);
+    const pollID = setInterval(() => {
+      if (canPollCurrentDocument()) fetchList(false);
+    }, 3000);
     return () => { clearInterval(pollID); };
   }, [fetchList, showHistory]);
-  const handleDeleteTask = async (taskId: number) => {
+  const handleDeleteTask = useCallback(async (taskId: number) => {
     try {
       await jobDeleteTask(taskId);
       message.success('删除成功');
       fetchList(false);
     } catch { /* ignore */ }
-  };
+  }, [fetchList, message]);
 
-  const handleTaskAction = async (
+  const handleTaskAction = useCallback(async (
     taskId: number,
     action: 'pause' | 'resume' | 'restart' | 'retryFailed',
     successText: string,
@@ -420,7 +428,7 @@ export default function TaskList({
       fetchList(false);
       refreshCurrentTask();
     } catch { /* ignore */ }
-  };
+  }, [fetchList, message, refreshCurrentTask]);
 
   const handleHistoryKeywordSearch = (value: string) => {
     setHistoryKeywordFilter(value.trim());
@@ -440,7 +448,7 @@ export default function TaskList({
     !!historyTimeRange?.[0] ||
     !!historyTimeRange?.[1];
 
-  const columns = [
+  const columns = useMemo(() => [
     {
       title: '状态', dataIndex: 'status', key: 'status', width: 100,
       render: (s: number) => <Tag color={statusColors[s]}>{statusNames[s] || s}</Tag>,
@@ -507,7 +515,7 @@ export default function TaskList({
         </Space>
       ),
     },
-  ];
+  ], [handleDeleteTask, handleTaskAction, onTaskDetail]);
 
   const historyList = useMemo(
     () => showRealtime ? filterCurrentTaskFromHistory(list, currentTask) : filterRunningTaskRows(list),
@@ -519,7 +527,7 @@ export default function TaskList({
   const displayDuration = currentTask
     ? Math.max(currentTask.duration || 0, currentTask.createTime ? nowTick - currentTask.createTime : 0)
     : 0;
-  const progressMetrics = currentTask ? [
+  const progressMetrics = useMemo<ProgressMetric[]>(() => currentTask ? [
     {
       key: 'duration',
       label: '耗时',
@@ -553,7 +561,7 @@ export default function TaskList({
       label: '剩余',
       value: formatSize(currentTask.remainSize || 0),
     },
-  ] : [];
+  ] : [], [currentTask, displayDuration]);
 
   const realtimeContent = currentTask ? (
     <RealtimeTaskCard

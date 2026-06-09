@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Table, Tag, Button, Space, Select, Progress, Empty, Typography, Card, Tooltip, Input } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -140,7 +140,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const columns = [
+  const columns = useMemo(() => [
     {
       title: '文件名/目录',
       dataIndex: 'fileName',
@@ -241,7 +241,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       width: 90,
       render: (val: number | string | undefined) => displayText(val),
     },
-  ];
+  ], []);
 
   const handleKeywordSearch = (value: string) => {
     setKeywordFilter(value.trim());

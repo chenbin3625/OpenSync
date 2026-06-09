@@ -34,16 +34,12 @@ type Job struct {
 	Method        int    `json:"method" db:"method"`
 	Interval      int    `json:"interval" db:"interval"`
 	IsCron        int    `json:"isCron" db:"isCron"`
-	Year          string `json:"year" db:"year"`
 	Month         string `json:"month" db:"month"`
 	Day           string `json:"day" db:"day"`
-	Week          string `json:"week" db:"week"`
 	DayOfWeek     string `json:"day_of_week" db:"day_of_week"`
 	Hour          string `json:"hour" db:"hour"`
 	Minute        string `json:"minute" db:"minute"`
 	Second        string `json:"second" db:"second"`
-	StartDate     string `json:"start_date" db:"start_date"`
-	EndDate       string `json:"end_date" db:"end_date"`
 	Exclude       string `json:"exclude" db:"exclude"`
 	MinFileSize   int64  `json:"minFileSize" db:"minFileSize"`
 	MaxFileSize   int64  `json:"maxFileSize" db:"maxFileSize"`
@@ -92,6 +88,13 @@ type Response struct {
 	Code int         `json:"code"`
 	Data interface{} `json:"data"`
 	Msg  string      `json:"msg"`
+}
+
+// PublicError is a panic payload that is safe to return to API clients.
+type PublicError string
+
+func (e PublicError) Error() string {
+	return string(e)
 }
 
 // PageResult is the paginated result

@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"opensync/internal/model"
 	"strings"
 )
 
@@ -47,4 +48,8 @@ func toFloat64(v interface{}) float64 {
 	default:
 		return 0
 	}
+}
+
+func panicPublic(msg string) {
+	panic(model.PublicError(msg))
 }

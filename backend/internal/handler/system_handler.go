@@ -23,7 +23,7 @@ func Login(c *gin.Context) {
 		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
 		return
 	}
-	user := service.CheckPwd(0, req.Passwd, req.UserName)
+	user := service.CheckPwdScoped(0, req.Passwd, req.UserName, c.ClientIP())
 	middleware.SetAuthCookie(c, user)
 	// Return user info without passwd and sqlVersion
 	userReturn := map[string]interface{}{
@@ -46,6 +46,7 @@ func ResetPassword(c *gin.Context) {
 		return
 	}
 	result := service.ResetPasswd(req.UserName, req.Key, req.Passwd)
+	middleware.ClearAuthUserCache()
 	if result != "" {
 		c.JSON(http.StatusOK, model.Success(result))
 	} else {
@@ -79,6 +80,7 @@ func EditPassword(c *gin.Context) {
 	userMap := user.(map[string]interface{})
 	userID := userMap["id"].(int64)
 	service.EditPasswd(userID, req.Passwd, req.OldPasswd)
+	middleware.ClearAuthUserCache()
 	c.JSON(http.StatusOK, model.Success(nil))
 }
 
@@ -98,6 +100,7 @@ func UpdateSystemConfig(c *gin.Context) {
 		c.JSON(http.StatusOK, model.Error(err.Error()))
 		return
 	}
+	middleware.InitSecureCookie()
 	service.CleanupExpiredTasks(log.Default(), req.TaskSave, time.Now())
 	c.JSON(http.StatusOK, model.Success(config.GetSystemSettings()))
 }

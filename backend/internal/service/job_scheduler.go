@@ -127,7 +127,7 @@ func (s *Scheduler) Stop() {
 }
 
 // buildCronSpec builds a cron expression from job data
-// Format: second minute hour day month dayOfWeek year (robfig/cron with seconds)
+// Format: second minute hour day month dayOfWeek (robfig/cron with seconds)
 func buildCronSpec(jobData map[string]interface{}) string {
 	fields := []string{"second", "minute", "hour", "day", "month", "day_of_week"}
 	parts := make([]string, 6)

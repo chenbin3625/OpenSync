@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Key } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -311,6 +311,7 @@ export default function Home() {
   const [srcLoadedKeys, setSrcLoadedKeys] = useState<Key[]>([]);
   const [dstLoadedKeys, setDstLoadedKeys] = useState<Key[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
+  const treeLoadRequestRef = useRef(0);
 
   const fetchList = useCallback(async (p = page, ps = pageSize) => {
     setLoading(true);
@@ -395,32 +396,42 @@ export default function Home() {
   // Load root when engine changes
   useEffect(() => {
     if (selectedAlistId) {
+      const requestID = ++treeLoadRequestRef.current;
       setTreeLoading(true);
       setSrcLoadedKeys([]);
       setDstLoadedKeys([]);
       fetchDirChildren(selectedAlistId, '/').then((nodes) => {
+        if (requestID !== treeLoadRequestRef.current) return;
         const root = [{ title: '/', value: '/', key: '/', children: nodes }];
         setSrcTreeData(root);
         setDstTreeData(JSON.parse(JSON.stringify(root)));
       }).finally(() => {
-        setTreeLoading(false);
+        if (requestID === treeLoadRequestRef.current) setTreeLoading(false);
       });
     } else {
+      treeLoadRequestRef.current += 1;
       setSrcTreeData([]);
       setDstTreeData([]);
+      setTreeLoading(false);
     }
   }, [selectedAlistId, fetchDirChildren]);
 
   const onLoadSrcData = async (node: TreeNode) => {
     if (!selectedAlistId || srcLoadedKeys.includes(node.value)) return;
-    const children = await fetchDirChildren(selectedAlistId, node.value);
+    const alistId = selectedAlistId;
+    const requestID = treeLoadRequestRef.current;
+    const children = await fetchDirChildren(alistId, node.value);
+    if (requestID !== treeLoadRequestRef.current || selectedAlistId !== alistId) return;
     setSrcTreeData((prev) => updateTreeChildren(prev, node.value, children));
     setSrcLoadedKeys((prev) => [...prev, node.value]);
   };
 
   const onLoadDstData = async (node: TreeNode) => {
     if (!selectedAlistId || dstLoadedKeys.includes(node.value)) return;
-    const children = await fetchDirChildren(selectedAlistId, node.value);
+    const alistId = selectedAlistId;
+    const requestID = treeLoadRequestRef.current;
+    const children = await fetchDirChildren(alistId, node.value);
+    if (requestID !== treeLoadRequestRef.current || selectedAlistId !== alistId) return;
     setDstTreeData((prev) => updateTreeChildren(prev, node.value, children));
     setDstLoadedKeys((prev) => [...prev, node.value]);
   };

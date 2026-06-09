@@ -52,14 +52,14 @@ func GetJobByTaskID(taskID int64) (map[string]interface{}, error) {
 func AddJob(job map[string]interface{}) (int64, error) {
 	return ExecuteInsert(
 		`INSERT INTO job (enable, remark, srcPath, dstPath, alistId, useCacheT, scanIntervalT, useCacheS, scanIntervalS,
-		 method, interval, isCron, year, month, day, week, day_of_week, hour, minute, second, start_date, end_date, exclude,
+		 method, interval, isCron, month, day, day_of_week, hour, minute, second, exclude,
 		 minFileSize, maxFileSize)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job["enable"], job["remark"], job["srcPath"], job["dstPath"], job["alistId"],
 		job["useCacheT"], job["scanIntervalT"], job["useCacheS"], job["scanIntervalS"],
 		job["method"], job["interval"], job["isCron"],
-		job["year"], job["month"], job["day"], job["week"], job["day_of_week"],
-		job["hour"], job["minute"], job["second"], job["start_date"], job["end_date"], job["exclude"],
+		job["month"], job["day"], job["day_of_week"],
+		job["hour"], job["minute"], job["second"], job["exclude"],
 		job["minFileSize"], job["maxFileSize"],
 	)
 }
@@ -68,13 +68,13 @@ func AddJob(job map[string]interface{}) (int64, error) {
 func UpdateJob(job map[string]interface{}) error {
 	return ExecuteUpdate(
 		`UPDATE job SET enable=?, remark=?, srcPath=?, dstPath=?, alistId=?, useCacheT=?, scanIntervalT=?,
-		 useCacheS=?, scanIntervalS=?, method=?, interval=?, isCron=?, year=?, month=?, day=?, week=?,
-		 day_of_week=?, hour=?, minute=?, second=?, start_date=?, end_date=?, exclude=?, minFileSize=?, maxFileSize=? WHERE id=?`,
+		 useCacheS=?, scanIntervalS=?, method=?, interval=?, isCron=?, month=?, day=?,
+		 day_of_week=?, hour=?, minute=?, second=?, exclude=?, minFileSize=?, maxFileSize=? WHERE id=?`,
 		job["enable"], job["remark"], job["srcPath"], job["dstPath"], job["alistId"],
 		job["useCacheT"], job["scanIntervalT"], job["useCacheS"], job["scanIntervalS"],
 		job["method"], job["interval"], job["isCron"],
-		job["year"], job["month"], job["day"], job["week"], job["day_of_week"],
-		job["hour"], job["minute"], job["second"], job["start_date"], job["end_date"], job["exclude"],
+		job["month"], job["day"], job["day_of_week"],
+		job["hour"], job["minute"], job["second"], job["exclude"],
 		job["minFileSize"], job["maxFileSize"],
 		job["id"],
 	)
@@ -112,6 +112,10 @@ func GetJobTaskList(params map[string]interface{}) (map[string]interface{}, erro
 	if status, ok := params["status"]; ok {
 		where += " AND status=?"
 		args = append(args, toInt(status))
+	} else if statuses := parseStatusList(params["statusIn"]); len(statuses) > 0 {
+		clause, statusArgs := statusInClause(statuses)
+		where += fmt.Sprintf(" AND status IN (%s)", clause)
+		args = append(args, statusArgs...)
 	}
 	if startTime, ok := params["startTime"]; ok {
 		start := toInt(startTime)
@@ -137,6 +141,42 @@ func GetJobTaskList(params map[string]interface{}) (map[string]interface{}, erro
 
 	baseSQL := fmt.Sprintf("SELECT * FROM job_task %s ORDER BY createTime DESC", where)
 	return FetchAllToPage(baseSQL, params, args...)
+}
+
+func parseStatusList(value interface{}) []int {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case []int:
+		return v
+	case []string:
+		statuses := make([]int, 0, len(v))
+		for _, item := range v {
+			if strings.TrimSpace(item) == "" {
+				continue
+			}
+			statuses = append(statuses, toInt(item))
+		}
+		return statuses
+	case []interface{}:
+		statuses := make([]int, 0, len(v))
+		for _, item := range v {
+			statuses = append(statuses, toInt(item))
+		}
+		return statuses
+	case string:
+		parts := strings.Split(v, ",")
+		statuses := make([]int, 0, len(parts))
+		for _, item := range parts {
+			if strings.TrimSpace(item) == "" {
+				continue
+			}
+			statuses = append(statuses, toInt(item))
+		}
+		return statuses
+	default:
+		return []int{toInt(v)}
+	}
 }
 
 // GetJobTaskByID gets task by ID

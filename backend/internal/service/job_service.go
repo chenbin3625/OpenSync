@@ -115,14 +115,14 @@ func CleanJobInput(job map[string]interface{}) {
 func normalizeJobFileSizeRange(job map[string]interface{}) {
 	minSize, err := nonNegativeFileSize(job["minFileSize"])
 	if err != nil {
-		panic("最小文件大小必须是大于等于0的整数")
+		panicPublic("最小文件大小必须是大于等于0的整数")
 	}
 	maxSize, err := nonNegativeFileSize(job["maxFileSize"])
 	if err != nil {
-		panic("最大文件大小必须是大于等于0的整数")
+		panicPublic("最大文件大小必须是大于等于0的整数")
 	}
 	if maxSize > 0 && minSize > maxSize {
-		panic("最小文件大小不能大于最大文件大小")
+		panicPublic("最小文件大小不能大于最大文件大小")
 	}
 	job["minFileSize"] = minSize
 	job["maxFileSize"] = maxSize
@@ -198,7 +198,7 @@ func EditJobClient(job map[string]interface{}) {
 func DoAllJobManual() {
 	jobList, err := mapper.GetEnableJobList()
 	if err != nil || len(jobList) == 0 {
-		panic(i18n.G("no_job_for_run"))
+		panicPublic(i18n.G("no_job_for_run"))
 	}
 	for _, jobItem := range jobList {
 		client := GetJobClientByID(toInt64(jobItem["id"]))
@@ -212,7 +212,7 @@ func DoAllJobManual() {
 func DoJobManual(jobID int64) {
 	client := GetJobClientByID(jobID)
 	if !client.enabled() {
-		panic(i18n.G("disabled_job_cannot_run"))
+		panicPublic(i18n.G("disabled_job_cannot_run"))
 	}
 	client.DoManual()
 }
@@ -221,11 +221,11 @@ func DoJobManual(jobID int64) {
 func RemoveJobClient(jobID int64) {
 	client := GetJobClientByID(jobID)
 	if client.isBusy() {
-		panic(i18n.G("job_running_cannot_delete"))
+		panicPublic(i18n.G("job_running_cannot_delete"))
 	}
 	client.StopJob(true)
 	if !client.waitUntilIdle(2 * time.Minute) {
-		panic(i18n.G("job_delete_wait_timeout"))
+		panicPublic(i18n.G("job_delete_wait_timeout"))
 	}
 	if err := mapper.DeleteJob(jobID); err != nil {
 		panic(err.Error())
@@ -245,7 +245,7 @@ func ContinueJob(jobID int64) {
 func PauseJob(jobID int64) {
 	client := GetJobClientByID(jobID)
 	if toInt(client.Job["isCron"]) == 2 {
-		panic(i18n.G("cannot_disable_manual_job"))
+		panicPublic(i18n.G("cannot_disable_manual_job"))
 	}
 	client.StopJob(false)
 }
@@ -265,7 +265,7 @@ func PauseTask(taskID int64) {
 	client := GetJobClientByID(toInt64(job["id"]))
 	task := client.currentTask()
 	if task == nil || task.TaskID != taskID {
-		panic(i18n.G("task_not_running"))
+		panicPublic(i18n.G("task_not_running"))
 	}
 	task.requestBreak()
 }
@@ -282,7 +282,7 @@ func ResumeTask(taskID int64) {
 	}
 	client := GetJobClientByID(toInt64(job["id"]))
 	if !client.enabled() {
-		panic(i18n.G("disabled_job_cannot_run"))
+		panicPublic(i18n.G("disabled_job_cannot_run"))
 	}
 	if resumeNeedsFullScan(task) {
 		client.DoManual()
@@ -293,7 +293,7 @@ func ResumeTask(taskID int64) {
 		panic(err.Error())
 	}
 	if count == 0 {
-		panic(i18n.G("no_resumable_task_items"))
+		panicPublic(i18n.G("no_resumable_task_items"))
 	}
 	client.DoResumeTaskItems(taskID)
 }
@@ -306,7 +306,7 @@ func RestartTask(taskID int64) {
 	}
 	client := GetJobClientByID(toInt64(job["id"]))
 	if !client.enabled() {
-		panic(i18n.G("disabled_job_cannot_run"))
+		panicPublic(i18n.G("disabled_job_cannot_run"))
 	}
 	client.DoManual()
 }
@@ -319,14 +319,14 @@ func RetryFailedTask(taskID int64) {
 	}
 	client := GetJobClientByID(toInt64(job["id"]))
 	if !client.enabled() {
-		panic(i18n.G("disabled_job_cannot_run"))
+		panicPublic(i18n.G("disabled_job_cannot_run"))
 	}
 	count, err := countJobTaskItemsByStatuses(taskID, taskStatusValues(taskStatusFailed))
 	if err != nil {
 		panic(err.Error())
 	}
 	if count == 0 {
-		panic(i18n.G("no_failed_task_items"))
+		panicPublic(i18n.G("no_failed_task_items"))
 	}
 	client.DoRetryTaskItems(taskID)
 }

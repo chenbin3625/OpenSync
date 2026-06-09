@@ -1,6 +1,12 @@
 package mapper
 
-import "testing"
+import (
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"opensync/internal/config"
+)
 
 func TestParsePageParamsRejectsInvalidValues(t *testing.T) {
 	cases := []map[string]interface{}{
@@ -44,5 +50,30 @@ func TestParsePageParamsAllowsUnpaginatedRequests(t *testing.T) {
 	}
 	if ok {
 		t.Fatalf("parsePageParams(empty) ok = true, want false")
+	}
+}
+
+func TestInitDBAllowsConcurrentReadConnections(t *testing.T) {
+	oldDB := db
+	oldOnce := once
+	oldConfig := config.GetConfig()
+	t.Cleanup(func() {
+		if db != nil && db != oldDB {
+			_ = db.Close()
+		}
+		db = oldDB
+		once = oldOnce
+		config.SetConfigForTest(oldConfig)
+	})
+
+	db = nil
+	once = sync.Once{}
+	config.SetConfigForTest(&config.Config{
+		DB: config.DBConfig{DBName: filepath.Join(t.TempDir(), "opensync.db")},
+	})
+
+	testDB := InitDB()
+	if maxOpen := testDB.Stats().MaxOpenConnections; maxOpen <= 1 {
+		t.Fatalf("MaxOpenConnections = %d, want more than one read-capable connection", maxOpen)
 	}
 }
