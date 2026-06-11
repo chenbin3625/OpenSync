@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"opensync/internal/config"
 	"opensync/internal/i18n"
+	"opensync/pkg/util"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,8 +38,12 @@ func InitDB() *sql.DB {
 		db.SetMaxIdleConns(sqliteMaxOpenConns)
 		// Keep explicit PRAGMAs as a startup sanity pass; sqliteDSN applies
 		// them to each new pooled connection.
-		db.Exec("PRAGMA journal_mode=WAL")
-		db.Exec("PRAGMA busy_timeout=5000")
+		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+			log.Printf("Failed to set sqlite journal_mode: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+			log.Printf("Failed to set sqlite busy_timeout: %v", err)
+		}
 	})
 	return db
 }
@@ -196,7 +201,7 @@ func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...in
 
 	return map[string]interface{}{
 		"dataList": dataList,
-		"count":    toInt64(count),
+		"count":    util.ToInt64(count),
 	}, nil
 }
 
@@ -251,42 +256,15 @@ func positiveInt(v interface{}) (int, error) {
 	return int(n), nil
 }
 
-func toInt(v interface{}) int {
-	switch val := v.(type) {
-	case int:
-		return val
-	case int64:
-		return int(val)
-	case float64:
-		return int(val)
-	case string:
-		var i int
-		fmt.Sscanf(val, "%d", &i)
-		return i
-	default:
-		return 0
-	}
-}
-
-func toInt64(v interface{}) int64 {
-	switch val := v.(type) {
-	case int64:
-		return val
-	case int:
-		return int64(val)
-	case float64:
-		return int64(val)
-	default:
-		return 0
-	}
-}
-
 // CheckAndAddSQL builds dynamic update SQL from params
 func CheckAndAddSQL(baseSQL string, params []string, data map[string]interface{}) (string, []interface{}, error) {
 	var setClauses []string
 	var args []interface{}
 	flag := 0
 	for _, item := range params {
+		if !isSafeSQLIdentifier(item) {
+			return "", nil, errors.New(i18n.G("lost_part"))
+		}
 		if v, ok := data[item]; ok {
 			setClauses = append(setClauses, fmt.Sprintf("%s=?", item))
 			args = append(args, v)
@@ -299,20 +277,25 @@ func CheckAndAddSQL(baseSQL string, params []string, data map[string]interface{}
 	if _, ok := data["id"]; !ok {
 		return "", nil, errors.New(i18n.G("lost_part"))
 	}
-	sql := baseSQL + " " + joinStrings(setClauses, ", ") + " WHERE id=?"
+	sql := baseSQL + " " + strings.Join(setClauses, ", ") + " WHERE id=?"
 	args = append(args, data["id"])
 	return sql, args, nil
 }
 
-func joinStrings(strs []string, sep string) string {
-	result := ""
-	for i, s := range strs {
-		if i > 0 {
-			result += sep
-		}
-		result += s
+func isSafeSQLIdentifier(name string) bool {
+	if name == "" {
+		return false
 	}
-	return result
+	for i, r := range name {
+		if r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func stripOrderBy(sql string) string {

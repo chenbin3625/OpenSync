@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+const maxNotifyResponseBytes = 1 << 20 // 1MB
+
 var notifyHTTPClient = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
@@ -99,7 +101,7 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 
 	needNotSync := false
 	if status == 2 {
-		allNum := toInt(taskNum["allNum"])
+		allNum := util.ToInt(taskNum["allNum"])
 		if allNum == 0 {
 			needNotSync = true
 			statusName = statusNames[8]
@@ -116,9 +118,9 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 
 	title := fmt.Sprintf("OpenSync - %s", statusName)
 
-	successNum := toInt(taskNum["successNum"])
-	failNum := toInt(taskNum["failNum"])
-	allNum := toInt(taskNum["allNum"])
+	successNum := util.ToInt(taskNum["successNum"])
+	failNum := util.ToInt(taskNum["failNum"])
+	allNum := util.ToInt(taskNum["allNum"])
 	srcPath := strings.Join(parseSrcPaths(job["srcPath"]), "、")
 	dstPath := strings.Join(parseDstPaths(job["dstPath"]), "、")
 
@@ -128,7 +130,7 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 	if createTime > 0 && duration > 0 {
 		hours, minutes, seconds := util.ConvertSeconds(duration)
 		durationText := fmt.Sprintf("%dh %dm %ds", hours, minutes, seconds)
-		sumSize := toInt64Val(taskNum["sumSize"])
+		sumSize := util.ToInt64(taskNum["sumSize"])
 		content += fmt.Sprintf(" | Duration: %s | Size: %s", durationText, util.ConvertBytes(sumSize))
 	}
 
@@ -158,12 +160,12 @@ func sendNotify(notify map[string]interface{}, title, content string, needNotSyn
 		panic(err.Error())
 	}
 
-	method := toInt(notify["method"])
+	method := util.ToInt(notify["method"])
 
 	// Check notSendNull flag
 	if needNotSync {
 		if v, ok := params["notSendNull"]; ok {
-			if toBool(v) {
+			if util.ToBool(v) {
 				return
 			}
 		}
@@ -223,7 +225,7 @@ func sendNotifyRequest(client *http.Client, req *http.Request) {
 		panic(err.Error())
 	}
 	defer resp.Body.Close()
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := readAllWithLimit(resp.Body, maxNotifyResponseBytes)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -256,7 +258,7 @@ func sendWebhook(client *http.Client, params map[string]interface{}, title, cont
 	}
 	needContent := true
 	if v, ok := params["needContent"]; ok {
-		needContent = toBool(v)
+		needContent = util.ToBool(v)
 	}
 
 	body := map[string]interface{}{
@@ -267,8 +269,8 @@ func sendWebhook(client *http.Client, params map[string]interface{}, title, cont
 	}
 	if customBody, ok := params["body"]; ok && customBody != nil {
 		bodyStr := fmt.Sprintf("%v", customBody)
-		bodyStr = strings.ReplaceAll(bodyStr, "{title}", title)
-		bodyStr = strings.ReplaceAll(bodyStr, "{content}", content)
+		bodyStr = strings.ReplaceAll(bodyStr, "{title}", jsonStringContent(title))
+		bodyStr = strings.ReplaceAll(bodyStr, "{content}", jsonStringContent(content))
 		body = nil
 		if err := json.Unmarshal([]byte(bodyStr), &body); err != nil {
 			panic(err.Error())
@@ -316,6 +318,18 @@ func sendWebhook(client *http.Client, params map[string]interface{}, title, cont
 	}
 
 	sendNotifyRequest(client, req)
+}
+
+func jsonStringContent(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	encodedStr := string(encoded)
+	if len(encodedStr) < 2 {
+		return encodedStr
+	}
+	return encodedStr[1 : len(encodedStr)-1]
 }
 
 func sendServerChan(client *http.Client, params map[string]interface{}, title, content string) {
@@ -459,21 +473,4 @@ func paramString(params map[string]interface{}, keys ...string) string {
 		}
 	}
 	return ""
-}
-
-func toBool(v interface{}) bool {
-	switch val := v.(type) {
-	case bool:
-		return val
-	case int:
-		return val != 0
-	case int64:
-		return val != 0
-	case float64:
-		return val != 0
-	case string:
-		return val == "1" || strings.EqualFold(val, "true")
-	default:
-		return false
-	}
 }

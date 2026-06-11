@@ -4,7 +4,16 @@ import zhCN from 'antd/locale/zh_CN';
 import AppRouter from './router';
 import { getUser } from './api/user';
 import { useStore } from './stores/useStore';
+import { setMessageInstance } from './api/messageHolder';
 import './index.css';
+
+function MessageInitializer() {
+  const { message } = AntApp.useApp();
+  useEffect(() => {
+    setMessageInstance(message);
+  }, [message]);
+  return null;
+}
 
 function App() {
   const themeMode = useStore((s) => s.theme);
@@ -72,6 +81,7 @@ function App() {
       }}
     >
       <AntApp>
+        <MessageInitializer />
         <AppRouter />
       </AntApp>
     </ConfigProvider>

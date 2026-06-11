@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import './Home.css';
 import { Table, Tag, Button, Space, Select, Progress, Empty, Typography, Card, Tooltip, Input } from 'antd';
 import { ArrowLeftOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -310,6 +311,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
 
       {list.length === 0 && !loading ? (
         <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
           description={<Text type="secondary">暂无文件详情记录</Text>}
         />
       ) : (

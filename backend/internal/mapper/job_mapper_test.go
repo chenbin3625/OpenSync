@@ -441,3 +441,76 @@ func TestForEachJobTaskItemsByStatusesReadsBatchesInCreateOrder(t *testing.T) {
 		t.Fatalf("batch sizes = %v, want [2 1]", batchSizes)
 	}
 }
+
+func TestGetJobTaskCountsByTaskIDsAggregatesManyTasks(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE job_task_item(
+		id integer primary key autoincrement,
+		taskId integer,
+		fileSize integer,
+		type integer,
+		status integer
+	)`); err != nil {
+		t.Fatalf("create job_task_item: %v", err)
+	}
+
+	rows := []struct {
+		taskID   int64
+		status   int
+		itemType int
+		fileSize interface{}
+	}{
+		{10, 0, 0, int64(10)},
+		{10, 1, 0, int64(20)},
+		{10, 2, 0, int64(30)},
+		{10, 2, 1, int64(40)},
+		{10, 7, 0, nil},
+		{10, 8, 0, int64(50)},
+		{20, 2, 0, int64(70)},
+		{20, 7, 0, int64(80)},
+	}
+	for _, row := range rows {
+		if _, err := testDB.Exec(
+			"INSERT INTO job_task_item(taskId, status, type, fileSize) VALUES (?, ?, ?, ?)",
+			row.taskID, row.status, row.itemType, row.fileSize,
+		); err != nil {
+			t.Fatalf("insert job_task_item: %v", err)
+		}
+	}
+
+	oldDB := db
+	db = testDB
+	defer func() {
+		db = oldDB
+	}()
+
+	counts := GetJobTaskCountsByTaskIDs([]int64{10, 20, 30, 10})
+	task10 := counts[10]
+	if task10["allNum"] != int64(6) || task10["waitNum"] != int64(1) || task10["runningNum"] != int64(1) {
+		t.Fatalf("task 10 base counts = %#v, want all/wait/running 6/1/1", task10)
+	}
+	if task10["successNum"] != int64(2) || task10["failNum"] != int64(1) || task10["otherNum"] != int64(1) {
+		t.Fatalf("task 10 status counts = %#v, want success/fail/other 2/1/1", task10)
+	}
+	if task10["sumSize"] != int64(30) {
+		t.Fatalf("task 10 sumSize = %v, want 30", task10["sumSize"])
+	}
+
+	task20 := counts[20]
+	if task20["allNum"] != int64(2) || task20["successNum"] != int64(1) || task20["failNum"] != int64(1) {
+		t.Fatalf("task 20 counts = %#v, want all/success/fail 2/1/1", task20)
+	}
+	if task20["sumSize"] != int64(70) {
+		t.Fatalf("task 20 sumSize = %v, want 70", task20["sumSize"])
+	}
+
+	task30 := counts[30]
+	if task30["allNum"] != int64(0) || task30["sumSize"] != int64(0) {
+		t.Fatalf("task 30 counts = %#v, want zeros", task30)
+	}
+}

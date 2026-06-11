@@ -21,7 +21,7 @@ func GetAlist(c *gin.Context) {
 			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
 			return
 		}
-		result := service.GetChildPath(alistID, path)
+		result := service.GetChildPath(c.Request.Context(), alistID, path)
 		c.JSON(http.StatusOK, model.Success(result))
 		return
 	}

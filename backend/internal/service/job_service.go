@@ -8,6 +8,7 @@ import (
 	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
+	"opensync/pkg/util"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ var (
 	jobClientList   = make(map[int64]*JobClient)
 	jobClientListMu sync.RWMutex
 )
+
+var taskNumUpdateSlots = make(chan struct{}, 1)
 
 // InitJobs loads and starts all enabled jobs on startup
 func InitJobs() {
@@ -86,7 +89,7 @@ func GetJobClientByID(jobID int64) *JobClient {
 
 // CleanJobInput sanitizes job input data
 func CleanJobInput(job map[string]interface{}) {
-	if toInt(job["isCron"]) == 2 && toInt(job["enable"]) != 1 {
+	if util.ToInt(job["isCron"]) == 2 && util.ToInt(job["enable"]) != 1 {
 		job["enable"] = 1
 	}
 	for key, value := range job {
@@ -115,14 +118,14 @@ func CleanJobInput(job map[string]interface{}) {
 func normalizeJobFileSizeRange(job map[string]interface{}) {
 	minSize, err := nonNegativeFileSize(job["minFileSize"])
 	if err != nil {
-		panicPublic("最小文件大小必须是大于等于0的整数")
+		panicPublic(i18n.G("min_file_size_invalid"))
 	}
 	maxSize, err := nonNegativeFileSize(job["maxFileSize"])
 	if err != nil {
-		panicPublic("最大文件大小必须是大于等于0的整数")
+		panicPublic(i18n.G("max_file_size_invalid"))
 	}
 	if maxSize > 0 && minSize > maxSize {
-		panicPublic("最小文件大小不能大于最大文件大小")
+		panicPublic(i18n.G("min_file_size_gt_max"))
 	}
 	job["minFileSize"] = minSize
 	job["maxFileSize"] = maxSize
@@ -174,11 +177,11 @@ func AddJobClient(job map[string]interface{}, isInit bool) {
 
 // EditJobClient updates an existing job client
 func EditJobClient(job map[string]interface{}) {
-	jobID := toInt64(job["id"])
+	jobID := util.ToInt64(job["id"])
 	CleanJobInput(job)
 	client := GetJobClientByID(jobID)
 	nextScheduler := NewScheduler()
-	if err := nextScheduler.AddJob(toInt(job["isCron"]), job, func() {
+	if err := nextScheduler.AddJob(util.ToInt(job["isCron"]), job, func() {
 		client.DoScheduled()
 	}); err != nil {
 		nextScheduler.Stop()
@@ -201,7 +204,7 @@ func DoAllJobManual() {
 		panicPublic(i18n.G("no_job_for_run"))
 	}
 	for _, jobItem := range jobList {
-		client := GetJobClientByID(toInt64(jobItem["id"]))
+		client := GetJobClientByID(util.ToInt64(jobItem["id"]))
 		if client.enabled() {
 			client.DoManual()
 		}
@@ -244,7 +247,7 @@ func ContinueJob(jobID int64) {
 // PauseJob disables a job
 func PauseJob(jobID int64) {
 	client := GetJobClientByID(jobID)
-	if toInt(client.Job["isCron"]) == 2 {
+	if util.ToInt(client.Job["isCron"]) == 2 {
 		panicPublic(i18n.G("cannot_disable_manual_job"))
 	}
 	client.StopJob(false)
@@ -262,7 +265,7 @@ func PauseTask(taskID int64) {
 	if err != nil {
 		panic(err.Error())
 	}
-	client := GetJobClientByID(toInt64(job["id"]))
+	client := GetJobClientByID(util.ToInt64(job["id"]))
 	task := client.currentTask()
 	if task == nil || task.TaskID != taskID {
 		panicPublic(i18n.G("task_not_running"))
@@ -280,7 +283,7 @@ func ResumeTask(taskID int64) {
 	if err != nil {
 		panic(err.Error())
 	}
-	client := GetJobClientByID(toInt64(job["id"]))
+	client := GetJobClientByID(util.ToInt64(job["id"]))
 	if !client.enabled() {
 		panicPublic(i18n.G("disabled_job_cannot_run"))
 	}
@@ -304,7 +307,7 @@ func RestartTask(taskID int64) {
 	if err != nil {
 		panic(err.Error())
 	}
-	client := GetJobClientByID(toInt64(job["id"]))
+	client := GetJobClientByID(util.ToInt64(job["id"]))
 	if !client.enabled() {
 		panicPublic(i18n.G("disabled_job_cannot_run"))
 	}
@@ -317,7 +320,7 @@ func RetryFailedTask(taskID int64) {
 	if err != nil {
 		panic(err.Error())
 	}
-	client := GetJobClientByID(toInt64(job["id"]))
+	client := GetJobClientByID(util.ToInt64(job["id"]))
 	if !client.enabled() {
 		panicPublic(i18n.G("disabled_job_cannot_run"))
 	}
@@ -349,9 +352,9 @@ func GetJobCurrent(jobID int64, params map[string]interface{}) interface{} {
 		if !hasStatus || fmt.Sprintf("%v", status) == "" {
 			return taskClient.GetCurrent()
 		}
-		statusInt := toInt(status)
-		pageSize := toInt(params["pageSize"])
-		pageNum := toInt(params["pageNum"])
+		statusInt := util.ToInt(status)
+		pageSize := util.ToInt(params["pageSize"])
+		pageNum := util.ToInt(params["pageNum"])
 		if pageSize > 0 && pageNum > 0 {
 			return taskClient.GetCurrentByStatusPage(statusInt, pageSize, pageNum)
 		}
@@ -421,20 +424,17 @@ func GetTaskList(req map[string]interface{}) map[string]interface{} {
 	}
 
 	var needUpdateList []map[string]interface{}
+	missingTaskItems := make([]map[string]interface{}, 0)
+	missingTaskIDs := make([]int64, 0)
 	for _, item := range dataList {
 		var taskNum map[string]interface{}
 		taskNumStr, hasTaskNum := item["taskNum"]
 		if hasTaskNum && taskNumStr != nil && fmt.Sprintf("%v", taskNumStr) != "" {
 			json.Unmarshal([]byte(fmt.Sprintf("%v", taskNumStr)), &taskNum)
 		} else {
-			taskNum = GetCuTaskNum(toInt64(item["id"]))
-			if toInt(item["status"]) > 1 {
-				taskNumJSON, _ := json.Marshal(taskNum)
-				needUpdateList = append(needUpdateList, map[string]interface{}{
-					"taskId":  item["id"],
-					"taskNum": string(taskNumJSON),
-				})
-			}
+			taskID := util.ToInt64(item["id"])
+			missingTaskIDs = append(missingTaskIDs, taskID)
+			missingTaskItems = append(missingTaskItems, item)
 		}
 		if taskNum != nil {
 			for k, v := range taskNum {
@@ -443,11 +443,61 @@ func GetTaskList(req map[string]interface{}) map[string]interface{} {
 		}
 	}
 
+	if len(missingTaskItems) > 0 {
+		taskNumByID := mapper.GetJobTaskCountsByTaskIDs(missingTaskIDs)
+		for _, item := range missingTaskItems {
+			taskID := util.ToInt64(item["id"])
+			taskNum := taskNumByID[taskID]
+			if taskNum == nil {
+				taskNum = emptyTaskNum()
+			}
+			for k, v := range taskNum {
+				item[k] = v
+			}
+			if util.ToInt(item["status"]) > 1 {
+				taskNumJSON, _ := json.Marshal(taskNum)
+				needUpdateList = append(needUpdateList, map[string]interface{}{
+					"taskId":  item["id"],
+					"taskNum": string(taskNumJSON),
+				})
+			}
+		}
+	}
+
 	if len(needUpdateList) > 0 {
-		go mapper.UpdateJobTaskNumMany(needUpdateList)
+		scheduleTaskNumUpdate(needUpdateList)
 	}
 
 	return jobTaskList
+}
+
+func scheduleTaskNumUpdate(taskNums []map[string]interface{}) {
+	taskNums = cloneTaskRows(taskNums)
+	select {
+	case taskNumUpdateSlots <- struct{}{}:
+		go func() {
+			defer func() {
+				<-taskNumUpdateSlots
+			}()
+			if err := mapper.UpdateJobTaskNumMany(taskNums); err != nil {
+				log.Printf("Failed to update task counts: %v", err)
+			}
+		}()
+	default:
+		log.Printf("Skipping task count backfill because a previous update is still running")
+	}
+}
+
+func emptyTaskNum() map[string]interface{} {
+	return map[string]interface{}{
+		"waitNum":    int64(0),
+		"runningNum": int64(0),
+		"successNum": int64(0),
+		"failNum":    int64(0),
+		"otherNum":   int64(0),
+		"allNum":     int64(0),
+		"sumSize":    int64(0),
+	}
 }
 
 // GetTaskItemList returns paginated task item list

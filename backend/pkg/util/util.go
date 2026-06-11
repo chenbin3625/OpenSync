@@ -3,6 +3,8 @@ package util
 import (
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -44,4 +46,95 @@ func TimeToStamp(timeStr string) (int64, error) {
 		return 0, err
 	}
 	return t.Unix(), nil
+}
+
+// ToInt converts various types to int
+func ToInt(v interface{}) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case int64:
+		return int(val)
+	case float64:
+		return int(val)
+	case string:
+		val = strings.TrimSpace(val)
+		if val == "" {
+			return 0
+		}
+		n, err := strconv.ParseInt(val, 10, 0)
+		if err != nil {
+			return 0
+		}
+		return int(n)
+	default:
+		return 0
+	}
+}
+
+// ToInt64 converts various types to int64
+func ToInt64(v interface{}) int64 {
+	switch val := v.(type) {
+	case int64:
+		return val
+	case int:
+		return int64(val)
+	case float64:
+		return int64(val)
+	case string:
+		val = strings.TrimSpace(val)
+		if val == "" {
+			return 0
+		}
+		n, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			return 0
+		}
+		return n
+	default:
+		return 0
+	}
+}
+
+// ToFloat64 converts various types to float64
+func ToFloat64(v interface{}) float64 {
+	switch val := v.(type) {
+	case float64:
+		return val
+	case int:
+		return float64(val)
+	case int64:
+		return float64(val)
+	default:
+		return 0
+	}
+}
+
+// StringValue converts various types to string
+func StringValue(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// ToBool converts various types to bool
+func ToBool(v interface{}) bool {
+	switch val := v.(type) {
+	case bool:
+		return val
+	case int:
+		return val != 0
+	case int64:
+		return val != 0
+	case float64:
+		return val != 0
+	case string:
+		return val == "1" || strings.EqualFold(val, "true")
+	default:
+		return false
+	}
 }

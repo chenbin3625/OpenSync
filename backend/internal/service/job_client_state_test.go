@@ -2,6 +2,7 @@ package service
 
 import (
 	"opensync/internal/i18n"
+	"opensync/pkg/util"
 	"testing"
 	"time"
 )
@@ -165,7 +166,7 @@ func TestRemoveJobClientRejectsRunningJobWithoutStoppingIt(t *testing.T) {
 	if task.isBreak() {
 		t.Fatalf("RemoveJobClient() requested task break while rejecting delete")
 	}
-	if got := toInt(client.Job["enable"]); got != 1 {
+	if got := util.ToInt(client.Job["enable"]); got != 1 {
 		t.Fatalf("job enable after rejected delete = %d, want 1", got)
 	}
 }

@@ -29,11 +29,7 @@ func GetJob(c *gin.Context) {
 				"pageSize": c.Query("pageSize"),
 				"pageNum":  c.Query("pageNum"),
 			}
-			for k, v := range req {
-				if v == "" {
-					delete(req, k)
-				}
-			}
+			removeEmptyStringValues(req)
 			result := service.GetJobCurrent(id, req)
 			c.JSON(http.StatusOK, model.Success(result))
 			return
@@ -51,11 +47,7 @@ func GetJob(c *gin.Context) {
 		if statusIn := c.QueryArray("statusIn"); len(statusIn) > 0 {
 			req["statusIn"] = statusIn
 		}
-		for k, v := range req {
-			if v == "" {
-				delete(req, k)
-			}
-		}
+		removeEmptyStringValues(req)
 		result := service.GetTaskList(req)
 		c.JSON(http.StatusOK, model.Success(result))
 		return
@@ -74,11 +66,7 @@ func GetJob(c *gin.Context) {
 			"keyword":  c.Query("keyword"),
 		}
 		// Remove empty params
-		for k, v := range req {
-			if v == "" {
-				delete(req, k)
-			}
-		}
+		removeEmptyStringValues(req)
 		result := service.GetTaskItemList(req)
 		c.JSON(http.StatusOK, model.Success(result))
 		return
@@ -89,13 +77,17 @@ func GetJob(c *gin.Context) {
 		"pageSize": c.Query("pageSize"),
 		"pageNum":  c.Query("pageNum"),
 	}
+	removeEmptyStringValues(req)
+	result := service.GetJobList(req)
+	c.JSON(http.StatusOK, model.Success(result))
+}
+
+func removeEmptyStringValues(req map[string]interface{}) {
 	for k, v := range req {
 		if v == "" {
 			delete(req, k)
 		}
 	}
-	result := service.GetJobList(req)
-	c.JSON(http.StatusOK, model.Success(result))
 }
 
 // AddJob handles POST /svr/job

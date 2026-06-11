@@ -104,6 +104,7 @@ export default function Engine() {
         {list.length === 0 && !loading ? (
           <div className="ops-empty-surface">
             <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={<Text type="secondary">暂无引擎，请先添加 AList 引擎实例</Text>}
             />
           </div>
@@ -161,7 +162,7 @@ export default function Engine() {
         open={modalVisible}
         onOk={handleSubmit}
         onCancel={() => setModalVisible(false)}
-        destroyOnClose
+        forceRender
       >
         <Form form={form} layout="vertical">
           <Form.Item name="url" label="地址" rules={[{ required: true, message: '请输入AList地址' }]}>

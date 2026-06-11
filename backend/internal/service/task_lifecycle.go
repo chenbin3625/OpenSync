@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"opensync/internal/mapper"
+	"opensync/pkg/util"
 	"time"
 )
 
@@ -42,7 +43,7 @@ func (jt *JobTask) finishFailedTask(errMsg string) {
 func (jt *JobTask) updateTaskStatus() {
 	jt.GetCurrent()
 	taskNum := GetCuTaskNum(jt.TaskID)
-	failOrOtherNum := toInt(taskNum["failNum"]) + toInt(taskNum["otherNum"])
+	failOrOtherNum := util.ToInt(taskNum["failNum"]) + util.ToInt(taskNum["otherNum"])
 	status := finalTaskStatus(jt.isBreak(), jt.context().Err(), failOrOtherNum)
 	duration := taskDuration(jt.CreateTime)
 	taskNum["duration"] = duration
@@ -82,7 +83,7 @@ func UpdateJobTaskStatusFinal(taskID int64, status taskStatus, currentTasks map[
 		if tasks, ok := currentTasks[taskStatusSuccess.Int()]; ok {
 			for _, t := range tasks {
 				if t["fileSize"] != nil && taskItemTypeFromValue(t["type"]) != taskItemTypeDelete {
-					sumSize += toInt64Val(t["fileSize"])
+					sumSize += util.ToInt64(t["fileSize"])
 				}
 			}
 		}

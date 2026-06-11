@@ -4,8 +4,10 @@ import test from 'node:test';
 
 const engineSource = readFileSync(new URL('../src/pages/Engine/index.tsx', import.meta.url), 'utf8');
 const notifySource = readFileSync(new URL('../src/pages/Notify/index.tsx', import.meta.url), 'utf8');
-const homeSource = readFileSync(new URL('../src/pages/Home/index.tsx', import.meta.url), 'utf8');
+const jobFormDrawerSource = readFileSync(new URL('../src/pages/Home/JobFormDrawer.tsx', import.meta.url), 'utf8');
 const taskListSource = readFileSync(new URL('../src/pages/Home/TaskList.tsx', import.meta.url), 'utf8');
+const loginSource = readFileSync(new URL('../src/pages/Login/index.tsx', import.meta.url), 'utf8');
+const settingSource = readFileSync(new URL('../src/pages/Setting/index.tsx', import.meta.url), 'utf8');
 
 test('editing an engine clears stale modal token state before applying current values', () => {
   assert.match(engineSource, /const handleEdit = \(item: AlistItem\) => \{\s+setEditingItem\(item\);\s+form\.resetFields\(\);/s);
@@ -33,6 +35,33 @@ test('history task queries request completed statuses from the server', () => {
 });
 
 test('directory tree loading ignores stale engine responses', () => {
-  assert.match(homeSource, /treeLoadRequestRef/);
-  assert.match(homeSource, /if \(requestID !== treeLoadRequestRef\.current\) return;/);
+  assert.match(jobFormDrawerSource, /treeLoadRequestRef/);
+  assert.match(jobFormDrawerSource, /if \(requestID !== treeLoadRequestRef\.current\) return;/);
+});
+
+test('forms inside overlays are force rendered before form APIs run', () => {
+  assert.match(jobFormDrawerSource, /<Drawer[\s\S]*className="sync-job-drawer"[\s\S]*forceRender[\s\S]*>/);
+  assert.match(engineSource, /<Modal[\s\S]*title=\{editingItem \? '编辑引擎' : '新增引擎'\}[\s\S]*forceRender[\s\S]*>/);
+  assert.match(notifySource, /<Modal[\s\S]*title=\{editingItem \? '编辑通知' : '新增通知'\}[\s\S]*forceRender[\s\S]*>/);
+  assert.match(loginSource, /<Modal[\s\S]*title="重置密码"[\s\S]*forceRender[\s\S]*>/);
+  assert.match(settingSource, /<Modal[\s\S]*title="修改密码"[\s\S]*forceRender[\s\S]*>/);
+});
+
+test('system setting unit inputs bind the input control inside compact groups', () => {
+  for (const field of ['expires', 'taskTimeout', 'taskSave']) {
+    assert.doesNotMatch(
+      settingSource,
+      new RegExp(`<Form\\.Item[\\s\\S]{0,300}name="${field}"[\\s\\S]{0,300}>\\s*<Space\\.Compact`)
+    );
+    assert.match(
+      settingSource,
+      new RegExp(`<Form\\.Item[\\s\\S]{0,120}name="${field}"[\\s\\S]{0,120}noStyle[\\s\\S]{0,180}>\\s*<InputNumber`)
+    );
+  }
+});
+
+test('login reset success uses context-aware modal feedback', () => {
+  assert.match(loginSource, /const \{ message, modal \} = App\.useApp\(\);/);
+  assert.match(loginSource, /modal\.info\(/);
+  assert.doesNotMatch(loginSource, /Modal\.info\(/);
 });

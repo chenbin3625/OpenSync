@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"opensync/internal/i18n"
+	"opensync/pkg/util"
 	"strings"
 	"sync"
 	"time"
@@ -23,9 +24,10 @@ type copyItemRuntime interface {
 
 type copyItemClient interface {
 	CopyFileContext(context.Context, string, string, string) (string, error)
-	CopyTaskCancelContext(context.Context, string) error
-	CopyTaskDeleteContext(context.Context, string) error
-	TaskInfoContext(context.Context, string) (map[string]interface{}, error)
+	MoveFileContext(context.Context, string, string, string) (string, error)
+	TaskCancelContext(context.Context, string, taskItemType) error
+	TaskDeleteContext(context.Context, string, taskItemType) error
+	TaskInfoContext(context.Context, string, taskItemType) (map[string]interface{}, error)
 	DeleteFileContext(context.Context, string, []string, int) error
 }
 
@@ -158,7 +160,7 @@ func (ci *CopyItem) DoIt() {
 		}
 
 		ci.setRunning()
-		taskID, err := client.CopyFileContext(runtime.context(), ci.SrcPath, ci.DstPath, ci.FileName)
+		taskID, err := ci.startTransfer(runtime.context(), client)
 		if err != nil {
 			if errors.Is(err, context.Canceled) && runtime.isBreak() {
 				ci.setStatus(taskStatusStopped)
@@ -195,6 +197,13 @@ func (ci *CopyItem) DoIt() {
 	ci.endIt()
 }
 
+func (ci *CopyItem) startTransfer(ctx context.Context, client copyItemClient) (string, error) {
+	if ci.CopyType == taskItemTypeMove {
+		return client.MoveFileContext(ctx, ci.SrcPath, ci.DstPath, ci.FileName)
+	}
+	return client.CopyFileContext(ctx, ci.SrcPath, ci.DstPath, ci.FileName)
+}
+
 func defaultCopyRetryDelay(attempt int) time.Duration {
 	if attempt < 0 {
 		attempt = 0
@@ -223,10 +232,10 @@ func (ci *CopyItem) checkAndGetStatus() {
 			ci.setStatus(taskStatusStopped)
 			if taskID := ci.taskID(); taskID != "" {
 				ctx, cancel := runtime.cleanupContext()
-				if err := client.CopyTaskCancelContext(ctx, taskID); err != nil {
+				if err := client.TaskCancelContext(ctx, taskID, ci.CopyType); err != nil {
 					ci.setFailure(err)
 				}
-				_ = client.CopyTaskDeleteContext(ctx, taskID)
+				_ = client.TaskDeleteContext(ctx, taskID, ci.CopyType)
 				cancel()
 			}
 			break
@@ -243,7 +252,7 @@ func (ci *CopyItem) checkAndGetStatus() {
 			continue
 		}
 
-		taskInfo, err := client.TaskInfoContext(runtime.context(), ci.taskID())
+		taskInfo, err := client.TaskInfoContext(runtime.context(), ci.taskID(), ci.CopyType)
 		if err != nil {
 			if errors.Is(err, context.Canceled) && runtime.isBreak() {
 				continue
@@ -257,7 +266,7 @@ func (ci *CopyItem) checkAndGetStatus() {
 		}
 
 		state := taskStatusFromValue(taskInfo["state"])
-		progress := toFloat64(taskInfo["progress"])
+		progress := util.ToFloat64(taskInfo["progress"])
 		errStr := ""
 		if e, ok := taskInfo["error"]; ok && e != nil {
 			errStr = fmt.Sprintf("%v", e)
@@ -277,7 +286,7 @@ func (ci *CopyItem) checkAndGetStatus() {
 
 		if state == taskStatusSuccess || state == taskStatusStopped || state == taskStatusFailed {
 			ctx, cancel := runtime.cleanupContext()
-			_ = client.CopyTaskDeleteContext(ctx, ci.taskID())
+			_ = client.TaskDeleteContext(ctx, ci.taskID(), ci.CopyType)
 			cancel()
 			break
 		}
@@ -288,7 +297,7 @@ func (ci *CopyItem) endIt() {
 	runtime := ci.copyRuntime()
 	client := ci.copyClient()
 	if ci.CopyType == taskItemTypeMove && ci.status() == taskStatusSuccess {
-		scanIntervalS := toInt(runtime.jobConfig()["scanIntervalS"])
+		scanIntervalS := util.ToInt(runtime.jobConfig()["scanIntervalS"])
 		ctx, cancel := runtime.cleanupContext()
 		err := client.DeleteFileContext(ctx, ci.SrcPath, []string{ci.FileName}, scanIntervalS)
 		cancel()

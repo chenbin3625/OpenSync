@@ -3,6 +3,7 @@ package mapper
 import (
 	"errors"
 	"opensync/internal/i18n"
+	"opensync/pkg/util"
 )
 
 // GetAlistList gets all alist entries
@@ -28,7 +29,7 @@ func CountJobsByAlistID(alistID int64) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return toInt64(val), nil
+	return util.ToInt64(val), nil
 }
 
 // AddAlist inserts a new alist entry

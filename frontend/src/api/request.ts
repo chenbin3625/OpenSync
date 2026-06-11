@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { message } from 'antd';
 import { useStore } from '../stores/useStore';
+import { getMessageInstance } from './messageHolder';
 
 type ApiEnvelope = {
   code?: number;
@@ -44,7 +44,7 @@ const rejectApiEnvelope = (data: ApiEnvelope, fallbackStatus?: number) => {
     return Promise.reject(new Error(msg));
   }
   if (code !== 200) {
-    message.error(msg);
+    getMessageInstance()?.error(msg);
     return Promise.reject(new Error(msg));
   }
   return null;
@@ -87,7 +87,7 @@ service.interceptors.response.use(
     if (status === 401) {
       redirectToLogin();
     } else {
-      message.error(msg);
+      getMessageInstance()?.error(msg);
     }
     return Promise.reject(error);
   }

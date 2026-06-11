@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"opensync/internal/i18n"
+	"opensync/pkg/util"
 	"strings"
 	"sync"
 
@@ -36,33 +37,14 @@ func (s *Scheduler) AddJob(isCron int, jobData map[string]interface{}, fn func()
 		return nil
 	}
 
-	if isCron == 0 {
-		// Interval mode
-		interval := toInt(jobData["interval"])
-		if interval <= 0 {
-			return errors.New(i18n.G("interval_lost"))
-		}
-		spec := fmt.Sprintf("@every %dm", interval)
-		entryID, err := s.cron.AddFunc(spec, fn)
-		if err != nil {
-			return err
-		}
-		s.entryID = entryID
-	} else if isCron == 1 {
-		// Cron mode - build cron expression
-		spec := buildCronSpec(jobData)
-		if spec == "" {
-			return errors.New(i18n.G("cron_lost"))
-		}
-		entryID, err := s.cron.AddFunc(spec, fn)
-		if err != nil {
-			return err
-		}
-		s.entryID = entryID
+	entryID, err := s.addJobLocked(isCron, jobData, fn)
+	if err != nil {
+		return err
 	}
+	s.entryID = entryID
 
 	// If disabled, remove the entry immediately (will be resumed later)
-	enable := toInt(jobData["enable"])
+	enable := util.ToInt(jobData["enable"])
 	if enable == 0 && s.entryID != 0 {
 		s.cron.Remove(s.entryID)
 	}
@@ -92,29 +74,28 @@ func (s *Scheduler) Resume(isCron int, jobData map[string]interface{}, fn func()
 		return nil
 	}
 
+	entryID, err := s.addJobLocked(isCron, jobData, fn)
+	if err != nil {
+		return err
+	}
+	s.entryID = entryID
+	return nil
+}
+
+func (s *Scheduler) addJobLocked(isCron int, jobData map[string]interface{}, fn func()) (cron.EntryID, error) {
 	if isCron == 0 {
-		interval := toInt(jobData["interval"])
+		interval := util.ToInt(jobData["interval"])
 		if interval <= 0 {
-			return errors.New(i18n.G("interval_lost"))
+			return 0, errors.New(i18n.G("interval_lost"))
 		}
 		spec := fmt.Sprintf("@every %dm", interval)
-		entryID, err := s.cron.AddFunc(spec, fn)
-		if err != nil {
-			return err
-		}
-		s.entryID = entryID
-	} else {
-		spec := buildCronSpec(jobData)
-		if spec == "" {
-			return errors.New(i18n.G("cron_lost"))
-		}
-		entryID, err := s.cron.AddFunc(spec, fn)
-		if err != nil {
-			return err
-		}
-		s.entryID = entryID
+		return s.cron.AddFunc(spec, fn)
 	}
-	return nil
+	spec := buildCronSpec(jobData)
+	if spec == "" {
+		return 0, errors.New(i18n.G("cron_lost"))
+	}
+	return s.cron.AddFunc(spec, fn)
 }
 
 // Stop shuts down the scheduler
@@ -156,24 +137,4 @@ func buildCronSpec(jobData map[string]interface{}) string {
 	spec := strings.Join(parts, " ")
 	log.Printf("Built cron spec: %s", spec)
 	return spec
-}
-
-func toInt(v interface{}) int {
-	switch val := v.(type) {
-	case int:
-		return val
-	case int64:
-		return int(val)
-	case float64:
-		return int(val)
-	case string:
-		if val == "" {
-			return 0
-		}
-		n := 0
-		fmt.Sscanf(val, "%d", &n)
-		return n
-	default:
-		return 0
-	}
 }

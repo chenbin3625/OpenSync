@@ -92,29 +92,41 @@ export default function Setting() {
             <Row gutter={16}>
               <Col xs={24} md={12}>
                 <Form.Item
-                  name="expires"
                   label={labelWithTip('登录有效期', '登录 Cookie 的有效天数，保存后对后续登录或刷新 Cookie 生效。')}
-                  rules={[{ required: true, message: '请输入登录有效期' }]}
+                  required
                 >
-                  <InputNumber min={1} max={365} addonAfter="天" style={{ width: '100%' }} />
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Form.Item name="expires" noStyle rules={[{ required: true, message: '请输入登录有效期' }]}>
+                      <InputNumber min={1} max={365} style={{ flex: 1 }} />
+                    </Form.Item>
+                    <Input value="天" readOnly style={{ width: 45, textAlign: 'center', pointerEvents: 'none' }} />
+                  </Space.Compact>
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>
                 <Form.Item
-                  name="taskTimeout"
                   label={labelWithTip('任务超时时间', '单次同步任务允许运行的最长时间，0 表示不设置超时；新任务生效。')}
-                  rules={[{ required: true, message: '请输入任务超时时间' }]}
+                  required
                 >
-                  <InputNumber min={0} max={8760} addonAfter="小时" style={{ width: '100%' }} />
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Form.Item name="taskTimeout" noStyle rules={[{ required: true, message: '请输入任务超时时间' }]}>
+                      <InputNumber min={0} max={8760} style={{ flex: 1 }} />
+                    </Form.Item>
+                    <Input value="小时" readOnly style={{ width: 55, textAlign: 'center', pointerEvents: 'none' }} />
+                  </Space.Compact>
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>
                 <Form.Item
-                  name="taskSave"
                   label={labelWithTip('历史任务保留', '任务历史保留天数，0 表示全部保留；保存后会立即清理过期历史。')}
-                  rules={[{ required: true, message: '请输入历史任务保留天数' }]}
+                  required
                 >
-                  <InputNumber min={0} max={3650} addonAfter="天" style={{ width: '100%' }} />
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Form.Item name="taskSave" noStyle rules={[{ required: true, message: '请输入历史任务保留天数' }]}>
+                      <InputNumber min={0} max={3650} style={{ flex: 1 }} />
+                    </Form.Item>
+                    <Input value="天" readOnly style={{ width: 45, textAlign: 'center', pointerEvents: 'none' }} />
+                  </Space.Compact>
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>
@@ -178,7 +190,7 @@ export default function Setting() {
           passwordForm.resetFields();
         }}
         confirmLoading={passwordSaving}
-        destroyOnClose
+        forceRender
       >
         <Form form={passwordForm} layout="vertical">
           <Form.Item name="oldPasswd" label="旧密码" rules={[{ required: true, message: '请输入旧密码' }]}>

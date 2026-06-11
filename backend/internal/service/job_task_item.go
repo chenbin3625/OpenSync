@@ -1,5 +1,7 @@
 package service
 
+import "opensync/pkg/util"
+
 type taskStatus int
 type taskItemType int
 type taskItemObject int
@@ -29,7 +31,7 @@ func (status taskStatus) Int() int {
 }
 
 func taskStatusFromValue(value interface{}) taskStatus {
-	return taskStatus(toInt(value))
+	return taskStatus(util.ToInt(value))
 }
 
 func taskStatusValues(statuses ...taskStatus) []int {
@@ -45,7 +47,7 @@ func (itemType taskItemType) Int() int {
 }
 
 func taskItemTypeFromValue(value interface{}) taskItemType {
-	return taskItemType(toInt(value))
+	return taskItemType(util.ToInt(value))
 }
 
 func (object taskItemObject) Int() int {
@@ -53,7 +55,7 @@ func (object taskItemObject) Int() int {
 }
 
 func taskItemObjectFromValue(value interface{}) taskItemObject {
-	return taskItemObject(toInt(value))
+	return taskItemObject(util.ToInt(value))
 }
 
 func boolToTaskItemObject(value bool) taskItemObject {
@@ -156,5 +158,5 @@ func (item JobTaskItem) CountableFileSize() int64 {
 	if item.FileSize == nil || item.Type == taskItemTypeDelete {
 		return 0
 	}
-	return toInt64Val(item.FileSize)
+	return util.ToInt64(item.FileSize)
 }

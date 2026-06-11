@@ -4,7 +4,8 @@ import test from 'node:test';
 
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const routerSource = readFileSync(new URL('../src/router/index.tsx', import.meta.url), 'utf8');
-const homeSource = readFileSync(new URL('../src/pages/Home/index.tsx', import.meta.url), 'utf8');
+const homeSidebarSource = readFileSync(new URL('../src/pages/Home/HomeSidebar.tsx', import.meta.url), 'utf8');
+const homeOverviewSource = readFileSync(new URL('../src/pages/Home/HomeOverview.tsx', import.meta.url), 'utf8');
 const taskListSource = readFileSync(new URL('../src/pages/Home/TaskList.tsx', import.meta.url), 'utf8');
 const engineSource = readFileSync(new URL('../src/pages/Engine/index.tsx', import.meta.url), 'utf8');
 const notifySource = readFileSync(new URL('../src/pages/Notify/index.tsx', import.meta.url), 'utf8');
@@ -18,9 +19,9 @@ test('application defines shared presentation theme tokens', () => {
 });
 
 test('home dashboard exposes scannable task workspace sections', () => {
-  assert.match(homeSource, /sync-sidebar-job/);
-  assert.match(homeSource, /sync-overview-hero/);
-  assert.match(homeSource, /sync-info-grid/);
+  assert.match(homeSidebarSource, /sync-sidebar-job/);
+  assert.match(homeOverviewSource, /sync-overview-hero/);
+  assert.match(homeOverviewSource, /sync-info-grid/);
 });
 
 test('task execution views use compact operational surfaces', () => {

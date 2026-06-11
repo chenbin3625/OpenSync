@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"opensync/internal/i18n"
 	"opensync/pkg/crypto"
 	"os"
 	"strconv"
@@ -236,17 +237,17 @@ func validateSystemSettings(settings SystemSettings) error {
 		value    int
 		min, max int
 	}{
-		{"登录有效期", settings.Expires, minExpires, maxExpires},
-		{"任务超时时间", settings.TaskTimeout, minTaskTimeout, maxTaskTimeout},
-		{"历史任务保留", settings.TaskSave, minTaskSave, maxTaskSave},
-		{"复制并发数", settings.CopyConcurrency, minCopyConcurrency, maxCopyConcurrency},
-		{"扫描并发数", settings.ScanConcurrency, minScanConcurrency, maxScanConcurrency},
-		{"完成明细保留数", settings.RealtimeFinishedItems, minRealtimeFinishedItems, maxRealtimeFinishedItems},
-		{"最大重试次数", settings.MaxRetries, minMaxRetries, maxMaxRetries},
+		{i18n.G("settings_expires"), settings.Expires, minExpires, maxExpires},
+		{i18n.G("settings_task_timeout"), settings.TaskTimeout, minTaskTimeout, maxTaskTimeout},
+		{i18n.G("settings_task_save"), settings.TaskSave, minTaskSave, maxTaskSave},
+		{i18n.G("settings_copy_concurrency"), settings.CopyConcurrency, minCopyConcurrency, maxCopyConcurrency},
+		{i18n.G("settings_scan_concurrency"), settings.ScanConcurrency, minScanConcurrency, maxScanConcurrency},
+		{i18n.G("settings_realtime_finished_items"), settings.RealtimeFinishedItems, minRealtimeFinishedItems, maxRealtimeFinishedItems},
+		{i18n.G("settings_max_retries"), settings.MaxRetries, minMaxRetries, maxMaxRetries},
 	}
 	for _, item := range checks {
 		if item.value < item.min || item.value > item.max {
-			return fmt.Errorf("%s必须在%d到%d之间", item.name, item.min, item.max)
+			return fmt.Errorf(i18n.G("settings_range_error"), item.name, item.min, item.max)
 		}
 	}
 	return nil

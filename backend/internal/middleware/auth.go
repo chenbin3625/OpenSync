@@ -12,6 +12,7 @@ import (
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
 	"opensync/internal/model"
+	"opensync/pkg/util"
 	"strings"
 	"sync"
 	"time"
@@ -86,7 +87,7 @@ func authSessionSignature(user map[string]interface{}) string {
 	cfg := config.GetConfig()
 	mac := hmac.New(sha256.New, []byte(cfg.Server.PasswdStr))
 	_, _ = mac.Write([]byte(fmt.Sprintf("%d|%s|%s",
-		toInt64(user["id"]),
+		util.ToInt64(user["id"]),
 		fmt.Sprintf("%v", user["userName"]),
 		fmt.Sprintf("%v", user["passwd"]),
 	)))
@@ -96,7 +97,7 @@ func authSessionSignature(user map[string]interface{}) string {
 // NewCookieUser builds the non-sensitive auth payload for a user record.
 func NewCookieUser(user map[string]interface{}) CookieUser {
 	return CookieUser{
-		ID:       toInt64(user["id"]),
+		ID:       util.ToInt64(user["id"]),
 		UserName: fmt.Sprintf("%v", user["userName"]),
 		Session:  authSessionSignature(user),
 	}
@@ -104,7 +105,7 @@ func NewCookieUser(user map[string]interface{}) CookieUser {
 
 // CookieUserMatches verifies a cookie payload against the current user record.
 func CookieUserMatches(cookieUser CookieUser, user map[string]interface{}) bool {
-	if cookieUser.ID != toInt64(user["id"]) ||
+	if cookieUser.ID != util.ToInt64(user["id"]) ||
 		cookieUser.UserName != fmt.Sprintf("%v", user["userName"]) {
 		return false
 	}
@@ -126,7 +127,7 @@ func copyAuthUserMap(src map[string]interface{}) map[string]interface{} {
 
 func publicAuthUser(user map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
-		"id":         toInt64(user["id"]),
+		"id":         util.ToInt64(user["id"]),
 		"userName":   fmt.Sprintf("%v", user["userName"]),
 		"createTime": user["createTime"],
 	}
@@ -288,18 +289,5 @@ func AuthRequired() gin.HandlerFunc {
 		c.Set("userFull", trueUser)
 
 		c.Next()
-	}
-}
-
-func toInt64(v interface{}) int64 {
-	switch val := v.(type) {
-	case int64:
-		return val
-	case int:
-		return int64(val)
-	case float64:
-		return int64(val)
-	default:
-		return 0
 	}
 }

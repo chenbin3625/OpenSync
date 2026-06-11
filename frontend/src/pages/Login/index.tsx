@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import './Login.css';
 import { Form, Input, Button, Card, Modal, App, Typography, ConfigProvider, theme } from 'antd';
 import { UserOutlined, LockOutlined, KeyOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -10,7 +11,7 @@ const { Title, Text } = Typography;
 export default function Login() {
   const navigate = useNavigate();
   const { setUserInfo, setAuthChecked } = useStore();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [loading, setLoading] = useState(false);
   const [resetVisible, setResetVisible] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
@@ -37,7 +38,7 @@ export default function Login() {
     try {
       const res = await resetPwd(values);
       if (res.data) {
-        Modal.info({
+        modal.info({
           title: '重置成功',
           content: `新密码为：${res.data}，请妥善保管。`,
         });
@@ -102,6 +103,7 @@ export default function Login() {
           open={resetVisible}
           onCancel={() => setResetVisible(false)}
           footer={null}
+          forceRender
         >
           <Form form={resetForm} onFinish={handleReset} layout="vertical">
             <Form.Item name="userName" rules={[{ required: true, message: '请输入用户名' }]}>

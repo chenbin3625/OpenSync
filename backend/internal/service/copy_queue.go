@@ -122,7 +122,7 @@ func (q *copyQueue) compactLocked() {
 		q.head = 0
 		return
 	}
-	if q.head > len(q.items)/2 {
+	if q.head >= 1024 || q.head > len(q.items)/4 {
 		q.items = append([]*CopyItem(nil), q.items[q.head:]...)
 		q.head = 0
 	}

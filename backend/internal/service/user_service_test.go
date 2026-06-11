@@ -2,6 +2,7 @@ package service
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -61,5 +62,23 @@ func TestCheckPwdUpgradesLegacyMD5PasswordHash(t *testing.T) {
 	}
 	if !crypto.CheckPassword("old-password", upgradedHash, "test-secret") {
 		t.Fatalf("upgraded hash does not verify original password")
+	}
+}
+
+func TestPasswordErrorScopesAreBounded(t *testing.T) {
+	errPwdMu.Lock()
+	errPwd = nil
+	errPwdMu.Unlock()
+
+	for i := 0; i < maxPwdErrorScopes+50; i++ {
+		AddPwdErrorForScope(fmt.Sprintf("scope-%d", i))
+	}
+
+	errPwdMu.Lock()
+	got := len(errPwd)
+	errPwdMu.Unlock()
+
+	if got > maxPwdErrorScopes {
+		t.Fatalf("tracked password error scopes = %d, want <= %d", got, maxPwdErrorScopes)
 	}
 }

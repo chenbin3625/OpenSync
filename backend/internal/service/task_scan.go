@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"opensync/internal/i18n"
+	"opensync/pkg/util"
 	"path"
 	"strings"
 	"sync"
@@ -161,9 +162,9 @@ func (jt *JobTask) syncRetryItems() {
 func (jt *JobTask) retryTaskItem(item map[string]interface{}) {
 	copyType := taskItemTypeFromValue(item["type"])
 	isPath := taskItemObjectFromValue(item["isPath"]) == taskItemPath
-	srcPath := stringValue(item["srcPath"])
-	dstPath := stringValue(item["dstPath"])
-	fileName := stringValue(item["fileName"])
+	srcPath := util.StringValue(item["srcPath"])
+	dstPath := util.StringValue(item["dstPath"])
+	fileName := util.StringValue(item["fileName"])
 	fileSize := item["fileSize"]
 
 	switch copyType {
@@ -190,7 +191,7 @@ func (jt *JobTask) retryMkdir(srcPath, dstPath string, copyType taskItemType) {
 
 	status := taskStatusSuccess
 	var errMsg *string
-	scanIntervalT := toInt(jt.Job["scanIntervalT"])
+	scanIntervalT := util.ToInt(jt.Job["scanIntervalT"])
 	if err := jt.AlistClient.MkdirContext(jt.context(), dstPath, scanIntervalT); err != nil {
 		status = taskStatusFailed
 		e := err.Error()
@@ -227,7 +228,7 @@ func (jt *JobTask) copyFile(srcPath, dstPath, fileName string, fileSize interfac
 	if jt.isBreak() {
 		return
 	}
-	method := toInt(jt.Job["method"])
+	method := util.ToInt(jt.Job["method"])
 	copyType := taskItemTypeCopy
 	if method >= 2 {
 		copyType = taskItemTypeMove
@@ -260,7 +261,7 @@ func (jt *JobTask) delFile(path, fileName string, size interface{}) {
 	if isPath {
 		name = fileName[:len(fileName)-1]
 	}
-	scanIntervalT := toInt(jt.Job["scanIntervalT"])
+	scanIntervalT := util.ToInt(jt.Job["scanIntervalT"])
 	err := jt.AlistClient.DeleteFileContext(jt.context(), path, []string{name}, scanIntervalT)
 	if err != nil {
 		status = taskStatusFailed
@@ -281,17 +282,17 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 		useCache = 1
 	} else {
 		if isSrc {
-			useCache = toInt(jt.Job["useCacheS"])
+			useCache = util.ToInt(jt.Job["useCacheS"])
 		} else {
-			useCache = toInt(jt.Job["useCacheT"])
+			useCache = util.ToInt(jt.Job["useCacheT"])
 		}
 	}
 
 	var scanInterval int
 	if isSrc {
-		scanInterval = toInt(jt.Job["scanIntervalS"])
+		scanInterval = util.ToInt(jt.Job["scanIntervalS"])
 	} else {
-		scanInterval = toInt(jt.Job["scanIntervalT"])
+		scanInterval = util.ToInt(jt.Job["scanIntervalT"])
 	}
 
 	if !jt.acquireScanSlot() {
@@ -460,7 +461,7 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 		return
 	}
 
-	if toInt(jt.Job["method"]) == 1 {
+	if util.ToInt(jt.Job["method"]) == 1 {
 		for dstKey, dstVal := range dstFiles {
 			if _, exists := srcFiles[dstKey]; !exists {
 				jt.delFile(work.DstPath, dstKey, fileSize(dstVal))
@@ -480,7 +481,7 @@ func (jt *JobTask) syncWithoutHave(work scanWork, spec *ignore.GitIgnore) {
 
 	status := taskStatusSuccess
 	var errMsg *string
-	scanIntervalT := toInt(jt.Job["scanIntervalT"])
+	scanIntervalT := util.ToInt(jt.Job["scanIntervalT"])
 	err := jt.AlistClient.MkdirContext(jt.context(), work.DstPath, scanIntervalT)
 	if err != nil {
 		status = taskStatusFailed
@@ -527,8 +528,8 @@ func (jt *JobTask) syncWithoutHave(work scanWork, spec *ignore.GitIgnore) {
 }
 
 func jobAllowsFileSize(job map[string]interface{}, size int64) bool {
-	minSize := toInt64Val(job["minFileSize"])
-	maxSize := toInt64Val(job["maxFileSize"])
+	minSize := util.ToInt64(job["minFileSize"])
+	maxSize := util.ToInt64(job["maxFileSize"])
 	if minSize > 0 && size < minSize {
 		return false
 	}
@@ -564,6 +565,6 @@ func toFileMetadata(val interface{}) FileMetadata {
 		metadata.MD5 = normalizeMD5(metadata.MD5)
 		return metadata
 	default:
-		return FileMetadata{Size: toInt64Val(val)}
+		return FileMetadata{Size: util.ToInt64(val)}
 	}
 }

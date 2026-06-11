@@ -587,6 +587,7 @@ export default function TaskList({
 
   const historyBody = historyList.length === 0 && !loading ? (
     <Empty
+      image={Empty.PRESENTED_IMAGE_SIMPLE}
       description={<Text type="secondary">暂无历史任务记录，执行完成后将在此显示</Text>}
     />
   ) : (

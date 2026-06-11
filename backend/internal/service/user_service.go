@@ -7,6 +7,7 @@ import (
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
 	"opensync/pkg/crypto"
+	"opensync/pkg/util"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,11 @@ import (
 var (
 	errPwd   map[string][]int64
 	errPwdMu sync.Mutex
+)
+
+const (
+	pwdErrorWindowSeconds = int64(300)
+	maxPwdErrorScopes     = 1024
 )
 
 // CheckPwdTime checks if too many password errors in 5 minutes
@@ -30,16 +36,21 @@ func CheckPwdTimeForScope(scope string) {
 	if errPwd == nil {
 		errPwd = make(map[string][]int64)
 	}
+	prunePwdErrorsLocked(now)
 
 	// Remove entries older than 5 minutes
 	failures := errPwd[scope]
 	cleaned := failures[:0]
 	for _, t := range failures {
-		if t+300 >= now {
+		if t+pwdErrorWindowSeconds >= now {
 			cleaned = append(cleaned, t)
 		}
 	}
-	errPwd[scope] = cleaned
+	if len(cleaned) == 0 {
+		delete(errPwd, scope)
+	} else {
+		errPwd[scope] = cleaned
+	}
 	if len(cleaned) > 3 {
 		panicPublic(i18n.G("passwd_wrong_max_time"))
 	}
@@ -57,7 +68,50 @@ func AddPwdErrorForScope(scope string) {
 	if errPwd == nil {
 		errPwd = make(map[string][]int64)
 	}
-	errPwd[scope] = append(errPwd[scope], time.Now().Unix())
+	now := time.Now().Unix()
+	prunePwdErrorsLocked(now)
+	errPwd[scope] = append(errPwd[scope], now)
+	enforcePwdErrorScopeLimitLocked()
+}
+
+func prunePwdErrorsLocked(now int64) {
+	for scope, failures := range errPwd {
+		cleaned := failures[:0]
+		for _, t := range failures {
+			if t+pwdErrorWindowSeconds >= now {
+				cleaned = append(cleaned, t)
+			}
+		}
+		if len(cleaned) == 0 {
+			delete(errPwd, scope)
+			continue
+		}
+		errPwd[scope] = cleaned
+	}
+}
+
+func enforcePwdErrorScopeLimitLocked() {
+	for len(errPwd) > maxPwdErrorScopes {
+		var oldestScope string
+		var oldestTime int64
+		first := true
+		for scope, failures := range errPwd {
+			if len(failures) == 0 {
+				delete(errPwd, scope)
+				continue
+			}
+			lastFailure := failures[len(failures)-1]
+			if first || lastFailure < oldestTime {
+				oldestScope = scope
+				oldestTime = lastFailure
+				first = false
+			}
+		}
+		if oldestScope == "" {
+			return
+		}
+		delete(errPwd, oldestScope)
+	}
 }
 
 func defaultPwdErrorScope() string {
@@ -122,7 +176,7 @@ func CheckPwdScoped(userID int64, passwd string, userName string, clientScope st
 		if err != nil {
 			log.Printf("Failed to upgrade password hash: %v", err)
 		} else {
-			userID := toInt64(user["id"])
+			userID := util.ToInt64(user["id"])
 			if err := mapper.ResetPasswd(userID, newHash); err != nil {
 				log.Printf("Failed to persist upgraded password hash: %v", err)
 			} else {
@@ -159,7 +213,7 @@ func ResetPasswd(userName string, key string, passwd string) string {
 		if err != nil {
 			panic(err.Error())
 		}
-		if err := mapper.ResetPasswd(toInt64(user["id"]), hash); err != nil {
+		if err := mapper.ResetPasswd(util.ToInt64(user["id"]), hash); err != nil {
 			panic(err.Error())
 		}
 		return newPasswd
@@ -168,21 +222,8 @@ func ResetPasswd(userName string, key string, passwd string) string {
 	if err != nil {
 		panic(err.Error())
 	}
-	if err := mapper.ResetPasswd(toInt64(user["id"]), hash); err != nil {
+	if err := mapper.ResetPasswd(util.ToInt64(user["id"]), hash); err != nil {
 		panic(err.Error())
 	}
 	return ""
-}
-
-func toInt64(v interface{}) int64 {
-	switch val := v.(type) {
-	case int64:
-		return val
-	case int:
-		return int64(val)
-	case float64:
-		return int64(val)
-	default:
-		return 0
-	}
 }

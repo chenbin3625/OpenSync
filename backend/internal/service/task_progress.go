@@ -1,6 +1,7 @@
 package service
 
 import (
+	"opensync/pkg/util"
 	"sort"
 	"time"
 )
@@ -172,11 +173,11 @@ func (jt *JobTask) finishedTaskMaps(match func(status taskStatus) bool) []map[st
 }
 
 func sortTaskMapsByCreateTimeDesc(tasks []map[string]interface{}) {
-	sort.SliceStable(tasks, func(i, j int) bool {
-		left := toInt64Val(tasks[i]["createTime"])
-		right := toInt64Val(tasks[j]["createTime"])
+	sort.Slice(tasks, func(i, j int) bool {
+		left := util.ToInt64(tasks[i]["createTime"])
+		right := util.ToInt64(tasks[j]["createTime"])
 		if left == right {
-			return toInt64Val(tasks[i]["id"]) > toInt64Val(tasks[j]["id"])
+			return util.ToInt64(tasks[i]["id"]) > util.ToInt64(tasks[j]["id"])
 		}
 		return left > right
 	})
@@ -186,7 +187,7 @@ func taskListSize(tasks []map[string]interface{}) int64 {
 	var totalSize int64
 	for _, task := range tasks {
 		if task["fileSize"] != nil && taskItemTypeFromValue(task["type"]) != taskItemTypeDelete {
-			totalSize += toInt64Val(task["fileSize"])
+			totalSize += util.ToInt64(task["fileSize"])
 		}
 	}
 	return totalSize

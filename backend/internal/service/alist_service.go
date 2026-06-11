@@ -1,10 +1,12 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
+	"opensync/pkg/util"
 	"strings"
 	"sync"
 )
@@ -115,9 +117,7 @@ func panicAlistClientLoadError(err error) {
 	panicPublic(msg)
 }
 
-// UpdateClient updates an AList client
-func UpdateClient(alist map[string]interface{}) {
-	alistID := toInt64(alist["id"])
+func normalizeAlistInput(alist map[string]interface{}) string {
 	remark, _ := alist["remark"]
 	if remark != nil {
 		if s, ok := remark.(string); ok && strings.TrimSpace(s) == "" {
@@ -125,11 +125,15 @@ func UpdateClient(alist map[string]interface{}) {
 		}
 	}
 
-	urlStr := fmt.Sprintf("%v", alist["url"])
-	if strings.HasSuffix(urlStr, "/") {
-		urlStr = urlStr[:len(urlStr)-1]
-		alist["url"] = urlStr
-	}
+	urlStr := strings.TrimRight(fmt.Sprintf("%v", alist["url"]), "/")
+	alist["url"] = urlStr
+	return urlStr
+}
+
+// UpdateClient updates an AList client
+func UpdateClient(alist map[string]interface{}) {
+	alistID := util.ToInt64(alist["id"])
+	urlStr := normalizeAlistInput(alist)
 
 	token, hasToken := alist["token"]
 	if hasToken {
@@ -172,6 +176,7 @@ func UpdateClient(alist map[string]interface{}) {
 		tokenPtr = &t
 	}
 	remarkStr := ""
+	remark, _ := alist["remark"]
 	if remark != nil {
 		remarkStr = fmt.Sprintf("%v", remark)
 	}
@@ -182,19 +187,7 @@ func UpdateClient(alist map[string]interface{}) {
 
 // AddClient adds a new AList client
 func AddClient(alist map[string]interface{}) {
-	remark, _ := alist["remark"]
-	if remark != nil {
-		if s, ok := remark.(string); ok && strings.TrimSpace(s) == "" {
-			alist["remark"] = nil
-		}
-	}
-
-	urlStr := fmt.Sprintf("%v", alist["url"])
-	if strings.HasSuffix(urlStr, "/") {
-		urlStr = urlStr[:len(urlStr)-1]
-		alist["url"] = urlStr
-	}
-
+	urlStr := normalizeAlistInput(alist)
 	token := fmt.Sprintf("%v", alist["token"])
 
 	client, err := NewAlistClient(urlStr, token, 0)
@@ -238,9 +231,9 @@ func RemoveClient(alistID int64) {
 }
 
 // GetChildPath gets child directory paths for path selector
-func GetChildPath(alistID int64, path string) []map[string]string {
+func GetChildPath(ctx context.Context, alistID int64, path string) []map[string]string {
 	client := GetClientByID(alistID)
-	result, err := client.FilePathList(path)
+	result, err := client.FilePathList(ctx, path)
 	if err != nil {
 		panicPublic(err.Error())
 	}

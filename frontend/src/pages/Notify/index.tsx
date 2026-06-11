@@ -339,6 +339,7 @@ export default function Notify() {
         {list.length === 0 && !loading ? (
           <div className="ops-empty-surface">
             <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={<Text type="secondary">暂无通知渠道配置，添加后可在任务完成时接收通知</Text>}
             />
           </div>
@@ -412,8 +413,8 @@ export default function Notify() {
         open={modalVisible}
         onOk={handleSubmit}
         onCancel={() => setModalVisible(false)}
-        destroyOnClose
         width={520}
+        forceRender
         footer={(
           <Space>
             <Button onClick={() => setModalVisible(false)}>取消</Button>

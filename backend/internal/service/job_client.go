@@ -5,6 +5,7 @@ import (
 	"log"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
+	"opensync/pkg/util"
 	"sync"
 	"time"
 )
@@ -17,6 +18,7 @@ type JobClient struct {
 	JobDoing       bool
 	CurrentJobTask *JobTask
 	mu             sync.Mutex
+	stateCh        chan struct{}
 }
 
 func (jc *JobClient) tryMarkDoing() bool {
@@ -26,6 +28,7 @@ func (jc *JobClient) tryMarkDoing() bool {
 		return false
 	}
 	jc.JobDoing = true
+	jc.signalStateChangeLocked()
 	return true
 }
 
@@ -44,12 +47,14 @@ func (jc *JobClient) isBusy() bool {
 func (jc *JobClient) markDone() {
 	jc.mu.Lock()
 	jc.JobDoing = false
+	jc.signalStateChangeLocked()
 	jc.mu.Unlock()
 }
 
 func (jc *JobClient) setCurrentTask(task *JobTask) {
 	jc.mu.Lock()
 	jc.CurrentJobTask = task
+	jc.signalStateChangeLocked()
 	jc.mu.Unlock()
 }
 
@@ -63,30 +68,62 @@ func (jc *JobClient) clearCurrentTask(task *JobTask) {
 	jc.mu.Lock()
 	if task == nil || jc.CurrentJobTask == task {
 		jc.CurrentJobTask = nil
+		jc.signalStateChangeLocked()
 	}
 	jc.mu.Unlock()
 }
 
 func (jc *JobClient) waitUntilIdle(timeout time.Duration) bool {
-	if timeout <= 0 {
-		return !jc.isDoing() && jc.currentTask() == nil
+	var deadline <-chan time.Time
+	var timer *time.Timer
+	if timeout > 0 {
+		timer = time.NewTimer(timeout)
+		defer timer.Stop()
+		deadline = timer.C
 	}
-
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
 
 	for {
-		if !jc.isDoing() && jc.currentTask() == nil {
+		jc.mu.Lock()
+		if jc.isIdleLocked() {
+			jc.mu.Unlock()
 			return true
 		}
+		if timeout <= 0 {
+			jc.mu.Unlock()
+			return false
+		}
+		stateCh := jc.stateChangeChLocked()
+		jc.mu.Unlock()
+
 		select {
-		case <-deadline.C:
-			return !jc.isDoing() && jc.currentTask() == nil
-		case <-ticker.C:
+		case <-deadline:
+			jc.mu.Lock()
+			idle := jc.isIdleLocked()
+			jc.mu.Unlock()
+			return idle
+		case <-stateCh:
 		}
 	}
+}
+
+func (jc *JobClient) isIdleLocked() bool {
+	return !jc.JobDoing && jc.CurrentJobTask == nil
+}
+
+func (jc *JobClient) stateChangeChLocked() chan struct{} {
+	if jc.stateCh == nil {
+		jc.stateCh = make(chan struct{})
+	}
+	return jc.stateCh
+}
+
+func (jc *JobClient) signalStateChangeLocked() {
+	if jc.stateCh == nil {
+		jc.stateCh = make(chan struct{})
+		return
+	}
+	close(jc.stateCh)
+	jc.stateCh = make(chan struct{})
 }
 
 func (jc *JobClient) setEnable(enable int) {
@@ -100,13 +137,13 @@ func (jc *JobClient) setEnable(enable int) {
 func (jc *JobClient) enabled() bool {
 	jc.mu.Lock()
 	defer jc.mu.Unlock()
-	return jc.Job != nil && toInt(jc.Job["enable"]) == 1
+	return jc.Job != nil && util.ToInt(jc.Job["enable"]) == 1
 }
 
 func (jc *JobClient) replaceJobConfig(job map[string]interface{}, scheduler *Scheduler) *Scheduler {
 	jc.mu.Lock()
 	oldScheduler := jc.Scheduler
-	jc.JobID = toInt64(job["id"])
+	jc.JobID = util.ToInt64(job["id"])
 	jc.Job = job
 	jc.Scheduler = scheduler
 	jc.mu.Unlock()
@@ -152,13 +189,13 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 		}
 	}
 
-	jc.JobID = toInt64(job["id"])
+	jc.JobID = util.ToInt64(job["id"])
 	jc.Job = job
 
 	sched := NewScheduler()
 	jc.Scheduler = sched
 
-	err := sched.AddJob(toInt(job["isCron"]), job, func() {
+	err := sched.AddJob(util.ToInt(job["isCron"]), job, func() {
 		jc.DoScheduled()
 	})
 	if err != nil {
@@ -224,7 +261,7 @@ func (jc *JobClient) DoJob() {
 		if !jc.enabled() {
 			return
 		}
-		time.Sleep(10 * time.Second)
+		jc.waitUntilIdle(10 * time.Second)
 	}
 	jc.runMarkedJob()
 }
@@ -285,14 +322,14 @@ func (jc *JobClient) DoResumeTaskItems(sourceTaskID int64) {
 
 // ResumeJob enables and resumes the job
 func (jc *JobClient) ResumeJob() {
-	if toInt(jc.Job["isCron"]) == 2 {
+	if util.ToInt(jc.Job["isCron"]) == 2 {
 		// Manual only, just enable
 		mapper.UpdateJobEnable(jc.JobID, 1)
 		jc.setEnable(1)
 		return
 	}
 
-	err := jc.Scheduler.Resume(toInt(jc.Job["isCron"]), jc.Job, func() {
+	err := jc.Scheduler.Resume(util.ToInt(jc.Job["isCron"]), jc.Job, func() {
 		jc.DoScheduled()
 	})
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"opensync/internal/config"
+	"opensync/pkg/util"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -71,7 +72,7 @@ func newJobTask(taskID int64, jc *JobClient) *JobTask {
 		TaskID:         taskID,
 		JobClient:      jc,
 		Job:            jc.Job,
-		AlistClient:    GetClientByID(toInt64(jc.Job["alistId"])),
+		AlistClient:    GetClientByID(util.ToInt64(jc.Job["alistId"])),
 		CreateTime:     float64(time.Now().Unix()),
 		Finish:         make([]JobTaskItem, 0),
 		pendingPersist: make([]JobTaskItem, 0),

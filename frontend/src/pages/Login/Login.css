@@ -1,0 +1,108 @@
+.login-page {
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 32px 18px;
+  background:
+    linear-gradient(90deg, rgba(14, 165, 233, 0.11) 1px, transparent 1px),
+    linear-gradient(rgba(20, 184, 166, 0.11) 1px, transparent 1px),
+    radial-gradient(circle at 18% 20%, rgba(20, 184, 166, 0.18), transparent 28%),
+    radial-gradient(circle at 82% 76%, rgba(37, 99, 235, 0.14), transparent 30%),
+    linear-gradient(135deg, #f8fafc 0%, #e8f7f4 54%, #f4f0e8 100%);
+  background-size: 32px 32px, 32px 32px, auto, auto, auto;
+}
+
+.login-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(115deg, rgba(255, 255, 255, 0.84) 0%, transparent 36%),
+    radial-gradient(circle at center, transparent 0%, rgba(255, 255, 255, 0.62) 78%);
+  pointer-events: none;
+}
+
+.login-orbit {
+  position: absolute;
+  border: 2px solid rgba(13, 148, 136, 0.2);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.login-orbit-primary {
+  width: min(760px, 88vw);
+  height: 260px;
+  transform: rotate(-22deg);
+}
+
+.login-orbit-secondary {
+  width: min(620px, 78vw);
+  height: 190px;
+  border-color: rgba(37, 99, 235, 0.16);
+  transform: rotate(18deg);
+}
+
+.login-backdrop-lines {
+  position: absolute;
+  width: min(860px, 92vw);
+  height: 420px;
+  background:
+    linear-gradient(120deg, transparent 0 45%, rgba(13, 148, 136, 0.12) 45% 45.5%, transparent 45.5% 100%),
+    linear-gradient(150deg, transparent 0 52%, rgba(37, 99, 235, 0.1) 52% 52.5%, transparent 52.5% 100%);
+  pointer-events: none;
+}
+
+.login-card {
+  position: relative;
+  z-index: 1;
+  width: min(420px, 100%);
+  background: rgba(255, 255, 255, 0.72) !important;
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(15, 118, 110, 0.14);
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.login-card .ant-card-body {
+  background: transparent;
+}
+
+.login-brand {
+  margin-bottom: 32px;
+  text-align: center;
+}
+
+.login-brand .ant-typography {
+  margin-bottom: 0;
+}
+
+.login-logo {
+  display: block;
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 12px;
+}
+
+.login-forgot {
+  margin-bottom: 0;
+  text-align: center;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .login-page {
+    align-items: flex-start;
+    padding-top: 72px;
+  }
+
+  .login-orbit-primary {
+    height: 210px;
+  }
+
+  .login-orbit-secondary {
+    height: 150px;
+  }
+}

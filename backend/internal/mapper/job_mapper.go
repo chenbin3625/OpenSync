@@ -5,8 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"opensync/internal/i18n"
+	"opensync/pkg/util"
 	"strings"
 	"time"
+	"unicode/utf8"
+)
+
+const (
+	jobTaskItemListColumns    = "id, taskId, srcPath, dstPath, isPath, fileName, fileSize, type, alistTaskId, status, progress, errMsg, createTime"
+	jobTaskItemRuntimeColumns = "id, taskId, srcPath, dstPath, isPath, fileName, fileSize, type, alistTaskId, status, errMsg, createTime"
 )
 
 // GetJobList gets paginated job list
@@ -38,7 +45,12 @@ func GetJobByID(jobID int64) (map[string]interface{}, error) {
 
 // GetJobByTaskID gets job by task ID
 func GetJobByTaskID(taskID int64) (map[string]interface{}, error) {
-	rst, err := FetchAllToTable("SELECT * FROM job WHERE id IN (SELECT jobId FROM job_task WHERE id=?)", taskID)
+	rst, err := FetchAllToTable(
+		`SELECT j.* FROM job AS j
+		 INNER JOIN job_task AS jt ON jt.jobId=j.id
+		 WHERE jt.id=?`,
+		taskID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -111,21 +123,21 @@ func GetJobTaskList(params map[string]interface{}) (map[string]interface{}, erro
 
 	if status, ok := params["status"]; ok {
 		where += " AND status=?"
-		args = append(args, toInt(status))
+		args = append(args, util.ToInt(status))
 	} else if statuses := parseStatusList(params["statusIn"]); len(statuses) > 0 {
 		clause, statusArgs := statusInClause(statuses)
 		where += fmt.Sprintf(" AND status IN (%s)", clause)
 		args = append(args, statusArgs...)
 	}
 	if startTime, ok := params["startTime"]; ok {
-		start := toInt(startTime)
+		start := util.ToInt(startTime)
 		if start > 0 {
 			where += " AND COALESCE(NULLIF(runTime, 0), createTime) >= ?"
 			args = append(args, start)
 		}
 	}
 	if endTime, ok := params["endTime"]; ok {
-		end := toInt(endTime)
+		end := util.ToInt(endTime)
 		if end > 0 {
 			where += " AND COALESCE(NULLIF(runTime, 0), createTime) <= ?"
 			args = append(args, end)
@@ -155,13 +167,13 @@ func parseStatusList(value interface{}) []int {
 			if strings.TrimSpace(item) == "" {
 				continue
 			}
-			statuses = append(statuses, toInt(item))
+			statuses = append(statuses, util.ToInt(item))
 		}
 		return statuses
 	case []interface{}:
 		statuses := make([]int, 0, len(v))
 		for _, item := range v {
-			statuses = append(statuses, toInt(item))
+			statuses = append(statuses, util.ToInt(item))
 		}
 		return statuses
 	case string:
@@ -171,11 +183,11 @@ func parseStatusList(value interface{}) []int {
 			if strings.TrimSpace(item) == "" {
 				continue
 			}
-			statuses = append(statuses, toInt(item))
+			statuses = append(statuses, util.ToInt(item))
 		}
 		return statuses
 	default:
-		return []int{toInt(v)}
+		return []int{util.ToInt(v)}
 	}
 }
 
@@ -320,7 +332,7 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 		args = append(args, isPath)
 	}
 	if hasError, ok := params["hasError"]; ok {
-		if toInt(hasError) == 1 {
+		if util.ToInt(hasError) == 1 {
 			where += " AND errMsg IS NOT NULL AND errMsg<>''"
 		} else {
 			where += " AND (errMsg IS NULL OR errMsg='')"
@@ -329,13 +341,13 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 	if keyword, ok := params["keyword"]; ok {
 		kw := strings.TrimSpace(fmt.Sprintf("%v", keyword))
 		if kw != "" {
-			where += " AND (fileName LIKE ? ESCAPE '\\' OR srcPath LIKE ? ESCAPE '\\' OR dstPath LIKE ? ESCAPE '\\' OR alistTaskId LIKE ? ESCAPE '\\' OR errMsg LIKE ? ESCAPE '\\')"
-			like := "%" + escapeLike(kw) + "%"
-			args = append(args, like, like, like, like, like)
+			filterSQL, filterArgs := taskItemKeywordFilter(kw)
+			where += filterSQL
+			args = append(args, filterArgs...)
 		}
 	}
 
-	baseSQL := fmt.Sprintf("SELECT * FROM job_task_item %s ORDER BY createTime DESC", where)
+	baseSQL := fmt.Sprintf("SELECT %s FROM job_task_item %s ORDER BY createTime DESC", jobTaskItemListColumns, where)
 
 	// Manual pagination
 	ps, pn, paginated, err := parsePageParams(params)
@@ -364,15 +376,15 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 		return nil, err
 	}
 
-	return map[string]interface{}{"dataList": dataList, "count": toInt64(count)}, nil
+	return map[string]interface{}{"dataList": dataList, "count": util.ToInt64(count)}, nil
 }
 
 // GetFailedJobTaskItems returns failed task items that can be retried.
 func GetFailedJobTaskItems(taskID int64) ([]map[string]interface{}, error) {
 	return FetchAllToTable(
-		`SELECT * FROM job_task_item
+		fmt.Sprintf(`SELECT %s FROM job_task_item
 		 WHERE taskId=? AND status=7
-		 ORDER BY createTime ASC, id ASC`,
+		 ORDER BY createTime ASC, id ASC`, jobTaskItemRuntimeColumns),
 		taskID,
 	)
 }
@@ -389,7 +401,7 @@ func CountJobTaskItemsByStatuses(taskID int64, statuses []int) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return toInt64(count), nil
+	return util.ToInt64(count), nil
 }
 
 // ForEachJobTaskItemsByStatuses reads task items in bounded batches.
@@ -406,11 +418,12 @@ func ForEachJobTaskItemsByStatuses(taskID int64, statuses []int, batchSize int, 
 
 	for {
 		query := fmt.Sprintf(
-			`SELECT * FROM job_task_item
+			`SELECT %s FROM job_task_item
 			 WHERE taskId=? AND status IN (%s)
 			   AND (createTime > ? OR (createTime = ? AND id > ?))
 			 ORDER BY createTime ASC, id ASC
 			 LIMIT %d`,
+			jobTaskItemRuntimeColumns,
 			clause,
 			batchSize,
 		)
@@ -427,8 +440,8 @@ func ForEachJobTaskItemsByStatuses(taskID int64, statuses []int, batchSize int, 
 			return err
 		}
 		last := items[len(items)-1]
-		lastCreateTime = toInt64(last["createTime"])
-		lastID = toInt64(last["id"])
+		lastCreateTime = util.ToInt64(last["createTime"])
+		lastID = util.ToInt64(last["id"])
 	}
 }
 
@@ -446,38 +459,11 @@ func statusInClause(statuses []int) (string, []interface{}) {
 // without scanning the job again.
 func GetResumableJobTaskItems(taskID int64) ([]map[string]interface{}, error) {
 	return FetchAllToTable(
-		`SELECT * FROM job_task_item
+		fmt.Sprintf(`SELECT %s FROM job_task_item
 		 WHERE taskId=? AND status IN (0, 1, 4)
-		 ORDER BY createTime ASC, id ASC`,
+		 ORDER BY createTime ASC, id ASC`, jobTaskItemRuntimeColumns),
 		taskID,
 	)
-}
-
-// GetJobTaskCountByStatus counts task items by status
-func GetJobTaskCountByStatus(taskID int64, status int) int64 {
-	val, err := FetchFirstVal("SELECT COUNT(id) FROM job_task_item WHERE status=? AND taskId=?", status, taskID)
-	if err != nil {
-		return 0
-	}
-	return toInt64(val)
-}
-
-// GetJobTaskCountByOther counts task items with other status
-func GetJobTaskCountByOther(taskID int64) int64 {
-	val, err := FetchFirstVal("SELECT COUNT(id) FROM job_task_item WHERE status NOT IN (0,1,2,7) AND taskId=?", taskID)
-	if err != nil {
-		return 0
-	}
-	return toInt64(val)
-}
-
-// GetJobTaskCountByAll counts all task items for a task
-func GetJobTaskCountByAll(taskID int64) int64 {
-	val, err := FetchFirstVal("SELECT COUNT(id) FROM job_task_item WHERE taskId=?", taskID)
-	if err != nil {
-		return 0
-	}
-	return toInt64(val)
 }
 
 // GetJobTaskCounts returns all task item status counters in one query.
@@ -495,17 +481,97 @@ func GetJobTaskCounts(taskID int64) map[string]interface{} {
 		taskID,
 	)
 	if err != nil || len(rows) == 0 {
-		return map[string]interface{}{
-			"waitNum":    int64(0),
-			"runningNum": int64(0),
-			"successNum": int64(0),
-			"failNum":    int64(0),
-			"otherNum":   int64(0),
-			"allNum":     int64(0),
-			"sumSize":    int64(0),
-		}
+		return emptyJobTaskCounts()
 	}
 	return rows[0]
+}
+
+// GetJobTaskCountsByTaskIDs returns task item counters for many tasks in one query.
+func GetJobTaskCountsByTaskIDs(taskIDs []int64) map[int64]map[string]interface{} {
+	results := make(map[int64]map[string]interface{}, len(taskIDs))
+	uniqueIDs := make([]int64, 0, len(taskIDs))
+	seen := make(map[int64]struct{}, len(taskIDs))
+	for _, taskID := range taskIDs {
+		if taskID <= 0 {
+			continue
+		}
+		if _, ok := seen[taskID]; ok {
+			continue
+		}
+		seen[taskID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, taskID)
+		results[taskID] = emptyJobTaskCounts()
+	}
+	if len(uniqueIDs) == 0 {
+		return results
+	}
+
+	clause, args := int64InClause(uniqueIDs)
+	rows, err := FetchAllToTable(
+		fmt.Sprintf(`SELECT
+				taskId,
+				COUNT(id) AS allNum,
+				COALESCE(SUM(CASE WHEN status=0 THEN 1 ELSE 0 END), 0) AS waitNum,
+				COALESCE(SUM(CASE WHEN status=1 THEN 1 ELSE 0 END), 0) AS runningNum,
+				COALESCE(SUM(CASE WHEN status=2 THEN 1 ELSE 0 END), 0) AS successNum,
+				COALESCE(SUM(CASE WHEN status=7 THEN 1 ELSE 0 END), 0) AS failNum,
+				COALESCE(SUM(CASE WHEN status NOT IN (0,1,2,7) THEN 1 ELSE 0 END), 0) AS otherNum,
+				COALESCE(SUM(CASE WHEN status=2 AND type<>1 AND fileSize IS NOT NULL THEN fileSize ELSE 0 END), 0) AS sumSize
+			FROM job_task_item
+			WHERE taskId IN (%s)
+			GROUP BY taskId`, clause),
+		args...,
+	)
+	if err != nil {
+		return results
+	}
+	for _, row := range rows {
+		taskID := util.ToInt64(row["taskId"])
+		delete(row, "taskId")
+		results[taskID] = row
+	}
+	return results
+}
+
+func emptyJobTaskCounts() map[string]interface{} {
+	return map[string]interface{}{
+		"waitNum":    int64(0),
+		"runningNum": int64(0),
+		"successNum": int64(0),
+		"failNum":    int64(0),
+		"otherNum":   int64(0),
+		"allNum":     int64(0),
+		"sumSize":    int64(0),
+	}
+}
+
+func int64InClause(values []int64) (string, []interface{}) {
+	placeholders := make([]string, 0, len(values))
+	args := make([]interface{}, 0, len(values))
+	for _, value := range values {
+		placeholders = append(placeholders, "?")
+		args = append(args, value)
+	}
+	return strings.Join(placeholders, ","), args
+}
+
+func taskItemKeywordFilter(keyword string) (string, []interface{}) {
+	if taskItemFTSAvailable() && utf8.RuneCountInString(keyword) >= 3 {
+		return " AND id IN (SELECT rowid FROM job_task_item_fts WHERE job_task_item_fts MATCH ?)", []interface{}{fts5Phrase(keyword)}
+	}
+	like := "%" + escapeLike(keyword) + "%"
+	return " AND (fileName LIKE ? ESCAPE '\\' OR srcPath LIKE ? ESCAPE '\\' OR dstPath LIKE ? ESCAPE '\\' OR alistTaskId LIKE ? ESCAPE '\\' OR errMsg LIKE ? ESCAPE '\\')",
+		[]interface{}{like, like, like, like, like}
+}
+
+func taskItemFTSAvailable() bool {
+	var name string
+	err := GetDB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='job_task_item_fts'").Scan(&name)
+	return err == nil && name == "job_task_item_fts"
+}
+
+func fts5Phrase(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 func escapeLike(s string) string {

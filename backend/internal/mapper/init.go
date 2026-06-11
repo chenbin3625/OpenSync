@@ -4,12 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"opensync/internal/i18n"
 	"opensync/pkg/crypto"
-	"time"
 )
 
-const currentVersion = 260606
+const currentVersion = 260611
 
 // InitSQL initializes the database schema and runs migrations
 // Returns the initial admin password if first run, empty string otherwise
@@ -37,8 +35,6 @@ func InitSQL() string {
 				sqlVersion integer DEFAULT %d,
 				createTime integer DEFAULT (strftime('%%s', 'now'))
 			)`, currentVersion),
-
-			fmt.Sprintf(`INSERT INTO user_list(userName, passwd) VALUES ('admin', '%s')`, encPasswd),
 
 			`CREATE TABLE alist_list(
 				id integer primary key autoincrement,
@@ -102,6 +98,10 @@ func InitSQL() string {
 				errMsg text,
 				createTime integer DEFAULT (strftime('%s', 'now'))
 			)`,
+		}
+
+		stmts = append(stmts, jobTaskItemFTSStatements(false)...)
+		stmts = append(stmts,
 
 			`CREATE TABLE notify(
 				id integer primary key autoincrement,
@@ -110,12 +110,15 @@ func InitSQL() string {
 				params text,
 				createTime integer DEFAULT (strftime('%s', 'now'))
 			)`,
-		}
+		)
 
 		for _, stmt := range stmts {
 			if _, err := db.Exec(stmt); err != nil {
 				log.Fatalf("Failed to initialize database: %v\nSQL: %s", err, stmt)
 			}
+		}
+		if _, err := db.Exec("INSERT INTO user_list(userName, passwd) VALUES (?, ?)", "admin", encPasswd); err != nil {
+			log.Fatalf("Failed to insert initial admin user: %v", err)
 		}
 		ensureIndexes(db)
 
@@ -221,7 +224,58 @@ func migrationStatements(fromVersion int64) []string {
 			"ALTER TABLE job DROP COLUMN end_date",
 		)
 	}
+	if fromVersion < 260611 {
+		stmts = append(stmts, jobTaskItemFTSStatements(true)...)
+	}
 	stmts = append(stmts, fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion))
+	return stmts
+}
+
+type sqlExecer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
+func installJobTaskItemFTS(exec sqlExecer, rebuild bool) error {
+	for _, stmt := range jobTaskItemFTSStatements(rebuild) {
+		if _, err := exec.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func jobTaskItemFTSStatements(rebuild bool) []string {
+	stmts := []string{
+		`CREATE VIRTUAL TABLE IF NOT EXISTS job_task_item_fts USING fts5(
+			fileName,
+			srcPath,
+			dstPath,
+			alistTaskId,
+			errMsg,
+			content='job_task_item',
+			content_rowid='id',
+			tokenize='trigram'
+		)`,
+	}
+	if rebuild {
+		stmts = append(stmts, "INSERT INTO job_task_item_fts(job_task_item_fts) VALUES('rebuild')")
+	}
+	stmts = append(stmts,
+		`CREATE TRIGGER IF NOT EXISTS job_task_item_ai AFTER INSERT ON job_task_item BEGIN
+			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES (new.id, new.fileName, new.srcPath, new.dstPath, new.alistTaskId, new.errMsg);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS job_task_item_ad AFTER DELETE ON job_task_item BEGIN
+			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath, old.alistTaskId, old.errMsg);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS job_task_item_au AFTER UPDATE ON job_task_item BEGIN
+			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath, old.alistTaskId, old.errMsg);
+			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES (new.id, new.fileName, new.srcPath, new.dstPath, new.alistTaskId, new.errMsg);
+		END`,
+	)
 	return stmts
 }
 
@@ -277,12 +331,51 @@ func shouldSkipMigrationStatement(tx *sql.Tx, stmt string) bool {
 		return !txTableHasColumn(tx, "job", "start_date")
 	case "ALTER TABLE job DROP COLUMN end_date":
 		return !txTableHasColumn(tx, "job", "end_date")
+	case `CREATE VIRTUAL TABLE IF NOT EXISTS job_task_item_fts USING fts5(
+			fileName,
+			srcPath,
+			dstPath,
+			alistTaskId,
+			errMsg,
+			content='job_task_item',
+			content_rowid='id',
+			tokenize='trigram'
+		)`:
+		return !txTableExists(tx, "job_task_item")
+	case "INSERT INTO job_task_item_fts(job_task_item_fts) VALUES('rebuild')":
+		return !txTableExists(tx, "job_task_item_fts")
+	case `CREATE TRIGGER IF NOT EXISTS job_task_item_ai AFTER INSERT ON job_task_item BEGIN
+			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES (new.id, new.fileName, new.srcPath, new.dstPath, new.alistTaskId, new.errMsg);
+		END`:
+		return !txTableExists(tx, "job_task_item") || !txTableExists(tx, "job_task_item_fts")
+	case `CREATE TRIGGER IF NOT EXISTS job_task_item_ad AFTER DELETE ON job_task_item BEGIN
+			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath, old.alistTaskId, old.errMsg);
+		END`:
+		return !txTableExists(tx, "job_task_item") || !txTableExists(tx, "job_task_item_fts")
+	case `CREATE TRIGGER IF NOT EXISTS job_task_item_au AFTER UPDATE ON job_task_item BEGIN
+			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath, old.alistTaskId, old.errMsg);
+			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES (new.id, new.fileName, new.srcPath, new.dstPath, new.alistTaskId, new.errMsg);
+		END`:
+		return !txTableExists(tx, "job_task_item") || !txTableExists(tx, "job_task_item_fts")
 	default:
 		return false
 	}
 }
 
+func txTableExists(tx *sql.Tx, tableName string) bool {
+	var name string
+	err := tx.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", tableName).Scan(&name)
+	return err == nil && name == tableName
+}
+
 func txTableHasColumn(tx *sql.Tx, tableName, columnName string) bool {
+	if !isSafeSQLIdentifier(tableName) {
+		return false
+	}
 	rows, err := tx.Query("PRAGMA table_info(" + tableName + ")")
 	if err != nil {
 		return false
@@ -320,10 +413,4 @@ func GetEnabledJobs() []map[string]interface{} {
 		return nil
 	}
 	return jobs
-}
-
-// InitLogger sets up log file rotation (called at startup and midnight)
-func InitLogger() {
-	_ = time.Now() // Will be used by log service
-	_ = i18n.G("log_rename_start")
 }
