@@ -14,15 +14,11 @@ OpenSync 是面向飞牛 fnOS / 飞牛 NAS 和 Docker 环境的 AList / OpenList
 - 历史任务支持查看详情、暂停、继续执行、重新执行、只重试失败项和删除记录。
 - 支持多个 AList / OpenList 引擎，添加或更新时会验证连接，令牌不会在列表中展示。
 - 支持自定义 Webhook、Server 酱、钉钉、企业微信、飞书 / Lark 通知。
-- 自定义 Webhook 支持请求体模板和请求头 JSON。
+- 自定义 Webhook 支持 GET / POST / PUT、请求体模板和请求头 JSON。
 - 支持“无需同步时不发送”通知。
 - 支持登录、修改密码、忘记密码、深色模式、中英文和系统运行配置。
 
 ## 界面预览
-
-### 登录
-
-![登录](docs/images/login.png)
 
 ### 任务总览
 
@@ -36,9 +32,9 @@ OpenSync 是面向飞牛 fnOS / 飞牛 NAS 和 Docker 环境的 AList / OpenList
 
 ![历史任务](docs/images/task-history.png)
 
-### 新建和编辑任务
+### 任务详情
 
-![新建和编辑任务](docs/images/job-form.png)
+![任务详情](docs/images/task-detail.png)
 
 ### 引擎管理
 
@@ -51,6 +47,39 @@ OpenSync 是面向飞牛 fnOS / 飞牛 NAS 和 Docker 环境的 AList / OpenList
 ### 系统设置
 
 ![系统设置](docs/images/settings.png)
+
+## 自定义 Webhook 通知
+
+在通知配置页新增通知时，选择“自定义Webhook”即可接入任意支持 HTTP 回调的消息服务或自动化平台。
+
+- `URL` 为必填项，填写接收通知的 Webhook 地址。
+- `HTTP方法` 支持 `GET`、`POST`、`PUT`，默认使用 `POST`。
+- `GET` 会把通知标题和内容作为 `title`、`content` 查询参数发送。
+- `POST` / `PUT` 默认以 `application/json` 发送请求体。
+- `请求体模板` 可选，必须是 JSON 对象，支持 `{title}` 和 `{content}` 占位符；留空时默认发送 `{"title":"通知标题","content":"通知内容"}`。
+- `请求头 JSON` 可选，必须是 JSON 对象，适合填写 `Authorization`、`X-Token` 等鉴权头。
+- 打开“无需同步时不发送”后，当任务没有需要同步的内容时不会发送通知。
+- 保存前可以点击“测试”发送测试消息，确认目标服务能够正常接收。
+
+示例请求体模板：
+
+```json
+{
+  "msg_type": "text",
+  "text": {
+    "title": "{title}",
+    "content": "{content}"
+  }
+}
+```
+
+示例请求头：
+
+```json
+{
+  "Authorization": "Bearer your-token"
+}
+```
 
 ## 快速部署
 
@@ -97,7 +126,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.5.1
+image: chenbin3625/opensync:1.5.2
 ```
 
 ## Docker 命令部署
@@ -235,7 +264,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.5.1`
+- `chenbin3625/opensync:1.5.2`
 - `chenbin3625/opensync:1.5`
 
 镜像支持以下平台：
