@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Table, Tag, Button, Space, Select, Progress, Empty, Typography, Card, Tooltip, Input } from 'antd';
-import { ArrowLeftOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { jobGetTaskItem } from '../../api/job';
 import dayjs from 'dayjs';
@@ -194,7 +194,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 170,
+      width: 190,
       render: (status: number, record: TaskItem) => {
         if (status === 1) {
           const pct = Number(record.progress || 0);
@@ -204,26 +204,24 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
             </Tooltip>
           );
         }
-        return (
+        const errorReason = typeof record.errMsg === 'string' ? record.errMsg.trim() : '';
+        const statusTag = (
           <Tag color={statusColors[status]}>
             {taskItemStatusList[status] || String(status)}
           </Tag>
         );
+        if (statusColors[status] !== 'error' || !errorReason) {
+          return statusTag;
+        }
+        return (
+          <span className="task-status-with-error">
+            {statusTag}
+            <Tooltip title={record.errMsg}>
+              <InfoCircleOutlined className="task-status-error-tip" aria-label="查看错误原因" />
+            </Tooltip>
+          </span>
+        );
       },
-    },
-    {
-      title: 'AList任务ID',
-      dataIndex: 'alistTaskId',
-      key: 'alistTaskId',
-      width: 150,
-      render: (val: string | null) => <LongText value={val} maxWidth={130} />,
-    },
-    {
-      title: '错误信息',
-      dataIndex: 'errMsg',
-      key: 'errMsg',
-      width: 240,
-      render: (val: string | null) => <LongText value={val} maxWidth={220} type="danger" />,
     },
     {
       title: '创建时间',
@@ -233,13 +231,6 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       render: (val: number | undefined) => (
         val ? dayjs.unix(val).format('YYYY-MM-DD HH:mm:ss') : '--'
       ),
-    },
-    {
-      title: '明细ID',
-      dataIndex: 'id',
-      key: 'id',
-      width: 90,
-      render: (val: number | string | undefined) => displayText(val),
     },
   ], []);
 
@@ -328,7 +319,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
           columns={columns}
           rowKey="id"
           loading={loading}
-          scroll={{ x: 1680 }}
+          scroll={{ x: 1410 }}
           pagination={{
             current: page,
             pageSize,

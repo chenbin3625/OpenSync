@@ -786,6 +786,24 @@ body {
   border-radius: 8px;
 }
 
+.task-status-with-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.task-status-with-error .ant-tag {
+  margin-inline-end: 0;
+}
+
+.task-status-error-tip {
+  flex: 0 0 auto;
+  color: var(--ant-color-error);
+  cursor: help;
+  font-size: 14px;
+}
+
 .task-detail-drawer .ant-drawer-header,
 .sync-job-drawer .ant-drawer-header {
   border-bottom-color: var(--ant-color-border-secondary);

@@ -8,11 +8,11 @@ on:
       version:
         description: Version to publish, for example 1.5.0 or v1.5.0
         required: true
-        default: "1.5.2"
+        default: "1.5.3"
       ref:
         description: Git ref to build
         required: true
-        default: "v1.5.2"
+        default: "v1.5.3"
       repository:
         description: Docker Hub repository
         required: true
