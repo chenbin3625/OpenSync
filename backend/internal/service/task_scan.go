@@ -95,7 +95,7 @@ func (jt *JobTask) sync() {
 		return
 	}
 
-	srcPaths := parseSrcPaths(jt.Job["srcPath"])
+	srcPaths := parsePathList(jt.Job["srcPath"])
 	jobExclude := jt.Job["exclude"]
 
 	var spec *ignore.GitIgnore
@@ -107,7 +107,7 @@ func (jt *JobTask) sync() {
 		}
 	}
 
-	dstPaths := parseDstPaths(jt.Job["dstPath"])
+	dstPaths := parsePathList(jt.Job["dstPath"])
 	hasMultipleSrc := len(srcPaths) > 1
 	for _, srcItem := range srcPaths {
 		srcItem = normalizeDirPath(srcItem)
@@ -321,7 +321,7 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 	if spec != nil && len(result) > 0 {
 		filtered := make(map[string]interface{})
 		for key, val := range result {
-			checkPath := path[len(rootPath):] + "/" + key
+			checkPath := excludeMatchPath(rootPath, path, key)
 			if !spec.MatchesPath(checkPath) {
 				filtered[key] = val
 			}
@@ -330,6 +330,15 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 	}
 
 	return result, nil
+}
+
+func excludeMatchPath(rootPath, currentPath, name string) string {
+	relDir := strings.TrimPrefix(currentPath, rootPath)
+	relDir = strings.Trim(relDir, "/")
+	if relDir == "" {
+		return name
+	}
+	return relDir + "/" + name
 }
 
 func pathIfTrue(cond bool, path string) string {

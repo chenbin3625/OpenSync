@@ -97,15 +97,42 @@ func beginAlistClientLoad(alistID int64) (*alistClientLoad, bool) {
 }
 
 func finishAlistClientLoad(alistID int64, load *alistClientLoad, client *AlistClient, err error) {
+	var previous *AlistClient
 	alistClientListMu.Lock()
 	load.client = client
 	load.err = err
 	if err == nil && client != nil {
+		previous = alistClientList[alistID]
 		alistClientList[alistID] = client
 	}
 	delete(alistClientLoads, alistID)
 	alistClientListMu.Unlock()
 	load.wg.Done()
+	if previous != nil && previous != client {
+		previous.Close()
+	}
+}
+
+func storeAlistClient(alistID int64, client *AlistClient) {
+	var previous *AlistClient
+	alistClientListMu.Lock()
+	previous = alistClientList[alistID]
+	alistClientList[alistID] = client
+	alistClientListMu.Unlock()
+	if previous != nil && previous != client {
+		previous.Close()
+	}
+}
+
+func removeCachedAlistClient(alistID int64) {
+	var previous *AlistClient
+	alistClientListMu.Lock()
+	previous = alistClientList[alistID]
+	delete(alistClientList, alistID)
+	alistClientListMu.Unlock()
+	if previous != nil {
+		previous.Close()
+	}
 }
 
 func panicAlistClientLoadError(err error) {
@@ -165,9 +192,7 @@ func UpdateClient(alist map[string]interface{}) {
 		if err != nil {
 			panicPublic(err.Error())
 		}
-		alistClientListMu.Lock()
-		alistClientList[alistID] = client
-		alistClientListMu.Unlock()
+		storeAlistClient(alistID, client)
 	}
 
 	var tokenPtr *string
@@ -207,9 +232,7 @@ func AddClient(alist map[string]interface{}) {
 	}
 
 	client.AlistID = newID
-	alistClientListMu.Lock()
-	alistClientList[newID] = client
-	alistClientListMu.Unlock()
+	storeAlistClient(newID, client)
 }
 
 // RemoveClient removes an AList client
@@ -222,9 +245,7 @@ func RemoveClient(alistID int64) {
 		panicPublic(i18n.G("alist_in_use"))
 	}
 
-	alistClientListMu.Lock()
-	delete(alistClientList, alistID)
-	alistClientListMu.Unlock()
+	removeCachedAlistClient(alistID)
 	if err := mapper.RemoveAlist(alistID); err != nil {
 		panic(err.Error())
 	}

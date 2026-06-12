@@ -121,8 +121,8 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 	successNum := util.ToInt(taskNum["successNum"])
 	failNum := util.ToInt(taskNum["failNum"])
 	allNum := util.ToInt(taskNum["allNum"])
-	srcPath := strings.Join(parseSrcPaths(job["srcPath"]), "、")
-	dstPath := strings.Join(parseDstPaths(job["dstPath"]), "、")
+	srcPath := strings.Join(parsePathList(job["srcPath"]), "、")
+	dstPath := strings.Join(parsePathList(job["dstPath"]), "、")
 
 	content := fmt.Sprintf("Source: %s | Target: %s | Total: %d | Success: %d | Fail: %d",
 		srcPath, dstPath, allNum, successNum, failNum)

@@ -2,10 +2,47 @@ package mapper
 
 import (
 	"database/sql"
+	"opensync/internal/config"
+	"path/filepath"
+	"sync"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
+
+func TestInitSQLCreatesSchemaWithoutInitialAdminUser(t *testing.T) {
+	oldDB := db
+	oldOnce := once
+	oldConfig := config.GetConfig()
+	t.Cleanup(func() {
+		if db != nil && db != oldDB {
+			_ = db.Close()
+		}
+		db = oldDB
+		once = oldOnce
+		config.SetConfigForTest(oldConfig)
+	})
+
+	db = nil
+	once = sync.Once{}
+	config.SetConfigForTest(&config.Config{
+		DB:     config.DBConfig{DBName: filepath.Join(t.TempDir(), "opensync.db")},
+		Server: config.ServerConfig{PasswdStr: "test-secret"},
+	})
+
+	InitSQL()
+
+	var count int
+	if err := GetDB().QueryRow("SELECT COUNT(*) FROM user_list").Scan(&count); err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("initial users = %d, want 0", count)
+	}
+	if !tableHasColumn(GetDB(), "user_list", "recoveryKey") {
+		t.Fatalf("user_list missing recoveryKey column")
+	}
+}
 
 func TestMigrateDBTxSkipsLegacyRenameWhenSpeedColumnMissing(t *testing.T) {
 	testDB, err := sql.Open("sqlite", ":memory:")
@@ -234,6 +271,41 @@ func TestMigrateDBTxCreatesJobTaskItemFTS(t *testing.T) {
 	}
 	if rowID != 2 {
 		t.Fatalf("triggered fts rowid = %d, want 2", rowID)
+	}
+}
+
+func TestMigrateDBTxAddsRecoveryKeyColumn(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE user_list(
+		id integer primary key autoincrement,
+		userName text,
+		passwd text,
+		sqlVersion integer
+	)`); err != nil {
+		t.Fatalf("create user_list: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO user_list(userName, passwd, sqlVersion) VALUES ('admin', 'x', 260611)"); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+
+	if err := migrateDBTx(testDB, 260611); err != nil {
+		t.Fatalf("migrateDBTx() error: %v", err)
+	}
+
+	if !tableHasColumn(testDB, "user_list", "recoveryKey") {
+		t.Fatalf("user_list missing migrated recoveryKey column")
+	}
+	var version int64
+	if err := testDB.QueryRow("SELECT sqlVersion FROM user_list LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("read sqlVersion: %v", err)
+	}
+	if version != currentVersion {
+		t.Fatalf("sqlVersion = %d, want currentVersion %d", version, currentVersion)
 	}
 }
 

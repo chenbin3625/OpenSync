@@ -15,6 +15,14 @@ export interface UserInfo {
   createTime: number;
 }
 
+export interface InitUserInfo extends UserInfo {
+  recoveryKey: string;
+}
+
+export interface InitStatus {
+  initialized: boolean;
+}
+
 export interface SystemSettings {
   expires: number;
   taskTimeout: number;

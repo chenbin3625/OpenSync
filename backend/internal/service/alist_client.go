@@ -53,9 +53,20 @@ func NewAlistClient(alistURL string, token string, alistID int64) (*AlistClient,
 		},
 	}
 	if err := c.getUser(); err != nil {
+		c.Close()
 		return nil, err
 	}
 	return c, nil
+}
+
+// Close releases idle HTTP connections held by this client.
+func (c *AlistClient) Close() {
+	if c == nil || c.client == nil || c.client.Transport == nil {
+		return
+	}
+	if transport, ok := c.client.Transport.(interface{ CloseIdleConnections() }); ok {
+		transport.CloseIdleConnections()
+	}
 }
 
 func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath string, data interface{}, params map[string]string) (json.RawMessage, error) {
@@ -430,36 +441,6 @@ func (c *AlistClient) TaskInfoContext(ctx context.Context, taskID string, copyTy
 		return nil, err
 	}
 	return result, nil
-}
-
-// CopyTaskDone gets completed copy tasks
-func (c *AlistClient) CopyTaskDone() (json.RawMessage, error) {
-	return c.GetContext(context.Background(), "/api/admin/task/copy/done", nil)
-}
-
-// CopyTaskUnDone gets uncompleted copy tasks
-func (c *AlistClient) CopyTaskUnDone() (json.RawMessage, error) {
-	return c.GetContext(context.Background(), "/api/admin/task/copy/undone", nil)
-}
-
-// CopyTaskRetry retries a copy task
-func (c *AlistClient) CopyTaskRetry(taskID string) error {
-	_, err := c.PostContext(context.Background(), "/api/admin/task/copy/retry", nil, map[string]string{"tid": taskID})
-	return err
-}
-
-// CopyTaskClearSucceeded clears completed copy tasks
-func (c *AlistClient) CopyTaskClearSucceeded() error {
-	_, err := c.PostContext(context.Background(), "/api/admin/task/copy/clear_succeeded", nil, nil)
-	return err
-}
-
-func (c *AlistClient) CopyTaskDeleteContext(ctx context.Context, taskID string) error {
-	return c.TaskDeleteContext(ctx, taskID, taskItemTypeCopy)
-}
-
-func (c *AlistClient) CopyTaskCancelContext(ctx context.Context, taskID string) error {
-	return c.TaskCancelContext(ctx, taskID, taskItemTypeCopy)
 }
 
 func (c *AlistClient) TaskDeleteContext(ctx context.Context, taskID string, copyType taskItemType) error {

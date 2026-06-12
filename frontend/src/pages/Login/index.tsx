@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import './Login.css';
 import { Form, Input, Button, Card, Modal, App, Typography, ConfigProvider, theme } from 'antd';
 import { UserOutlined, LockOutlined, KeyOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { login, resetPwd } from '../../api/user';
+import { getInitStatus, initializeUser, login, resetPwd } from '../../api/user';
 import { useStore } from '../../stores/useStore';
 
 const { Title, Text } = Typography;
@@ -13,19 +13,55 @@ export default function Login() {
   const { setUserInfo, setAuthChecked } = useStore();
   const { message, modal } = App.useApp();
   const [loading, setLoading] = useState(false);
+  const [checkingInit, setCheckingInit] = useState(true);
+  const [initialized, setInitialized] = useState(true);
   const [resetVisible, setResetVisible] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [form] = Form.useForm();
   const [resetForm] = Form.useForm();
 
-  const handleLogin = async (values: { userName: string; passwd: string }) => {
+  useEffect(() => {
+    let active = true;
+    getInitStatus()
+      .then((res) => {
+        if (!active) return;
+        setInitialized(res.data.initialized);
+        if (!res.data.initialized) {
+          form.resetFields();
+        }
+      })
+      .catch(() => {
+        // Error handled by interceptor
+      })
+      .finally(() => {
+        if (active) setCheckingInit(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [form]);
+
+  const handleLogin = async (values: { userName: string; passwd: string; confirmPasswd?: string }) => {
     setLoading(true);
     try {
-      const res = await login(values);
-      setUserInfo(res.data);
+      if (initialized) {
+        const res = await login({ userName: values.userName, passwd: values.passwd });
+        setUserInfo(res.data);
+        setAuthChecked(true);
+        message.success('登录成功');
+        navigate('/home');
+        return;
+      }
+
+      const res = await initializeUser({ userName: values.userName, passwd: values.passwd });
+      const { recoveryKey, ...userInfo } = res.data;
+      setUserInfo(userInfo);
       setAuthChecked(true);
-      message.success('登录成功');
-      navigate('/home');
+      modal.info({
+        title: '初始化成功',
+        content: `请立即保存恢复密钥：${recoveryKey}。该密钥仅展示一次，忘记密码时需要使用。`,
+        onOk: () => navigate('/home'),
+      });
     } catch {
       // Error handled by interceptor
     } finally {
@@ -33,18 +69,18 @@ export default function Login() {
     }
   };
 
-  const handleReset = async (values: { userName: string; key: string; passwd?: string }) => {
+  const handleReset = async (values: { userName: string; recoveryKey: string; passwd: string; confirmPasswd?: string }) => {
     setResetLoading(true);
     try {
-      const res = await resetPwd(values);
-      if (res.data) {
-        modal.info({
-          title: '重置成功',
-          content: `新密码为：${res.data}，请妥善保管。`,
-        });
-      } else {
-        message.success('密码重置成功');
-      }
+      const res = await resetPwd({
+        userName: values.userName,
+        recoveryKey: values.recoveryKey,
+        passwd: values.passwd,
+      });
+      modal.info({
+        title: '密码重置成功',
+        content: `请立即保存恢复密钥：${res.data}。旧恢复密钥已失效。`,
+      });
       setResetVisible(false);
       resetForm.resetFields();
     } catch {
@@ -75,7 +111,7 @@ export default function Login() {
           <div className="login-brand">
             <img className="login-logo" src="/favicon.svg" alt="OpenSync" />
             <Title level={3}>OpenSync</Title>
-            <Text type="secondary">AList 自动化同步工具</Text>
+            <Text type="secondary">{initialized ? 'AList 自动化同步工具' : '创建管理员账号'}</Text>
           </div>
 
           <Form form={form} onFinish={handleLogin} layout="vertical" size="large">
@@ -85,16 +121,37 @@ export default function Login() {
             <Form.Item name="passwd" rules={[{ required: true, message: '请输入密码' }]}>
               <Input.Password prefix={<LockOutlined />} placeholder="密码" />
             </Form.Item>
+            {!initialized && (
+              <Form.Item
+                name="confirmPasswd"
+                dependencies={['passwd']}
+                rules={[
+                  { required: true, message: '请确认密码' },
+                  ({ getFieldValue }) => ({
+                    validator(_, value) {
+                      if (!value || getFieldValue('passwd') === value) {
+                        return Promise.resolve();
+                      }
+                      return Promise.reject(new Error('两次输入的密码不一致'));
+                    },
+                  }),
+                ]}
+              >
+                <Input.Password prefix={<LockOutlined />} placeholder="确认密码" />
+              </Form.Item>
+            )}
             <Form.Item>
-              <Button type="primary" htmlType="submit" loading={loading} block>
-                登录
+              <Button type="primary" htmlType="submit" loading={checkingInit || loading} block>
+                {initialized ? '登录' : '创建管理员账号'}
               </Button>
             </Form.Item>
-            <Form.Item className="login-forgot">
-              <Button type="link" onClick={() => setResetVisible(true)}>
-                忘记密码？
-              </Button>
-            </Form.Item>
+            {initialized && (
+              <Form.Item className="login-forgot">
+                <Button type="link" onClick={() => setResetVisible(true)}>
+                  忘记密码？
+                </Button>
+              </Form.Item>
+            )}
           </Form>
         </Card>
 
@@ -109,11 +166,28 @@ export default function Login() {
             <Form.Item name="userName" rules={[{ required: true, message: '请输入用户名' }]}>
               <Input prefix={<UserOutlined />} placeholder="用户名" />
             </Form.Item>
-            <Form.Item name="key" rules={[{ required: true, message: '请输入加密秘钥' }]}>
-              <Input prefix={<KeyOutlined />} placeholder="加密秘钥 (data/secret.key)" />
+            <Form.Item name="recoveryKey" rules={[{ required: true, message: '请输入恢复密钥' }]}>
+              <Input prefix={<KeyOutlined />} placeholder="恢复密钥" />
             </Form.Item>
-            <Form.Item name="passwd">
-              <Input.Password prefix={<LockOutlined />} placeholder="新密码 (留空则自动生成)" />
+            <Form.Item name="passwd" rules={[{ required: true, message: '请输入新密码' }]}>
+              <Input.Password prefix={<LockOutlined />} placeholder="新密码" />
+            </Form.Item>
+            <Form.Item
+              name="confirmPasswd"
+              dependencies={['passwd']}
+              rules={[
+                { required: true, message: '请确认新密码' },
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    if (!value || getFieldValue('passwd') === value) {
+                      return Promise.resolve();
+                    }
+                    return Promise.reject(new Error('两次输入的密码不一致'));
+                  },
+                }),
+              ]}
+            >
+              <Input.Password prefix={<LockOutlined />} placeholder="确认新密码" />
             </Form.Item>
             <Form.Item>
               <Button type="primary" htmlType="submit" loading={resetLoading} block>

@@ -74,6 +74,17 @@ func GetDB() *sql.DB {
 	return db
 }
 
+// CloseDB closes the global database handle and allows later reinitialization.
+func CloseDB() error {
+	if db == nil {
+		return nil
+	}
+	err := db.Close()
+	db = nil
+	once = sync.Once{}
+	return err
+}
+
 // SetDBForTest swaps the package database handle and returns a restore function.
 func SetDBForTest(testDB *sql.DB) func() {
 	oldDB := db

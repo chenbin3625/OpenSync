@@ -8,6 +8,7 @@ import (
 	"opensync/internal/middleware"
 	"opensync/internal/model"
 	"opensync/internal/service"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -34,24 +35,52 @@ func Login(c *gin.Context) {
 	c.JSON(http.StatusOK, model.Success(userReturn))
 }
 
-// ResetPassword handles PUT /svr/noAuth/login
-func ResetPassword(c *gin.Context) {
+// GetInitStatus handles GET /svr/noAuth/init
+func GetInitStatus(c *gin.Context) {
+	c.JSON(http.StatusOK, model.Success(map[string]bool{
+		"initialized": service.IsInitialized(),
+	}))
+}
+
+// Initialize handles POST /svr/noAuth/init
+func Initialize(c *gin.Context) {
 	var req struct {
 		UserName string `json:"userName" form:"userName"`
-		Key      string `json:"key" form:"key"`
 		Passwd   string `json:"passwd" form:"passwd"`
 	}
 	if err := c.ShouldBind(&req); err != nil {
 		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
 		return
 	}
-	result := service.ResetPasswd(req.UserName, req.Key, req.Passwd)
-	middleware.ClearAuthUserCache()
-	if result != "" {
-		c.JSON(http.StatusOK, model.Success(result))
-	} else {
-		c.JSON(http.StatusOK, model.Success(nil))
+	user, recoveryKey := service.InitializeUser(req.UserName, req.Passwd)
+	middleware.SetAuthCookie(c, user)
+	userReturn := map[string]interface{}{
+		"id":          user["id"],
+		"userName":    user["userName"],
+		"createTime":  user["createTime"],
+		"recoveryKey": recoveryKey,
 	}
+	c.JSON(http.StatusOK, model.Success(userReturn))
+}
+
+// ResetPassword handles PUT /svr/noAuth/login
+func ResetPassword(c *gin.Context) {
+	var req struct {
+		UserName    string `json:"userName" form:"userName"`
+		RecoveryKey string `json:"recoveryKey" form:"recoveryKey"`
+		Passwd      string `json:"passwd" form:"passwd"`
+	}
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		return
+	}
+	if strings.TrimSpace(req.UserName) == "" || strings.TrimSpace(req.RecoveryKey) == "" || strings.TrimSpace(req.Passwd) == "" {
+		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		return
+	}
+	result := service.ResetPasswd(req.UserName, req.RecoveryKey, req.Passwd)
+	middleware.ClearAuthUserCache()
+	c.JSON(http.StatusOK, model.Success(result))
 }
 
 // Logout handles DELETE /svr/noAuth/login

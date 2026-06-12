@@ -1,7 +1,9 @@
 package service
 
 import (
+	"errors"
 	"opensync/internal/i18n"
+	"opensync/internal/mapper"
 	"opensync/pkg/util"
 	"testing"
 	"time"
@@ -118,6 +120,78 @@ func TestWaitUntilIdleTimesOutWhileTaskStillRunning(t *testing.T) {
 	if client.waitUntilIdle(20 * time.Millisecond) {
 		t.Fatalf("waitUntilIdle() = true, want false while task is still running")
 	}
+}
+
+func TestJobClientJobSnapshotIsIndependentAndRaceSafe(t *testing.T) {
+	client := &JobClient{
+		Job:       map[string]interface{}{"id": int64(1), "enable": 1, "isCron": 0, "interval": 1},
+		Scheduler: NewScheduler(),
+	}
+
+	snapshot := client.jobSnapshot()
+	oldScheduler := client.replaceJobConfig(
+		map[string]interface{}{"id": int64(1), "enable": 0, "isCron": 2, "interval": 5},
+		NewScheduler(),
+	)
+	if oldScheduler != nil {
+		oldScheduler.Stop()
+	}
+	defer client.Scheduler.Stop()
+
+	if got := util.ToInt(snapshot["enable"]); got != 1 {
+		t.Fatalf("snapshot enable = %d, want original value 1", got)
+	}
+	if got := util.ToInt(client.jobSnapshot()["enable"]); got != 0 {
+		t.Fatalf("current enable = %d, want replacement value 0", got)
+	}
+}
+
+func TestDoAllJobManualPropagatesMapperErrors(t *testing.T) {
+	oldGetEnableJobList := getEnableJobList
+	defer func() {
+		getEnableJobList = oldGetEnableJobList
+	}()
+	getEnableJobList = func() ([]map[string]interface{}, error) {
+		return nil, errors.New("database unavailable")
+	}
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatalf("DoAllJobManual() did not panic")
+		}
+		if err, ok := recovered.(interface{ Error() string }); ok && err.Error() == i18n.G("no_job_for_run") {
+			t.Fatalf("DoAllJobManual() masked database error as no jobs")
+		}
+	}()
+
+	DoAllJobManual()
+}
+
+func TestGetUserUsesSentinelForUserNotFound(t *testing.T) {
+	oldGetUserByName := getUserByName
+	oldGetUserByID := getUserByID
+	defer func() {
+		getUserByName = oldGetUserByName
+		getUserByID = oldGetUserByID
+	}()
+
+	getUserByName = func(string) (map[string]interface{}, error) {
+		return nil, mapper.ErrUserNotFound
+	}
+	getUserByID = mapper.GetUserByID
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatalf("GetUser() did not panic")
+		}
+		if err, ok := recovered.(interface{ Error() string }); !ok || err.Error() != i18n.G("user_not_found") {
+			t.Fatalf("GetUser() panic = %#v, want public user_not_found", recovered)
+		}
+	}()
+
+	GetUser(0, "missing")
 }
 
 func TestRemoveJobClientRejectsRunningJobWithoutStoppingIt(t *testing.T) {

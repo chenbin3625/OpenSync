@@ -7,6 +7,7 @@ const notifySource = readFileSync(new URL('../src/pages/Notify/index.tsx', impor
 const jobFormDrawerSource = readFileSync(new URL('../src/pages/Home/JobFormDrawer.tsx', import.meta.url), 'utf8');
 const taskListSource = readFileSync(new URL('../src/pages/Home/TaskList.tsx', import.meta.url), 'utf8');
 const loginSource = readFileSync(new URL('../src/pages/Login/index.tsx', import.meta.url), 'utf8');
+const userApiSource = readFileSync(new URL('../src/api/user.ts', import.meta.url), 'utf8');
 const settingSource = readFileSync(new URL('../src/pages/Setting/index.tsx', import.meta.url), 'utf8');
 
 test('editing an engine clears stale modal token state before applying current values', () => {
@@ -64,4 +65,23 @@ test('login reset success uses context-aware modal feedback', () => {
   assert.match(loginSource, /const \{ message, modal \} = App\.useApp\(\);/);
   assert.match(loginSource, /modal\.info\(/);
   assert.doesNotMatch(loginSource, /Modal\.info\(/);
+});
+
+test('login password reset uses recovery key instead of secret key', () => {
+  assert.match(userApiSource, /recoveryKey/);
+  assert.match(loginSource, /name="recoveryKey"/);
+  assert.match(loginSource, /placeholder="恢复密钥"/);
+  assert.doesNotMatch(loginSource, /secret\.key/);
+  assert.doesNotMatch(loginSource, /加密秘钥/);
+});
+
+test('login page supports first-run web initialization', () => {
+  assert.match(userApiSource, /getInitStatus/);
+  assert.match(userApiSource, /initializeUser/);
+  assert.match(loginSource, /getInitStatus\(\)/);
+  assert.match(loginSource, /initializeUser\(\{ userName: values\.userName, passwd: values\.passwd \}\)/);
+  assert.match(loginSource, /confirmPasswd/);
+  assert.match(loginSource, /创建管理员账号/);
+  assert.match(loginSource, /recoveryKey/);
+  assert.match(loginSource, /请立即保存恢复密钥/);
 });

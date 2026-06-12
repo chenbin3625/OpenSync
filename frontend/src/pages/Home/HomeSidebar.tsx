@@ -1,7 +1,7 @@
 import { PlusOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import { Button, Tag, Pagination, Empty, Typography, Spin, Menu } from 'antd';
 import type { JobItem } from '../../types';
-import { statusColors, statusLabels, methodNames, formatJobPaths, countJobPaths, getJobName, formatSchedule } from './homeUtils';
+import { jobStatusColors, statusLabels, methodNames, formatJobPaths, countJobPaths, getJobName, formatSchedule } from './homeUtils';
 
 const { Text } = Typography;
 
@@ -26,7 +26,7 @@ function renderSidebarJob(job: JobItem) {
     <div className="sync-sidebar-job">
       <div className="sync-sidebar-job-title">
         <span className="sync-sidebar-job-name">{getJobName(job)}</span>
-        <Tag color={statusColors[job.enable] || 'default'}>
+        <Tag color={jobStatusColors[job.enable] || 'default'}>
           {statusLabels[job.enable] || '未知'}
         </Tag>
       </div>

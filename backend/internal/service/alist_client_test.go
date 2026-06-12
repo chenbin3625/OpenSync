@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -169,5 +171,63 @@ func TestCheckWaitContextBoundsTrackedPathBuckets(t *testing.T) {
 
 	if got := len(client.waits); got > maxAlistWaitBuckets {
 		t.Fatalf("tracked wait buckets = %d, want <= %d", got, maxAlistWaitBuckets)
+	}
+}
+
+type closeTrackingTransport struct {
+	closed atomic.Bool
+}
+
+func (t *closeTrackingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"code":200,"message":"ok","data":{}}`)),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
+
+func (t *closeTrackingTransport) CloseIdleConnections() {
+	t.closed.Store(true)
+}
+
+func TestAlistClientCloseClosesIdleTransportConnections(t *testing.T) {
+	transport := &closeTrackingTransport{}
+	client := &AlistClient{
+		client: &http.Client{Transport: transport},
+	}
+
+	client.Close()
+
+	if !transport.closed.Load() {
+		t.Fatalf("Close() did not close idle transport connections")
+	}
+}
+
+func TestStoreAlistClientClosesReplacedClient(t *testing.T) {
+	oldTransport := &closeTrackingTransport{}
+	oldClient := &AlistClient{
+		AlistID: 42,
+		client:  &http.Client{Transport: oldTransport},
+	}
+	newClient := &AlistClient{AlistID: 42}
+
+	alistClientListMu.Lock()
+	previousList := alistClientList
+	alistClientList = map[int64]*AlistClient{42: oldClient}
+	alistClientListMu.Unlock()
+	defer func() {
+		alistClientListMu.Lock()
+		alistClientList = previousList
+		alistClientListMu.Unlock()
+	}()
+
+	storeAlistClient(42, newClient)
+
+	if !oldTransport.closed.Load() {
+		t.Fatalf("storeAlistClient() did not close the replaced client")
+	}
+	if got := GetClientByID(42); got != newClient {
+		t.Fatalf("cached client = %#v, want new client", got)
 	}
 }

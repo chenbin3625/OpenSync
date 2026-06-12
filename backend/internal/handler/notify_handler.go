@@ -5,7 +5,7 @@ import (
 	"opensync/internal/i18n"
 	"opensync/internal/model"
 	"opensync/internal/service"
-	"strconv"
+	"opensync/pkg/util"
 
 	"github.com/gin-gonic/gin"
 )
@@ -45,12 +45,12 @@ func UpdateNotify(c *gin.Context) {
 
 	if notifyIDStr, ok := req["notifyId"]; ok {
 		// Update status
-		notifyID, err := parseRequiredID(toStr(notifyIDStr), "notifyId")
+		notifyID, err := parseRequiredID(util.StringValue(notifyIDStr), "notifyId")
 		if err != nil {
 			c.JSON(http.StatusOK, model.Error(err.Error()))
 			return
 		}
-		enable := toIntI(req["enable"])
+		enable := util.ToInt(req["enable"])
 		service.UpdateNotifyStatus(notifyID, enable)
 	} else if notify, ok := req["notify"]; ok {
 		// Edit notify
@@ -75,30 +75,4 @@ func DeleteNotify(c *gin.Context) {
 	}
 	service.DeleteNotify(notifyID)
 	c.JSON(http.StatusOK, model.Success(nil))
-}
-
-func toStr(v interface{}) string {
-	switch val := v.(type) {
-	case string:
-		return val
-	case float64:
-		return strconv.FormatFloat(val, 'f', -1, 64)
-	case int64:
-		return strconv.FormatInt(val, 10)
-	default:
-		return ""
-	}
-}
-
-func toIntI(v interface{}) int {
-	switch val := v.(type) {
-	case int:
-		return val
-	case int64:
-		return int(val)
-	case float64:
-		return int(val)
-	default:
-		return 0
-	}
 }

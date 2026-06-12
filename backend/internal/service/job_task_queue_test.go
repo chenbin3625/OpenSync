@@ -9,6 +9,7 @@ import (
 	"opensync/internal/config"
 	"opensync/internal/mapper"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -104,6 +105,36 @@ func TestCopyItemUsesRuntimeAndClientInterfaces(t *testing.T) {
 	}
 }
 
+func TestJobTaskRuntimeInitializationIsConcurrentSafe(t *testing.T) {
+	jt := &JobTask{TaskID: 1}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				jt.initRuntime()
+				_ = jt.context()
+				if j%10 == 0 {
+					jt.requestBreak()
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	if jt.Waiting == nil {
+		t.Fatalf("Waiting queue was not initialized")
+	}
+	if jt.Doing == nil {
+		t.Fatalf("Doing map was not initialized")
+	}
+	if jt.context().Err() == nil {
+		t.Fatalf("context was not canceled after requestBreak")
+	}
+}
+
 func TestRuntimeTaskLimitsUseConfiguredValues(t *testing.T) {
 	limits := taskRuntimeLimitsFromServer(config.ServerConfig{
 		Timeout:               72,
@@ -135,17 +166,17 @@ func TestRuntimeTaskLimitsClampInvalidConfiguredValues(t *testing.T) {
 		MaxRetries:            99,
 	})
 
-	if limits.CopyConcurrency != 5 {
-		t.Fatalf("CopyConcurrency = %d, want default 5", limits.CopyConcurrency)
+	if limits.CopyConcurrency != config.DefaultCopyConcurrency {
+		t.Fatalf("CopyConcurrency = %d, want default %d", limits.CopyConcurrency, config.DefaultCopyConcurrency)
 	}
 	if limits.ScanConcurrency != 20 {
 		t.Fatalf("ScanConcurrency = %d, want max 20", limits.ScanConcurrency)
 	}
-	if limits.RealtimeFinishedItems != 1000 {
-		t.Fatalf("RealtimeFinishedItems = %d, want default 1000", limits.RealtimeFinishedItems)
+	if limits.RealtimeFinishedItems != config.DefaultRealtimeFinishedItems {
+		t.Fatalf("RealtimeFinishedItems = %d, want default %d", limits.RealtimeFinishedItems, config.DefaultRealtimeFinishedItems)
 	}
-	if limits.MaxRetries != maxCopyRetries {
-		t.Fatalf("MaxRetries = %d, want max %d", limits.MaxRetries, maxCopyRetries)
+	if limits.MaxRetries != config.MaxRetryAttempts {
+		t.Fatalf("MaxRetries = %d, want max %d", limits.MaxRetries, config.MaxRetryAttempts)
 	}
 }
 
@@ -392,12 +423,12 @@ func TestCopyHookBuffersOldFinishedItemsBeforePersistThreshold(t *testing.T) {
 	}
 	jt.initRuntime()
 
-	for i := 0; i < defaultRealtimeFinishedItems+3; i++ {
+	for i := 0; i < config.DefaultRealtimeFinishedItems+3; i++ {
 		jt.CopyHook("/src/", "/dst/", "file.txt", int64(10), "", taskStatusSuccess, nil, taskItemFile, taskItemTypeCopy, int64(100+i))
 	}
 
-	if len(jt.Finish) != defaultRealtimeFinishedItems {
-		t.Fatalf("finish len = %d, want capped len %d", len(jt.Finish), defaultRealtimeFinishedItems)
+	if len(jt.Finish) != config.DefaultRealtimeFinishedItems {
+		t.Fatalf("finish len = %d, want capped len %d", len(jt.Finish), config.DefaultRealtimeFinishedItems)
 	}
 	if len(persisted) != 0 {
 		t.Fatalf("persisted len = %d, want 0 before persist batch threshold", len(persisted))
@@ -435,7 +466,7 @@ func TestFlushPendingTaskItemsPersistsOverflowInOneBatch(t *testing.T) {
 	}
 	jt.initRuntime()
 
-	for i := 0; i < defaultRealtimeFinishedItems+3; i++ {
+	for i := 0; i < config.DefaultRealtimeFinishedItems+3; i++ {
 		jt.CopyHook("/src/", "/dst/", "file.txt", int64(10), "", taskStatusSuccess, nil, taskItemFile, taskItemTypeCopy, int64(100+i))
 	}
 

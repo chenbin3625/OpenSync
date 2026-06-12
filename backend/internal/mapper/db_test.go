@@ -87,3 +87,42 @@ func TestInitDBAllowsConcurrentReadConnections(t *testing.T) {
 		t.Fatalf("MaxOpenConnections = %d, want more than one read-capable connection", maxOpen)
 	}
 }
+
+func TestCloseDBClosesGlobalHandleAndAllowsReinit(t *testing.T) {
+	oldDB := db
+	oldOnce := once
+	oldConfig := config.GetConfig()
+	t.Cleanup(func() {
+		if db != nil && db != oldDB {
+			_ = db.Close()
+		}
+		db = oldDB
+		once = oldOnce
+		config.SetConfigForTest(oldConfig)
+	})
+
+	db = nil
+	once = sync.Once{}
+	config.SetConfigForTest(&config.Config{
+		DB: config.DBConfig{DBName: filepath.Join(t.TempDir(), "opensync.db")},
+	})
+
+	first := InitDB()
+	if err := CloseDB(); err != nil {
+		t.Fatalf("CloseDB() error: %v", err)
+	}
+	if db != nil {
+		t.Fatalf("CloseDB() left global db set")
+	}
+	if err := first.Ping(); err == nil {
+		t.Fatalf("old DB Ping() error = nil, want closed database error")
+	}
+
+	second := InitDB()
+	if second == nil {
+		t.Fatalf("InitDB() after CloseDB() returned nil")
+	}
+	if err := second.Ping(); err != nil {
+		t.Fatalf("new DB Ping() error: %v", err)
+	}
+}

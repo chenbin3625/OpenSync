@@ -19,6 +19,7 @@ import {
 import { useRealtimeTask } from './useRealtimeTask';
 import { useRealtimeTaskItems } from './useRealtimeTaskItems';
 import { canPollCurrentDocument } from './pollingVisibility';
+import { displayText, formatSize, taskStatusColors, taskTypeNames } from './homeUtils';
 
 const { Text } = Typography;
 
@@ -37,26 +38,8 @@ function formatDuration(seconds: number): string {
   return parts.join(' ');
 }
 
-/** 格式化文件大小 */
-function formatSize(bytes: number): string {
-  if (bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  let size = bytes;
-  while (size >= 1024 && i < units.length - 1) {
-    size /= 1024;
-    i++;
-  }
-  return `${size.toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
-}
-
-const typeNames: Record<number, string> = { 0: '复制', 1: '删除', 2: '移动' };
 const TAB_TASK_PAGE_SIZE = 20;
 
-const statusColors: Record<number, string> = {
-  0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
-  4: 'default', 5: 'warning', 6: 'error', 7: 'error',
-};
 const statusNames: Record<number, string> = {
   0: '等待中', 1: '运行中', 2: '成功', 3: '部分失败',
   4: '已中止', 5: '超时', 6: '失败', 7: '已停止', 8: '无需同步',
@@ -83,11 +66,6 @@ type ProgressMetric = {
   icon?: ReactNode;
   value: string;
 };
-
-function displayText(value: string | number | null | undefined): string {
-  if (value === null || value === undefined || value === '') return '--';
-  return String(value);
-}
 
 function getTaskDisplayName(task: TaskItem): string {
   if (task.fileName) return task.fileName;
@@ -166,7 +144,7 @@ function RealtimeTaskItems({
               return (
                 <div className="task-progress-file-row" key={rowKey}>
                   <Tag color={task.type === 1 ? 'red' : task.type === 2 ? 'orange' : 'blue'}>
-                    {typeNames[task.type ?? 0] || '复制'}
+                    {taskTypeNames[task.type ?? 0] || '复制'}
                   </Tag>
                   <TaskInlineText className="task-progress-file-name" value={name} tooltip={tooltip} />
                   <TaskInlineText className="task-progress-file-path" value={task.srcPath} tooltip={srcPath} type="secondary" />
@@ -451,7 +429,7 @@ export default function TaskList({
   const columns = useMemo(() => [
     {
       title: '状态', dataIndex: 'status', key: 'status', width: 100,
-      render: (s: number) => <Tag color={statusColors[s]}>{statusNames[s] || s}</Tag>,
+      render: (s: number) => <Tag color={taskStatusColors[s]}>{statusNames[s] || s}</Tag>,
     },
     {
       title: '开始时间', dataIndex: 'runTime', key: 'runTime',

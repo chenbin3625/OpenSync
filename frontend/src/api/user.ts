@@ -1,16 +1,24 @@
 import request from './request';
-import type { ApiResponse, UserInfo } from '../types';
+import type { ApiResponse, InitStatus, InitUserInfo, UserInfo } from '../types';
 
 export function login(data: { userName: string; passwd: string }) {
   return request.post('/noAuth/login', data) as Promise<ApiResponse<UserInfo>>;
+}
+
+export function getInitStatus() {
+  return request.get('/noAuth/init') as Promise<ApiResponse<InitStatus>>;
+}
+
+export function initializeUser(data: { userName: string; passwd: string }) {
+  return request.post('/noAuth/init', data) as Promise<ApiResponse<InitUserInfo>>;
 }
 
 export function logout() {
   return request.delete('/noAuth/login') as Promise<ApiResponse<null>>;
 }
 
-export function resetPwd(data: { userName: string; key: string; passwd?: string }) {
-  return request.put('/noAuth/login', data) as Promise<ApiResponse<string | null>>;
+export function resetPwd(data: { userName: string; recoveryKey: string; passwd: string }) {
+  return request.put('/noAuth/login', data) as Promise<ApiResponse<string>>;
 }
 
 export function getUser() {

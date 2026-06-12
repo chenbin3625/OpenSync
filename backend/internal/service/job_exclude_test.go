@@ -40,3 +40,12 @@ func TestNormalizeExcludeStoresNewlineSeparatedRules(t *testing.T) {
 		t.Fatalf("normalizeExclude() = %q, want %q", got, want)
 	}
 }
+
+func TestExcludeMatchPathOmitsLeadingSlashForRootFiles(t *testing.T) {
+	if got := excludeMatchPath("/src", "/src", "file.tmp"); got != "file.tmp" {
+		t.Fatalf("excludeMatchPath(root file) = %q, want file.tmp", got)
+	}
+	if got := excludeMatchPath("/src", "/src/dir", "file.tmp"); got != "dir/file.tmp" {
+		t.Fatalf("excludeMatchPath(nested file) = %q, want dir/file.tmp", got)
+	}
+}

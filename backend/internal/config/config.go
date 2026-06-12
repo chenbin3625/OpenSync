@@ -45,32 +45,36 @@ var (
 )
 
 const (
-	defaultPort                  = 8023
-	defaultExpires               = 7
-	defaultLogLevel              = 1
-	defaultConsoleLevel          = 2
-	defaultLogSave               = 7
-	defaultTaskSave              = 30
-	defaultTaskTimeout           = 48
-	defaultCopyConcurrency       = 5
-	defaultScanConcurrency       = 8
-	defaultRealtimeFinishedItems = 1000
-	defaultMaxRetries            = 0
+	defaultPort         = 8023
+	defaultExpires      = 7
+	defaultLogLevel     = 1
+	defaultConsoleLevel = 2
+	defaultLogSave      = 7
+	defaultTaskSave     = 30
+	defaultTaskTimeout  = 48
 
-	minExpires               = 1
-	maxExpires               = 365
-	minTaskSave              = 0
-	maxTaskSave              = 3650
-	minTaskTimeout           = 0
-	maxTaskTimeout           = 8760
-	minCopyConcurrency       = 1
-	maxCopyConcurrency       = 100
-	minScanConcurrency       = 1
-	maxScanConcurrency       = 20
-	minRealtimeFinishedItems = 100
-	maxRealtimeFinishedItems = 50000
-	minMaxRetries            = 0
-	maxMaxRetries            = 10
+	minExpires     = 1
+	maxExpires     = 365
+	minTaskSave    = 0
+	maxTaskSave    = 3650
+	minTaskTimeout = 0
+	maxTaskTimeout = 8760
+)
+
+const (
+	DefaultCopyConcurrency       = 5
+	DefaultScanConcurrency       = 8
+	DefaultRealtimeFinishedItems = 1000
+	DefaultMaxRetries            = 0
+
+	MinCopyConcurrency       = 1
+	MaxCopyConcurrency       = 100
+	MinScanConcurrency       = 1
+	MaxScanConcurrency       = 20
+	MinRealtimeFinishedItems = 100
+	MaxRealtimeFinishedItems = 50000
+	MinMaxRetries            = 0
+	MaxRetryAttempts         = 10
 )
 
 // SystemSettings is the subset of backend settings exposed for runtime editing.
@@ -115,10 +119,10 @@ func GetConfig() *Config {
 		LogSave:               defaultLogSave,
 		TaskSave:              defaultTaskSave,
 		Timeout:               defaultTaskTimeout,
-		CopyConcurrency:       defaultCopyConcurrency,
-		ScanConcurrency:       defaultScanConcurrency,
-		RealtimeFinishedItems: defaultRealtimeFinishedItems,
-		MaxRetries:            defaultMaxRetries,
+		CopyConcurrency:       DefaultCopyConcurrency,
+		ScanConcurrency:       DefaultScanConcurrency,
+		RealtimeFinishedItems: DefaultRealtimeFinishedItems,
+		MaxRetries:            DefaultMaxRetries,
 		PasswdStr:             passwdStr,
 	}
 
@@ -240,10 +244,10 @@ func validateSystemSettings(settings SystemSettings) error {
 		{i18n.G("settings_expires"), settings.Expires, minExpires, maxExpires},
 		{i18n.G("settings_task_timeout"), settings.TaskTimeout, minTaskTimeout, maxTaskTimeout},
 		{i18n.G("settings_task_save"), settings.TaskSave, minTaskSave, maxTaskSave},
-		{i18n.G("settings_copy_concurrency"), settings.CopyConcurrency, minCopyConcurrency, maxCopyConcurrency},
-		{i18n.G("settings_scan_concurrency"), settings.ScanConcurrency, minScanConcurrency, maxScanConcurrency},
-		{i18n.G("settings_realtime_finished_items"), settings.RealtimeFinishedItems, minRealtimeFinishedItems, maxRealtimeFinishedItems},
-		{i18n.G("settings_max_retries"), settings.MaxRetries, minMaxRetries, maxMaxRetries},
+		{i18n.G("settings_copy_concurrency"), settings.CopyConcurrency, MinCopyConcurrency, MaxCopyConcurrency},
+		{i18n.G("settings_scan_concurrency"), settings.ScanConcurrency, MinScanConcurrency, MaxScanConcurrency},
+		{i18n.G("settings_realtime_finished_items"), settings.RealtimeFinishedItems, MinRealtimeFinishedItems, MaxRealtimeFinishedItems},
+		{i18n.G("settings_max_retries"), settings.MaxRetries, MinMaxRetries, MaxRetryAttempts},
 	}
 	for _, item := range checks {
 		if item.value < item.min || item.value > item.max {

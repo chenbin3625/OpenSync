@@ -6,6 +6,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { jobGetTaskItem } from '../../api/job';
 import dayjs from 'dayjs';
 import type { TaskItem } from '../../types';
+import { displayText, formatSize, taskItemStatusColors, taskTypeNames } from './homeUtils';
 
 const { Text } = Typography;
 
@@ -13,15 +14,6 @@ const taskItemStatusList = [
   '等待中', '进行中', '成功', '取消中', '已取消',
   '出错（将重试）', '失败中', '已失败', '等待重试中', '等待重试前',
 ];
-
-const statusColors: Record<number, string> = {
-  0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
-  4: 'default', 5: 'error', 6: 'error', 7: 'error', 8: 'default', 9: 'default',
-};
-
-const typeNames: Record<number, string> = {
-  0: '复制', 1: '删除', 2: '移动',
-};
 
 const statusFilterOptions = taskItemStatusList.map((label, value) => ({ label, value }));
 
@@ -40,24 +32,6 @@ const errorFilterOptions = [
   { label: '有错误信息', value: 1 },
   { label: '无错误信息', value: 0 },
 ];
-
-function formatSize(val: number | null): string {
-  if (val == null) return '--';
-  if (val === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  let size = val;
-  while (size >= 1024 && i < units.length - 1) {
-    size /= 1024;
-    i++;
-  }
-  return `${size.toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
-}
-
-function displayText(value: string | number | null | undefined): string {
-  if (value === null || value === undefined || value === '') return '--';
-  return String(value);
-}
 
 function pathFallback(record: TaskItem): string {
   return displayText(record.fileName || record.dstPath || record.srcPath);
@@ -169,7 +143,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       dataIndex: 'fileSize',
       key: 'fileSize',
       width: 120,
-      render: (val: number | null) => formatSize(val),
+      render: (val: number | null) => val == null ? '--' : formatSize(val),
     },
     {
       title: '操作类型',
@@ -177,7 +151,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       key: 'type',
       width: 100,
       render: (val: number, record: TaskItem) => {
-        const label = val === 0 && record.isPath ? '创建' : (typeNames[val] || String(val));
+        const label = val === 0 && record.isPath ? '创建' : (taskTypeNames[val] || String(val));
         const color = val === 1 ? 'red' : val === 2 ? 'orange' : 'blue';
         return <Tag color={color}>{label}</Tag>;
       },
@@ -207,11 +181,11 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
         }
         const errorReason = typeof record.errMsg === 'string' ? record.errMsg.trim() : '';
         const statusTag = (
-          <Tag color={statusColors[status]}>
+          <Tag color={taskItemStatusColors[status]}>
             {taskItemStatusList[status] || String(status)}
           </Tag>
         );
-        if (statusColors[status] !== 'error' || !errorReason) {
+        if (taskItemStatusColors[status] !== 'error' || !errorReason) {
           return statusTag;
         }
         return (

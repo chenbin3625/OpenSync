@@ -1,9 +1,8 @@
 package service
 
 import (
+	"errors"
 	"fmt"
-	"log"
-	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
 	"opensync/pkg/crypto"
@@ -14,13 +13,16 @@ import (
 )
 
 var (
-	errPwd   map[string][]int64
-	errPwdMu sync.Mutex
+	errPwd        map[string][]int64
+	errPwdMu      sync.Mutex
+	getUserByID   = mapper.GetUserByID
+	getUserByName = mapper.GetUserByName
 )
 
 const (
-	pwdErrorWindowSeconds = int64(300)
-	maxPwdErrorScopes     = 1024
+	pwdErrorWindowSeconds      = int64(300)
+	maxPwdErrorScopes          = 1024
+	cliGeneratedPasswordLength = 16
 )
 
 // CheckPwdTime checks if too many password errors in 5 minutes
@@ -143,17 +145,53 @@ func GetUser(userID int64, userName string) map[string]interface{} {
 	var user map[string]interface{}
 	var err error
 	if userID > 0 {
-		user, err = mapper.GetUserByID(userID)
+		user, err = getUserByID(userID)
 	} else {
-		user, err = mapper.GetUserByName(userName)
+		user, err = getUserByName(userName)
 	}
 	if err != nil {
-		if err.Error() == i18n.G("user_not_found") {
-			panicPublic(err.Error())
+		if errors.Is(err, mapper.ErrUserNotFound) {
+			panicPublic(i18n.G("user_not_found"))
 		}
 		panic(err.Error())
 	}
 	return user
+}
+
+// IsInitialized reports whether the application already has a local account.
+func IsInitialized() bool {
+	initialized, err := mapper.HasUsers()
+	if err != nil {
+		panic(err.Error())
+	}
+	return initialized
+}
+
+// InitializeUser creates the first local account from web setup.
+func InitializeUser(userName string, passwd string) (map[string]interface{}, string) {
+	userName = strings.TrimSpace(userName)
+	if userName == "" || strings.TrimSpace(passwd) == "" {
+		panicPublic(i18n.G("lost_part"))
+	}
+
+	if IsInitialized() {
+		panicPublic(i18n.G("system_initialized"))
+	}
+
+	hash, err := crypto.HashPassword(passwd)
+	if err != nil {
+		panic(err.Error())
+	}
+	recoveryKey, recoveryHash := newRecoveryKeyHash()
+	userID, err := mapper.CreateUser(userName, hash, recoveryHash)
+	if err != nil {
+		panic(err.Error())
+	}
+	user, err := mapper.GetUserByID(userID)
+	if err != nil {
+		panic(err.Error())
+	}
+	return user, recoveryKey
 }
 
 // CheckPwd validates password and returns user info
@@ -165,24 +203,10 @@ func CheckPwdScoped(userID int64, passwd string, userName string, clientScope st
 	scope := passwordErrorScope(userID, userName, clientScope)
 	CheckPwdTimeForScope(scope)
 	user := GetUser(userID, userName)
-	cfg := config.GetConfig()
 	storedHash := fmt.Sprintf("%v", user["passwd"])
-	if !crypto.CheckPassword(passwd, storedHash, cfg.Server.PasswdStr) {
+	if !crypto.CheckPassword(passwd, storedHash) {
 		AddPwdErrorForScope(scope)
 		panicPublic(i18n.G("passwd_wrong"))
-	}
-	if !crypto.IsModernPasswordHash(storedHash) {
-		newHash, err := crypto.HashPassword(passwd)
-		if err != nil {
-			log.Printf("Failed to upgrade password hash: %v", err)
-		} else {
-			userID := util.ToInt64(user["id"])
-			if err := mapper.ResetPasswd(userID, newHash); err != nil {
-				log.Printf("Failed to persist upgraded password hash: %v", err)
-			} else {
-				user["passwd"] = newHash
-			}
-		}
 	}
 	return user
 }
@@ -199,31 +223,54 @@ func EditPasswd(userID int64, passwd string, oldPasswd string) {
 	}
 }
 
-// ResetPasswd resets user password (with secret key verification)
-// Returns generated password if passwd is empty, otherwise returns nil
-func ResetPasswd(userName string, key string, passwd string) string {
-	cfg := config.GetConfig()
+// ResetPasswd resets user password after recovery key verification.
+// It returns the replacement recovery key, which must be shown once to the user.
+func ResetPasswd(userName string, recoveryKey string, passwd string) string {
+	userName = strings.TrimSpace(userName)
+	recoveryKey = strings.TrimSpace(recoveryKey)
+	if userName == "" || recoveryKey == "" || strings.TrimSpace(passwd) == "" {
+		panicPublic(i18n.G("lost_part"))
+	}
 	user := GetUser(0, userName)
-	if key != cfg.Server.PasswdStr {
+	storedRecoveryHash := fmt.Sprintf("%v", user["recoveryKey"])
+	if !crypto.CheckPassword(recoveryKey, storedRecoveryHash) {
 		panicPublic(i18n.G("key_wrong"))
 	}
-	if passwd == "" {
-		newPasswd := crypto.GeneratePassword(8)
-		hash, err := crypto.HashPassword(newPasswd)
-		if err != nil {
-			panic(err.Error())
-		}
-		if err := mapper.ResetPasswd(util.ToInt64(user["id"]), hash); err != nil {
-			panic(err.Error())
-		}
-		return newPasswd
-	}
+	newRecoveryKey, newRecoveryHash := newRecoveryKeyHash()
 	hash, err := crypto.HashPassword(passwd)
 	if err != nil {
 		panic(err.Error())
 	}
-	if err := mapper.ResetPasswd(util.ToInt64(user["id"]), hash); err != nil {
+	if err := mapper.ResetUserCredentials(util.ToInt64(user["id"]), hash, newRecoveryHash); err != nil {
 		panic(err.Error())
 	}
-	return ""
+	return newRecoveryKey
+}
+
+// ResetPasswdForCLI resets user credentials for local server operators.
+func ResetPasswdForCLI(userName string) (string, string) {
+	userName = strings.TrimSpace(userName)
+	if userName == "" {
+		panicPublic(i18n.G("lost_part"))
+	}
+	user := GetUser(0, userName)
+	newPasswd := crypto.GeneratePassword(cliGeneratedPasswordLength)
+	newRecoveryKey, newRecoveryHash := newRecoveryKeyHash()
+	hash, err := crypto.HashPassword(newPasswd)
+	if err != nil {
+		panic(err.Error())
+	}
+	if err := mapper.ResetUserCredentials(util.ToInt64(user["id"]), hash, newRecoveryHash); err != nil {
+		panic(err.Error())
+	}
+	return newPasswd, newRecoveryKey
+}
+
+func newRecoveryKeyHash() (string, string) {
+	recoveryKey := crypto.GenerateRecoveryKey()
+	hash, err := crypto.HashPassword(recoveryKey)
+	if err != nil {
+		panic(err.Error())
+	}
+	return recoveryKey, hash
 }

@@ -7,17 +7,9 @@ import (
 )
 
 const (
-	defaultScanConcurrency       = 8
-	maxScanConcurrency           = 20
-	defaultCopyConcurrency       = 5
-	maxCopyConcurrency           = 100
-	maxQueuedCopyItems           = 5000
-	defaultRealtimeFinishedItems = 1000
-	maxRealtimeFinishedItems     = 50000
-	maxPersistTaskItemBatch      = 500
-	retryTaskItemBatchSize       = 500
-	defaultMaxRetries            = 0
-	maxCopyRetries               = 10
+	maxQueuedCopyItems      = 5000
+	maxPersistTaskItemBatch = 500
+	retryTaskItemBatchSize  = 500
 )
 
 var errScanAborted = errors.New("scan aborted")
@@ -40,10 +32,30 @@ func runtimeTaskLimits() taskRuntimeLimits {
 
 func taskRuntimeLimitsFromServer(server config.ServerConfig) taskRuntimeLimits {
 	return taskRuntimeLimits{
-		CopyConcurrency:       intInRangeOrDefault(server.CopyConcurrency, 1, maxCopyConcurrency, defaultCopyConcurrency),
-		ScanConcurrency:       intInRangeOrDefault(server.ScanConcurrency, 1, maxScanConcurrency, defaultScanConcurrency),
-		RealtimeFinishedItems: intInRangeOrDefault(server.RealtimeFinishedItems, 100, maxRealtimeFinishedItems, defaultRealtimeFinishedItems),
-		MaxRetries:            intInRangeOrDefault(server.MaxRetries, 0, maxCopyRetries, defaultMaxRetries),
+		CopyConcurrency: intInRangeOrDefault(
+			server.CopyConcurrency,
+			config.MinCopyConcurrency,
+			config.MaxCopyConcurrency,
+			config.DefaultCopyConcurrency,
+		),
+		ScanConcurrency: intInRangeOrDefault(
+			server.ScanConcurrency,
+			config.MinScanConcurrency,
+			config.MaxScanConcurrency,
+			config.DefaultScanConcurrency,
+		),
+		RealtimeFinishedItems: intInRangeOrDefault(
+			server.RealtimeFinishedItems,
+			config.MinRealtimeFinishedItems,
+			config.MaxRealtimeFinishedItems,
+			config.DefaultRealtimeFinishedItems,
+		),
+		MaxRetries: intInRangeOrDefault(
+			server.MaxRetries,
+			config.MinMaxRetries,
+			config.MaxRetryAttempts,
+			config.DefaultMaxRetries,
+		),
 	}
 }
 

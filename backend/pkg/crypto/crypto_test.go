@@ -15,22 +15,23 @@ func TestHashPasswordUsesBcryptAndVerifiesPassword(t *testing.T) {
 	if !strings.HasPrefix(hash, "$2") {
 		t.Fatalf("hash = %q, want bcrypt hash", hash)
 	}
-	if !CheckPassword("correct horse battery staple", hash, "ignored-secret") {
+	if !CheckPassword("correct horse battery staple", hash) {
 		t.Fatalf("CheckPassword() = false, want true for bcrypt hash")
 	}
-	if CheckPassword("wrong password", hash, "ignored-secret") {
+	if CheckPassword("wrong password", hash) {
 		t.Fatalf("CheckPassword() = true, want false for wrong password")
 	}
 }
 
-func TestCheckPasswordAcceptsLegacyMD5Hash(t *testing.T) {
-	legacy := PasswordToMD5("old-password", "secret-key")
-
-	if !CheckPassword("old-password", legacy, "secret-key") {
-		t.Fatalf("CheckPassword() = false, want true for legacy hash")
-	}
-	if CheckPassword("old-password", legacy, "wrong-secret") {
-		t.Fatalf("CheckPassword() = true, want false with wrong legacy secret")
+func TestCheckPasswordRejectsNonBcryptHashes(t *testing.T) {
+	for _, storedHash := range []string{
+		"old-password",
+		"5ebe2294ecd0e0f08eab7690d2a6ee69",
+		"",
+	} {
+		if CheckPassword("old-password", storedHash) {
+			t.Fatalf("CheckPassword(%q) = true, want false for non-bcrypt hash", storedHash)
+		}
 	}
 }
 

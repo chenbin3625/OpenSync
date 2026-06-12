@@ -2,11 +2,12 @@ package model
 
 // User represents user_list table
 type User struct {
-	ID         int64  `json:"id" db:"id"`
-	UserName   string `json:"userName" db:"userName"`
-	Passwd     string `json:"passwd,omitempty" db:"passwd"`
-	SQLVersion int64  `json:"sqlVersion,omitempty" db:"sqlVersion"`
-	CreateTime int64  `json:"createTime" db:"createTime"`
+	ID          int64  `json:"id" db:"id"`
+	UserName    string `json:"userName" db:"userName"`
+	Passwd      string `json:"passwd,omitempty" db:"passwd"`
+	RecoveryKey string `json:"recoveryKey,omitempty" db:"recoveryKey"`
+	SQLVersion  int64  `json:"sqlVersion,omitempty" db:"sqlVersion"`
+	CreateTime  int64  `json:"createTime" db:"createTime"`
 }
 
 // Alist represents alist_list table

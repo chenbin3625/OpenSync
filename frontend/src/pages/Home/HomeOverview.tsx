@@ -7,7 +7,7 @@ import {
 import type { JobItem } from '../../types';
 import dayjs from 'dayjs';
 import {
-  statusColors, statusLabels, methodNames,
+  jobStatusColors, statusLabels, methodNames,
   formatJobPaths, countJobPaths, formatFileSizeRange, formatExcludePreview,
   getJobName, formatSchedule, formatCache,
 } from './homeUtils';
@@ -63,7 +63,7 @@ export default function HomeOverview({
         <div className="sync-overview-title">
           <Title level={3} className="sync-overview-heading">{getJobName(selectedJob)}</Title>
           <Space size={6} wrap>
-            <Tag color={statusColors[selectedJob.enable] || 'default'}>
+            <Tag color={jobStatusColors[selectedJob.enable] || 'default'}>
               {statusLabels[selectedJob.enable] || '未知'}
             </Tag>
             <Tag>{methodNames[selectedJob.method] || selectedJob.method}</Tag>

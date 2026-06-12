@@ -39,6 +39,7 @@ type JobTask struct {
 	scanBranchSem chan struct{}
 	ctx           context.Context
 	cancel        context.CancelFunc
+	runtimeMu     sync.Mutex
 	copyWG        sync.WaitGroup
 	ScanTotalDirs atomic.Int64
 	ScanDoneDirs  atomic.Int64
@@ -68,11 +69,12 @@ func NewRetryJobTask(taskID int64, jc *JobClient, retryItems []map[string]interf
 }
 
 func newJobTask(taskID int64, jc *JobClient) *JobTask {
+	job := jc.jobSnapshot()
 	jt := &JobTask{
 		TaskID:         taskID,
 		JobClient:      jc,
-		Job:            jc.Job,
-		AlistClient:    GetClientByID(util.ToInt64(jc.Job["alistId"])),
+		Job:            job,
+		AlistClient:    GetClientByID(util.ToInt64(job["alistId"])),
 		CreateTime:     float64(time.Now().Unix()),
 		Finish:         make([]JobTaskItem, 0),
 		pendingPersist: make([]JobTaskItem, 0),
@@ -162,10 +164,16 @@ func scanConcurrencyLimit() int {
 	if limit <= 0 {
 		limit = runtime.NumCPU()
 	}
-	return intInRangeOrDefault(limit, 1, maxScanConcurrency, defaultScanConcurrency)
+	return intInRangeOrDefault(limit, config.MinScanConcurrency, config.MaxScanConcurrency, config.DefaultScanConcurrency)
 }
 
 func (jt *JobTask) initRuntime() {
+	jt.runtimeMu.Lock()
+	defer jt.runtimeMu.Unlock()
+	jt.ensureRuntimeLocked()
+}
+
+func (jt *JobTask) ensureRuntimeLocked() {
 	if jt.Waiting == nil {
 		jt.Waiting = newCopyQueue()
 	}
@@ -194,14 +202,17 @@ func (jt *JobTask) initRuntime() {
 		jt.CurrentTasks = make(map[int][]map[string]interface{})
 	}
 	if jt.ctx == nil || jt.cancel == nil {
-		jt.ctx, jt.cancel = context.WithCancel(context.Background())
+		jt.ctx, jt.cancel = newTaskContext(config.GetConfig().Server.Timeout)
+	}
+	if jt.BreakFlag.Load() && jt.cancel != nil {
+		jt.cancel()
 	}
 }
 
 func (jt *JobTask) context() context.Context {
-	if jt.ctx == nil || jt.cancel == nil {
-		jt.ctx, jt.cancel = context.WithCancel(context.Background())
-	}
+	jt.runtimeMu.Lock()
+	defer jt.runtimeMu.Unlock()
+	jt.ensureRuntimeLocked()
 	return jt.ctx
 }
 
@@ -214,8 +225,14 @@ func (jt *JobTask) isBreak() bool {
 }
 
 func (jt *JobTask) requestBreak() {
-	if !jt.BreakFlag.Swap(true) && jt.cancel != nil {
-		jt.cancel()
+	if !jt.BreakFlag.Swap(true) {
+		jt.runtimeMu.Lock()
+		jt.ensureRuntimeLocked()
+		cancel := jt.cancel
+		jt.runtimeMu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 	}
 }
 

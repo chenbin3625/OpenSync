@@ -6,14 +6,6 @@ import (
 	"strings"
 )
 
-func parseSrcPaths(value interface{}) []string {
-	return parsePathList(value)
-}
-
-func parseDstPaths(value interface{}) []string {
-	return parsePathList(value)
-}
-
 func parsePathList(value interface{}) []string {
 	switch v := value.(type) {
 	case nil:
@@ -53,11 +45,11 @@ func encodePathList(paths []string) string {
 }
 
 func normalizeSrcPathForStorage(value interface{}) string {
-	return encodePathList(parseSrcPaths(value))
+	return encodePathList(parsePathList(value))
 }
 
 func normalizeDstPathForStorage(value interface{}) string {
-	return encodePathList(parseDstPaths(value))
+	return encodePathList(parsePathList(value))
 }
 
 func cleanPathList(paths []string) []string {

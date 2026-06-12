@@ -4,34 +4,26 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"opensync/pkg/crypto"
 )
 
-const currentVersion = 260611
+const currentVersion = 260612
 
 // InitSQL initializes the database schema and runs migrations
-// Returns the initial admin password if first run, empty string otherwise
-func InitSQL() string {
+func InitSQL() {
 	db := GetDB()
 
 	// Check if user_list table exists
 	var name string
 	err := db.QueryRow("SELECT name FROM sqlite_master WHERE name='user_list'").Scan(&name)
 
-	var passwd string
 	if err != nil {
 		// First run - create all tables
-		passwd = crypto.GeneratePassword(8)
-		encPasswd, err := crypto.HashPassword(passwd)
-		if err != nil {
-			log.Fatalf("Failed to hash initial admin password: %v", err)
-		}
-
 		stmts := []string{
 			fmt.Sprintf(`CREATE TABLE user_list(
 				id integer primary key autoincrement,
 				userName text,
 				passwd text,
+				recoveryKey text,
 				sqlVersion integer DEFAULT %d,
 				createTime integer DEFAULT (strftime('%%s', 'now'))
 			)`, currentVersion),
@@ -117,13 +109,10 @@ func InitSQL() string {
 				log.Fatalf("Failed to initialize database: %v\nSQL: %s", err, stmt)
 			}
 		}
-		if _, err := db.Exec("INSERT INTO user_list(userName, passwd) VALUES (?, ?)", "admin", encPasswd); err != nil {
-			log.Fatalf("Failed to insert initial admin user: %v", err)
-		}
 		ensureIndexes(db)
 
-		log.Printf("Database initialized with admin password: %s", passwd)
-		return passwd
+		log.Printf("Database initialized; waiting for web account setup")
+		return
 	}
 
 	// Existing database - check version and migrate if needed
@@ -139,8 +128,6 @@ func InitSQL() string {
 		}
 	}
 	ensureIndexes(db)
-
-	return passwd
 }
 
 func ensureIndexes(db *sql.DB) {
@@ -226,6 +213,9 @@ func migrationStatements(fromVersion int64) []string {
 	}
 	if fromVersion < 260611 {
 		stmts = append(stmts, jobTaskItemFTSStatements(true)...)
+	}
+	if fromVersion < 260612 {
+		stmts = append(stmts, "ALTER TABLE user_list ADD COLUMN recoveryKey text")
 	}
 	stmts = append(stmts, fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion))
 	return stmts
@@ -323,6 +313,8 @@ func shouldSkipMigrationStatement(tx *sql.Tx, stmt string) bool {
 		return txTableHasColumn(tx, "job", "minFileSize")
 	case "ALTER TABLE job ADD COLUMN maxFileSize integer DEFAULT 0":
 		return txTableHasColumn(tx, "job", "maxFileSize")
+	case "ALTER TABLE user_list ADD COLUMN recoveryKey text":
+		return txTableHasColumn(tx, "user_list", "recoveryKey")
 	case "ALTER TABLE job DROP COLUMN year":
 		return !txTableHasColumn(tx, "job", "year")
 	case "ALTER TABLE job DROP COLUMN week":

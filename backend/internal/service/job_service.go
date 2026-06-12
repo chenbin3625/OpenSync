@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,8 +17,9 @@ import (
 )
 
 var (
-	jobClientList   = make(map[int64]*JobClient)
-	jobClientListMu sync.RWMutex
+	jobClientList    = make(map[int64]*JobClient)
+	jobClientListMu  sync.RWMutex
+	getEnableJobList = mapper.GetEnableJobList
 )
 
 var taskNumUpdateSlots = make(chan struct{}, 1)
@@ -42,6 +44,57 @@ func InitJobs() {
 			}()
 			AddJobClient(item, true)
 		}()
+	}
+}
+
+func ShutdownJobs(ctx context.Context) {
+	jobClientListMu.RLock()
+	clients := make([]*JobClient, 0, len(jobClientList))
+	for _, client := range jobClientList {
+		clients = append(clients, client)
+	}
+	jobClientListMu.RUnlock()
+
+	for _, client := range clients {
+		client.StopJob(true)
+	}
+
+	var wg sync.WaitGroup
+	for _, client := range clients {
+		wg.Add(1)
+		go func(client *JobClient) {
+			defer wg.Done()
+			waitJobClientIdleContext(ctx, client)
+		}(client)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
+func waitJobClientIdleContext(ctx context.Context, client *JobClient) {
+	for {
+		client.mu.Lock()
+		if client.isIdleLocked() {
+			client.mu.Unlock()
+			return
+		}
+		stateCh := client.stateChangeChLocked()
+		client.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-stateCh:
+		}
 	}
 }
 
@@ -199,8 +252,11 @@ func EditJobClient(job map[string]interface{}) {
 
 // DoAllJobManual executes all enabled jobs manually
 func DoAllJobManual() {
-	jobList, err := mapper.GetEnableJobList()
-	if err != nil || len(jobList) == 0 {
+	jobList, err := getEnableJobList()
+	if err != nil {
+		panic(err.Error())
+	}
+	if len(jobList) == 0 {
 		panicPublic(i18n.G("no_job_for_run"))
 	}
 	for _, jobItem := range jobList {
@@ -247,7 +303,7 @@ func ContinueJob(jobID int64) {
 // PauseJob disables a job
 func PauseJob(jobID int64) {
 	client := GetJobClientByID(jobID)
-	if util.ToInt(client.Job["isCron"]) == 2 {
+	if util.ToInt(client.jobSnapshot()["isCron"]) == 2 {
 		panicPublic(i18n.G("cannot_disable_manual_job"))
 	}
 	client.StopJob(false)

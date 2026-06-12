@@ -140,14 +140,49 @@ func (jc *JobClient) enabled() bool {
 	return jc.Job != nil && util.ToInt(jc.Job["enable"]) == 1
 }
 
+func (jc *JobClient) jobSnapshot() map[string]interface{} {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return cloneJobConfig(jc.Job)
+}
+
+func (jc *JobClient) idSnapshot() int64 {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return jc.JobID
+}
+
+func (jc *JobClient) configSnapshot() (int64, map[string]interface{}, *Scheduler) {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return jc.JobID, cloneJobConfig(jc.Job), jc.Scheduler
+}
+
+func (jc *JobClient) schedulerSnapshot() *Scheduler {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return jc.Scheduler
+}
+
 func (jc *JobClient) replaceJobConfig(job map[string]interface{}, scheduler *Scheduler) *Scheduler {
 	jc.mu.Lock()
 	oldScheduler := jc.Scheduler
 	jc.JobID = util.ToInt64(job["id"])
-	jc.Job = job
+	jc.Job = cloneJobConfig(job)
 	jc.Scheduler = scheduler
 	jc.mu.Unlock()
 	return oldScheduler
+}
+
+func cloneJobConfig(job map[string]interface{}) map[string]interface{} {
+	if job == nil {
+		return nil
+	}
+	cloned := make(map[string]interface{}, len(job))
+	for key, value := range job {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func cloneTaskRows(rows []map[string]interface{}) []map[string]interface{} {
@@ -165,7 +200,7 @@ func cloneTaskRows(rows []map[string]interface{}) []map[string]interface{} {
 // NewJobClient creates a new job client
 func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 	jc := &JobClient{
-		Job: job,
+		Job: cloneJobConfig(job),
 	}
 
 	addJobID := int64(0)
@@ -190,7 +225,7 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 	}
 
 	jc.JobID = util.ToInt64(job["id"])
-	jc.Job = job
+	jc.Job = cloneJobConfig(job)
 
 	sched := NewScheduler()
 	jc.Scheduler = sched
@@ -236,7 +271,7 @@ func (jc *JobClient) runMarkedJobWithRetryConfig(retryItems []map[string]interfa
 	}()
 
 	var err error
-	taskID, err = mapper.AddJobTask(jc.JobID, time.Now().Unix())
+	taskID, err = mapper.AddJobTask(jc.idSnapshot(), time.Now().Unix())
 	if err != nil {
 		panic(err.Error())
 	}
@@ -322,20 +357,22 @@ func (jc *JobClient) DoResumeTaskItems(sourceTaskID int64) {
 
 // ResumeJob enables and resumes the job
 func (jc *JobClient) ResumeJob() {
-	if util.ToInt(jc.Job["isCron"]) == 2 {
+	jobID, job, scheduler := jc.configSnapshot()
+	isCron := util.ToInt(job["isCron"])
+	if isCron == 2 {
 		// Manual only, just enable
-		mapper.UpdateJobEnable(jc.JobID, 1)
+		mapper.UpdateJobEnable(jobID, 1)
 		jc.setEnable(1)
 		return
 	}
 
-	err := jc.Scheduler.Resume(util.ToInt(jc.Job["isCron"]), jc.Job, func() {
+	err := scheduler.Resume(isCron, job, func() {
 		jc.DoScheduled()
 	})
 	if err != nil {
 		panic(err.Error())
 	}
-	mapper.UpdateJobEnable(jc.JobID, 1)
+	mapper.UpdateJobEnable(jobID, 1)
 	jc.setEnable(1)
 }
 
@@ -352,11 +389,17 @@ func (jc *JobClient) StopJob(remove bool) {
 	if task := jc.currentTask(); task != nil {
 		task.requestBreak()
 	}
+	jobID := jc.idSnapshot()
+	scheduler := jc.schedulerSnapshot()
 	if remove {
-		jc.Scheduler.Stop()
+		if scheduler != nil {
+			scheduler.Stop()
+		}
 	} else {
-		jc.Scheduler.Pause()
-		mapper.UpdateJobEnable(jc.JobID, 0)
-		mapper.UpdateJobTaskStatusByStatusAndJobID(jc.JobID)
+		if scheduler != nil {
+			scheduler.Pause()
+		}
+		mapper.UpdateJobEnable(jobID, 0)
+		mapper.UpdateJobTaskStatusByStatusAndJobID(jobID)
 	}
 }

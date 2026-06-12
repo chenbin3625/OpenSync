@@ -13,12 +13,22 @@ export type ScheduleValues = {
 
 // ---- Constants ----
 
-export const statusColors: Record<number, string> = {
-  0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
-  4: 'default', 5: 'warning', 6: 'error', 7: 'error',
+export const jobStatusColors: Record<number, string> = {
+  0: 'default', 1: 'processing',
 };
 export const statusLabels: Record<number, string> = {
   0: '禁用', 1: '启用',
+};
+export const taskStatusColors: Record<number, string> = {
+  0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
+  4: 'default', 5: 'warning', 6: 'error', 7: 'error', 8: 'default',
+};
+export const taskItemStatusColors: Record<number, string> = {
+  0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
+  4: 'default', 5: 'error', 6: 'error', 7: 'error', 8: 'default', 9: 'default',
+};
+export const taskTypeNames: Record<number, string> = {
+  0: '复制', 1: '删除', 2: '移动',
 };
 export const methodOptions = [
   {
@@ -59,21 +69,16 @@ export const compactDividerStyle = { margin: '8px 0 12px' };
 export const defaultExclude = `# macOS
 .DS_Store
 ._*
-.AppleDouble/
-.LSOverride
 .Spotlight-V100/
 .Trashes/
-.TemporaryItems/
 .fseventsd/
 .DocumentRevisions-V100/
+.TemporaryItems/
 
 # Windows
 Thumbs.db
-ehthumbs.db
-ehthumbs_vista.db
 Desktop.ini
 $RECYCLE.BIN/
-RECYCLER/
 System Volume Information/
 
 # Linux / NAS
@@ -85,67 +90,65 @@ lost+found/
 .Trash-*/
 .Trash/
 
-# 临时文件 / 下载未完成文件
+# 版本控制
+.git/
+
+# 下载未完成 / 临时文件
 *.tmp
 *.temp
-*.log
-*.bak
-*.old
-*.orig
 *.part
 *.crdownload
 *.download
-*.swp
-*.swo
-*.swn
-*~
-~*
+
+# Office / 编辑器锁文件
 ~$*
-*.lock
 .~lock.*#
 
+# --- 以下按需启用，取消注释即可 ---
+
 # 缓存目录
-.cache/
-cache/
-tmp/
-temp/
-logs/
-log/
+# .cache/
+# cache/
+# tmp/
+# temp/
 
-# 开发相关缓存 / 依赖
-node_modules/
-.npm/
-.yarn/
-.pnpm-store/
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.tox/
-.venv/
-venv/
-env/
-.idea/
-.vscode/
-*.iml
+# 日志 / 备份
+# *.log
+# *.bak
+# *.old
+# *.orig
+# *.swp
+# *.swo
+# *.swn
+# *~
+# logs/
+# log/
 
-# 版本控制目录
-.git/
-.svn/
-.hg/
+# 开发依赖
+# node_modules/
+# .npm/
+# .yarn/
+# .pnpm-store/
+# __pycache__/
+# *.pyc
+# *.pyo
+# .venv/
+# venv/
+# env/
+
+# 编辑器 / IDE 配置
+# .idea/
+# .vscode/
+# *.iml
 
 # 构建产物
-.sass-cache/
-.gradle/
-build/
-dist/
-target/
-coverage/
-.next/
-.nuxt/
-.turbo/`;
+# build/
+# dist/
+# target/
+# coverage/
+# .next/
+# .nuxt/
+# .turbo/`;
 
 // ---- Utility Functions ----
 
@@ -231,6 +234,11 @@ export const formatSize = (bytes: number) => {
     unitIndex++;
   }
   return `${size.toFixed(unitIndex === 0 ? 0 : 2)} ${units[unitIndex]}`;
+};
+
+export const displayText = (value: string | number | null | undefined): string => {
+  if (value === null || value === undefined || value === '') return '--';
+  return String(value);
 };
 
 export const formatFileSizeRange = (minSize?: number | null, maxSize?: number | null) => {

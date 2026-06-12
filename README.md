@@ -98,10 +98,18 @@ docker compose up -d
 http://你的设备IP:8023/
 ```
 
-首次启动时，初始管理员密码会打印在容器日志里：
+首次启动后，打开 Web 页面按提示创建管理员用户名和密码。创建完成时页面会一次性展示 24 位恢复密钥，请立即保存；忘记密码时可用“用户名 + 恢复密钥”在 Web 端设置新密码，成功后旧恢复密钥会失效并生成新的恢复密钥。
+
+如果恢复密钥也丢失，需要登录服务器执行 CLI 兜底重置：
 
 ```bash
-docker logs opensync
+./opensync reset-password --user admin
+```
+
+Docker Compose 部署可执行：
+
+```bash
+docker compose exec opensync ./opensync reset-password --user admin
 ```
 
 默认配置会把运行数据保存到当前目录的 `data/` 文件夹。请保留这个目录，它包含数据库、密钥、配置和日志。
@@ -149,7 +157,7 @@ docker run -d \
 3. 重新启动容器。
 4. 首次启动会自动执行数据库迁移。
 
-升级时不要删除 `data/secret.key`，否则旧登录 Cookie 和敏感信息加解密会失效。
+升级时不要删除 `data/secret.key`，否则旧登录 Cookie 和敏感信息加解密会失效。Web 端密码重置只使用恢复密钥，不会要求输入或暴露 `data/secret.key`。
 
 ## 配置
 
@@ -292,6 +300,6 @@ OpenSync 默认推荐使用 Docker Hub 镜像：
 ## 注意事项
 
 - 不要提交或公开 `backend/data`、Docker 挂载的 `data/` 目录或任何包含 AList / OpenList Token 的文件。
-- `data/secret.key` 会影响登录 Cookie 和敏感信息加解密，部署后应通过持久化目录保留。
+- `data/secret.key` 会影响登录 Cookie 和敏感信息加解密，部署后应通过持久化目录保留；它不用于 Web 端密码重置。
 - 如果误分享了运行数据目录，请及时更换 AList / OpenList Token。
 - 升级前建议先备份 `data/` 目录。
