@@ -15,8 +15,12 @@ OpenSync 是面向飞牛 fnOS / 飞牛 NAS 和 Docker 环境的 AList / OpenList
 - 支持多个 AList / OpenList 引擎，添加或更新时会验证连接，令牌不会在列表中展示。
 - 支持自定义 Webhook、Server 酱、钉钉、企业微信、飞书 / Lark 通知。
 - 自定义 Webhook 支持 GET / POST / PUT、请求体模板和请求头 JSON。
-- 支持“无需同步时不发送”通知。
-- 支持登录、修改密码、忘记密码、深色模式、中英文和系统运行配置。
+- 支持”无需同步时不发送”通知。
+- 首次启动通过 Web 页面引导创建管理员账号，自动展示 24 位恢复密钥。
+- 支持通过用户名 + 恢复密钥在 Web 端重置密码，重置后旧密钥自动失效。
+- CLI 命令 `reset-password --user <name>` 支持兜底密码重置。
+- SQL 注入防护与响应大小限制（10MB），防止 OOM。
+- 前端组件模块化，支持深色模式、中英文和系统运行配置。
 
 ## 界面预览
 
@@ -134,7 +138,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.5.3
+image: chenbin3625/opensync:1.7.0
 ```
 
 ## Docker 命令部署
@@ -272,8 +276,8 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.5.3`
-- `chenbin3625/opensync:1.5`
+- `chenbin3625/opensync:1.7.0`
+- `chenbin3625/opensync:1.7`
 
 镜像支持以下平台：
 
