@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: opensync
+    runtime: docker
+    repo: https://github.com/chenbin3625/OpenSync.git
+    branch: main
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: OPENSYNC_PORT
+        value: 8023
+      - key: GIN_MODE
+        value: release
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1
