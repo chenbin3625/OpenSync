@@ -47,6 +47,7 @@ func (s *Scheduler) AddJob(isCron int, jobData map[string]interface{}, fn func()
 	enable := util.ToInt(jobData["enable"])
 	if enable == 0 && s.entryID != 0 {
 		s.cron.Remove(s.entryID)
+		s.entryID = 0
 	}
 
 	return nil

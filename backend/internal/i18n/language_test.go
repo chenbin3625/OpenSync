@@ -6,6 +6,16 @@ import (
 	"testing"
 )
 
+func TestSetLanguageReportsUnsupportedLanguageValue(t *testing.T) {
+	err := SetLanguage("en_us")
+	if err == nil {
+		t.Fatalf("SetLanguage(en_us) error = nil, want unsupported language error")
+	}
+	if err.Error() != "no en_us" {
+		t.Fatalf("SetLanguage(en_us) error = %q, want %q", err.Error(), "no en_us")
+	}
+}
+
 func TestLanguageConcurrentAccessIsRaceFree(t *testing.T) {
 	oldWD, err := os.Getwd()
 	if err != nil {

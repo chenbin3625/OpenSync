@@ -46,3 +46,28 @@ func TestSchedulerResumeIsIdempotent(t *testing.T) {
 		t.Fatalf("entries after duplicate Resume = %d, want 1", got)
 	}
 }
+
+func TestSchedulerResumeReAddsInitiallyDisabledJob(t *testing.T) {
+	s := NewScheduler()
+	defer s.Stop()
+
+	jobData := map[string]interface{}{
+		"enable":   0,
+		"isCron":   0,
+		"interval": 60,
+	}
+	if err := s.AddJob(0, jobData, func() {}); err != nil {
+		t.Fatalf("AddJob() error: %v", err)
+	}
+	if got := len(s.cron.Entries()); got != 0 {
+		t.Fatalf("entries after disabled AddJob = %d, want 0", got)
+	}
+
+	jobData["enable"] = 1
+	if err := s.Resume(0, jobData, func() {}); err != nil {
+		t.Fatalf("Resume() error: %v", err)
+	}
+	if got := len(s.cron.Entries()); got != 1 {
+		t.Fatalf("entries after Resume = %d, want 1", got)
+	}
+}

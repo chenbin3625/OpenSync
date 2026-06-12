@@ -1,6 +1,7 @@
 package i18n
 
 import (
+	"fmt"
 	"opensync/pkg/crypto"
 	"sync"
 )
@@ -194,5 +195,5 @@ type simpleError struct{ msg string }
 
 func (e *simpleError) Error() string { return e.msg }
 func Errorf(format string, args ...interface{}) error {
-	return &simpleError{msg: format}
+	return &simpleError{msg: fmt.Sprintf(format, args...)}
 }
