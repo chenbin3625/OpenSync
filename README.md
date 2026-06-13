@@ -131,6 +131,7 @@ services:
     volumes:
       - ./data:/app/data
     environment:
+      TZ: Asia/Shanghai
       OPENSYNC_PORT: 8023
       GIN_MODE: release
 ```
@@ -138,7 +139,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.7.0
+image: chenbin3625/opensync:1.7.1
 ```
 
 ## Docker 命令部署
@@ -149,6 +150,7 @@ docker run -d \
   --restart unless-stopped \
   -p 8023:8023 \
   -v opensync-data:/app/data \
+  -e TZ=Asia/Shanghai \
   -e OPENSYNC_PORT=8023 \
   -e GIN_MODE=release \
   chenbin3625/opensync:latest
@@ -165,10 +167,11 @@ docker run -d \
 
 ## 配置
 
-当 `data/config.ini` 不存在时，会读取环境变量：
+定时任务时区始终由 `TZ` 控制；当 `data/config.ini` 不存在时，其它启动配置会读取环境变量：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
+| `TZ` | `Asia/Shanghai` | 容器和定时任务使用的时区 |
 | `OPENSYNC_PORT` | `8023` | HTTP 服务端口 |
 | `OPENSYNC_EXPIRES` | `7` | 登录有效期，单位天 |
 | `OPENSYNC_LOG_LEVEL` | `1` | 文件日志等级 |
@@ -209,6 +212,7 @@ docker run -d \
   --restart unless-stopped \
   -p 8023:8023 \
   -v opensync-data:/app/data \
+  -e TZ=Asia/Shanghai \
   -e OPENSYNC_PORT=8023 \
   -e GIN_MODE=release \
   opensync
@@ -276,7 +280,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.7.0`
+- `chenbin3625/opensync:1.7.1`
 - `chenbin3625/opensync:1.7`
 
 镜像支持以下平台：

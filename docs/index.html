@@ -1,0 +1,1334 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenSync | AList / OpenList 自动同步工具</title>
+    <meta
+      name="description"
+      content="OpenSync 是面向飞牛 fnOS、NAS 和 Docker 环境的 AList / OpenList 自动同步工具，支持备份、归档、迁移、定时任务、实时进度和通知。"
+    />
+    <meta property="og:title" content="OpenSync | AList / OpenList 自动同步工具" />
+    <meta
+      property="og:description"
+      content="用可视化任务把本地目录、网盘、对象存储、WebDAV 等存储端统一接入 AList / OpenList，完成自动备份、归档和迁移。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="images/tasks-overview.png" />
+    <style>
+      :root {
+        --ink: #17202a;
+        --ink-soft: #46515d;
+        --muted: #6d7a86;
+        --line: #d7e0e6;
+        --paper: #f7f4ee;
+        --paper-deep: #ece6dc;
+        --surface: #ffffff;
+        --night: #111927;
+        --teal: #0f766e;
+        --blue: #2563eb;
+        --amber: #d98a1b;
+        --green: #2f855a;
+        --code: #0d1522;
+        --shadow: 0 18px 48px rgba(23, 32, 42, 0.12);
+        --radius: 8px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: "MiSans", "HarmonyOS Sans SC", "Avenir Next", "PingFang SC",
+          "Microsoft YaHei", sans-serif;
+        background:
+          linear-gradient(90deg, rgba(23, 32, 42, 0.045) 1px, transparent 1px),
+          linear-gradient(rgba(23, 32, 42, 0.035) 1px, transparent 1px),
+          var(--paper);
+        background-size: 34px 34px, 34px 34px, auto;
+      }
+
+      img {
+        display: block;
+        max-width: 100%;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      a:hover {
+        color: var(--blue);
+      }
+
+      button,
+      a {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      :focus-visible {
+        outline: 3px solid rgba(37, 99, 235, 0.35);
+        outline-offset: 3px;
+      }
+
+      .skip-link {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 100;
+        padding: 10px 14px;
+        border-radius: var(--radius);
+        color: #fff;
+        background: var(--night);
+        transform: translateY(-140%);
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .site-header {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        border-bottom: 1px solid rgba(215, 224, 230, 0.82);
+        background: rgba(247, 244, 238, 0.88);
+        backdrop-filter: blur(16px);
+      }
+
+      .nav {
+        display: flex;
+        width: min(1180px, calc(100% - 32px));
+        min-height: 64px;
+        margin: 0 auto;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--ink);
+        font-weight: 800;
+      }
+
+      .brand-mark {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border: 1px solid rgba(15, 118, 110, 0.32);
+        border-radius: var(--radius);
+        color: var(--teal);
+        background: linear-gradient(135deg, #ffffff, #e4f4ef);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+      }
+
+      .brand-mark svg {
+        width: 20px;
+        height: 20px;
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+      }
+
+      .nav-links a {
+        padding: 9px 11px;
+        border-radius: var(--radius);
+        color: var(--ink-soft);
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .nav-links a:hover {
+        color: var(--ink);
+        background: rgba(23, 32, 42, 0.06);
+      }
+
+      .nav-github {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .hero {
+        position: relative;
+        min-height: min(650px, calc(100vh - 152px));
+        overflow: hidden;
+        padding: 0;
+        color: #fff;
+        background: var(--night);
+        isolation: isolate;
+      }
+
+      .hero::before {
+        position: absolute;
+        inset: 0;
+        z-index: -2;
+        content: "";
+        background:
+          linear-gradient(90deg, rgba(13, 21, 34, 0.9), rgba(13, 21, 34, 0.5) 46%, rgba(13, 21, 34, 0.12)),
+          url("images/tasks-overview.png") center / cover no-repeat;
+      }
+
+      .hero::after {
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        content: "";
+        background:
+          linear-gradient(180deg, rgba(17, 25, 39, 0.22), transparent 40%, rgba(17, 25, 39, 0.72)),
+          repeating-linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0.045) 0,
+            rgba(255, 255, 255, 0.045) 1px,
+            transparent 1px,
+            transparent 84px
+          );
+      }
+
+      .hero-inner {
+        display: grid;
+        width: min(1180px, calc(100% - 32px));
+        min-height: min(650px, calc(100vh - 152px));
+        margin: 0 auto;
+        align-content: center;
+        padding: 58px 0 68px;
+      }
+
+      .hero-copy {
+        max-width: 720px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        margin: 0 0 18px;
+        color: #d8f8ee;
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      .eyebrow::before {
+        width: 34px;
+        height: 2px;
+        background: var(--amber);
+        content: "";
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        max-width: 700px;
+        margin-bottom: 22px;
+        font-family: "DIN Alternate", "Avenir Next Condensed", "MiSans", sans-serif;
+        font-size: 76px;
+        line-height: 0.96;
+        letter-spacing: 0;
+      }
+
+      .hero-lede {
+        max-width: 650px;
+        margin-bottom: 28px;
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 20px;
+        line-height: 1.8;
+      }
+
+      .hero-actions,
+      .section-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .button {
+        display: inline-flex;
+        min-height: 44px;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        padding: 12px 16px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: var(--radius);
+        font-weight: 800;
+        line-height: 1;
+        transition:
+          transform 0.18s ease,
+          box-shadow 0.18s ease,
+          background 0.18s ease;
+      }
+
+      .button svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      .button:hover {
+        transform: translateY(-1px);
+      }
+
+      .button.primary {
+        color: #101820;
+        background: #fff;
+        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.18);
+      }
+
+      .button.primary:hover {
+        color: #101820;
+        background: #f0fbf8;
+      }
+
+      .button.secondary {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .button.secondary:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.18);
+      }
+
+      .section-light .button.primary,
+      .section-paper .button.primary {
+        color: #fff;
+        background: var(--night);
+        box-shadow: 0 16px 34px rgba(17, 25, 39, 0.15);
+      }
+
+      .section-light .button.primary:hover,
+      .section-paper .button.primary:hover {
+        color: #fff;
+        background: #243248;
+      }
+
+      .section-light .button.secondary,
+      .section-paper .button.secondary {
+        color: var(--ink);
+        border-color: var(--line);
+        background: #fff;
+      }
+
+      .section-light .button.secondary:hover,
+      .section-paper .button.secondary:hover {
+        color: var(--ink);
+        background: #eef7f5;
+      }
+
+      .quick-strip {
+        border-bottom: 1px solid var(--line);
+        background: var(--night);
+      }
+
+      .quick-strip-inner {
+        display: grid;
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+        grid-template-columns: repeat(4, 1fr);
+        border-left: 1px solid rgba(255, 255, 255, 0.12);
+      }
+
+      .metric {
+        min-width: 0;
+        padding: 20px;
+        border-right: 1px solid rgba(255, 255, 255, 0.12);
+        color: rgba(255, 255, 255, 0.78);
+      }
+
+      .metric strong {
+        display: block;
+        margin-bottom: 6px;
+        color: #fff;
+        font-family: "DIN Alternate", "Avenir Next Condensed", "MiSans", sans-serif;
+        font-size: 30px;
+        letter-spacing: 0;
+      }
+
+      main {
+        overflow: hidden;
+      }
+
+      section {
+        padding: 88px 0;
+      }
+
+      .section-dark {
+        color: #edf6f5;
+        background: #101820;
+      }
+
+      .section-paper {
+        background: var(--paper);
+      }
+
+      .section-light {
+        background: var(--surface);
+      }
+
+      .wrap {
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .section-head {
+        display: grid;
+        max-width: 780px;
+        gap: 12px;
+        margin-bottom: 34px;
+      }
+
+      .kicker {
+        color: var(--teal);
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .section-dark .kicker {
+        color: #70e0cf;
+      }
+
+      h2 {
+        margin-bottom: 0;
+        font-family: "Avenir Next", "MiSans", "PingFang SC", sans-serif;
+        font-size: 42px;
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+
+      .section-head p,
+      .feature-card p,
+      .workflow-step p,
+      .release-panel p,
+      .github-panel p {
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.8;
+      }
+
+      .section-dark .section-head p,
+      .section-dark .workflow-step p,
+      .section-dark .release-panel p {
+        color: rgba(237, 246, 245, 0.72);
+      }
+
+      .problem-grid {
+        display: grid;
+        grid-template-columns: 0.88fr 1.12fr;
+        gap: 28px;
+        align-items: stretch;
+      }
+
+      .problem-note {
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .problem-note h3 {
+        margin-bottom: 12px;
+        font-size: 22px;
+        line-height: 1.3;
+      }
+
+      .problem-note p {
+        margin-bottom: 0;
+        color: var(--ink-soft);
+        line-height: 1.85;
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+      }
+
+      .feature-card,
+      .workflow-step,
+      .release-panel,
+      .github-panel,
+      .shot,
+      .quick-card {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .feature-card {
+        min-height: 230px;
+        padding: 22px;
+      }
+
+      .feature-card h3,
+      .workflow-step h3,
+      .release-panel h3,
+      .github-panel h3,
+      .quick-card h3 {
+        margin-bottom: 10px;
+        font-size: 19px;
+        line-height: 1.35;
+      }
+
+      .feature-icon {
+        display: grid;
+        width: 42px;
+        height: 42px;
+        margin-bottom: 18px;
+        place-items: center;
+        border: 1px solid rgba(15, 118, 110, 0.26);
+        border-radius: var(--radius);
+        color: var(--teal);
+        background: #effbf7;
+      }
+
+      .feature-icon svg {
+        width: 22px;
+        height: 22px;
+      }
+
+      .workflow {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.16);
+      }
+
+      .workflow-step {
+        min-height: 245px;
+        padding: 28px;
+        border: 0;
+        color: #edf6f5;
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .workflow-step span {
+        display: inline-grid;
+        width: 34px;
+        height: 34px;
+        margin-bottom: 48px;
+        place-items: center;
+        border: 1px solid rgba(112, 224, 207, 0.36);
+        border-radius: var(--radius);
+        color: #70e0cf;
+        font-weight: 900;
+      }
+
+      .workflow-step h3 {
+        color: #fff;
+      }
+
+      .screens {
+        display: grid;
+        grid-template-columns: 1.08fr 0.92fr;
+        gap: 18px;
+        align-items: start;
+      }
+
+      .shot {
+        overflow: hidden;
+        background: #fff;
+        box-shadow: 0 12px 32px rgba(23, 32, 42, 0.08);
+      }
+
+      .shot figcaption {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 58px;
+        padding: 0 16px;
+        border-top: 1px solid var(--line);
+        color: var(--ink-soft);
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      .shot img {
+        width: 100%;
+        aspect-ratio: 16 / 9.6;
+        object-fit: cover;
+        object-position: top left;
+        background: #eef2f5;
+      }
+
+      .shot-large img {
+        aspect-ratio: 16 / 10.2;
+      }
+
+      .shot-stack {
+        display: grid;
+        gap: 18px;
+      }
+
+      .quick-layout {
+        display: grid;
+        grid-template-columns: 0.72fr 1.28fr;
+        gap: 22px;
+        align-items: start;
+        min-width: 0;
+      }
+
+      .quick-card {
+        position: sticky;
+        top: 88px;
+        min-width: 0;
+        padding: 24px;
+      }
+
+      .quick-card p {
+        margin-bottom: 18px;
+        color: var(--ink-soft);
+        line-height: 1.8;
+      }
+
+      .check-list,
+      .plain-list {
+        display: grid;
+        gap: 11px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .check-list li,
+      .plain-list li {
+        display: grid;
+        grid-template-columns: 22px 1fr;
+        gap: 10px;
+        color: var(--ink-soft);
+        line-height: 1.55;
+      }
+
+      .check-list li::before {
+        display: grid;
+        width: 22px;
+        height: 22px;
+        place-items: center;
+        border-radius: 50%;
+        color: #fff;
+        background: var(--green);
+        content: "✓";
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .plain-list li::before {
+        display: grid;
+        width: 22px;
+        height: 22px;
+        place-items: center;
+        border: 1px solid rgba(37, 99, 235, 0.3);
+        border-radius: 50%;
+        color: var(--blue);
+        content: attr(data-step);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .docs-flow {
+        display: grid;
+        gap: 18px;
+        min-width: 0;
+      }
+
+      .doc-block {
+        min-width: 0;
+        border: 1px solid #243248;
+        border-radius: var(--radius);
+        background: var(--code);
+        box-shadow: 0 18px 45px rgba(13, 21, 34, 0.22);
+      }
+
+      .doc-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-bottom: 1px solid #243248;
+        color: #edf6f5;
+        font-size: 14px;
+        font-weight: 900;
+      }
+
+      .copy-btn {
+        display: inline-flex;
+        min-height: 34px;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: var(--radius);
+        color: #dbeafe;
+        background: rgba(255, 255, 255, 0.06);
+        cursor: pointer;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .copy-btn:hover {
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      pre {
+        margin: 0;
+        overflow-x: auto;
+        padding: 18px;
+      }
+
+      code {
+        font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      pre code {
+        color: #e7eef8;
+      }
+
+      .inline-code {
+        padding: 2px 6px;
+        border-radius: 5px;
+        color: #0f3f3a;
+        background: #dff7ee;
+        font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+        font-size: 0.92em;
+      }
+
+      .release-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+
+      .release-panel {
+        padding: 22px;
+        background: rgba(255, 255, 255, 0.06);
+        border-color: rgba(255, 255, 255, 0.14);
+      }
+
+      .release-panel h3 {
+        color: #fff;
+      }
+
+      .tag-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 18px;
+      }
+
+      .tag {
+        display: inline-flex;
+        min-height: 30px;
+        align-items: center;
+        padding: 6px 10px;
+        border: 1px solid rgba(112, 224, 207, 0.26);
+        border-radius: 999px;
+        color: #d8f8ee;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .github-layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .github-panel {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        padding: 26px;
+      }
+
+      .github-panel strong {
+        color: var(--ink);
+      }
+
+      .link-list {
+        display: grid;
+        gap: 10px;
+        margin: 8px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .link-list a {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 44px;
+        padding: 11px 12px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        color: var(--ink-soft);
+        font-weight: 800;
+        background: #fbfcfd;
+      }
+
+      .link-list a:hover {
+        color: var(--ink);
+        border-color: rgba(37, 99, 235, 0.4);
+      }
+
+      .site-footer {
+        padding: 32px 0;
+        color: rgba(255, 255, 255, 0.72);
+        background: var(--night);
+      }
+
+      .footer-inner {
+        display: flex;
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        font-size: 14px;
+      }
+
+      .footer-inner a {
+        color: #d8f8ee;
+        font-weight: 800;
+      }
+
+      @media (max-width: 940px) {
+        .nav {
+          min-height: auto;
+          padding: 13px 0;
+          align-items: flex-start;
+        }
+
+        .nav-links {
+          max-width: 460px;
+          flex-wrap: wrap;
+        }
+
+        h1 {
+          font-size: 58px;
+        }
+
+        h2 {
+          font-size: 34px;
+        }
+
+        .quick-strip-inner,
+        .feature-grid,
+        .workflow,
+        .release-grid,
+        .github-layout,
+        .problem-grid,
+        .screens,
+        .quick-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .quick-card {
+          position: static;
+        }
+      }
+
+      @media (max-width: 680px) {
+        .site-header {
+          position: static;
+        }
+
+        .nav {
+          width: min(100% - 24px, 1180px);
+          display: grid;
+        }
+
+        .nav-links {
+          justify-content: flex-start;
+        }
+
+        .hero,
+        .hero-inner {
+          min-height: min(560px, calc(100vh - 150px));
+        }
+
+        .hero-inner {
+          width: min(100% - 24px, 1180px);
+          padding: 44px 0 52px;
+        }
+
+        h1 {
+          font-size: 44px;
+          line-height: 1.05;
+        }
+
+        .hero-lede {
+          font-size: 17px;
+        }
+
+        section {
+          padding: 62px 0;
+        }
+
+        .wrap,
+        .quick-strip-inner,
+        .footer-inner {
+          width: min(100% - 24px, 1180px);
+        }
+
+        .metric {
+          padding: 16px;
+        }
+
+        .feature-card,
+        .workflow-step,
+        .release-panel,
+        .github-panel,
+        .quick-card,
+        .problem-note {
+          padding: 18px;
+        }
+
+        .shot figcaption,
+        .doc-title,
+        .footer-inner {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到正文</a>
+    <header class="site-header" aria-label="OpenSync 导航">
+      <nav class="nav">
+        <a class="brand" href="#top" aria-label="OpenSync 首页">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M4 12h5l2-4 4 8 2-4h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M5 18h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              <path d="M5 6h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </span>
+          <span>OpenSync</span>
+        </a>
+        <div class="nav-links" aria-label="页面章节">
+          <a href="#features">功能</a>
+          <a href="#screenshots">界面</a>
+          <a href="#quickstart">快速开始</a>
+          <a href="#release">发布</a>
+          <a class="nav-github" href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noreferrer">GitHub</a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-inner">
+          <div class="hero-copy">
+            <p class="eyebrow">飞牛 fnOS / NAS / Docker</p>
+            <h1>OpenSync</h1>
+            <p class="hero-lede">
+              面向 AList / OpenList 的自动同步工具，把本地目录、网盘、对象存储、WebDAV 等存储端接入同一个可视化任务台，用来做备份、归档和迁移。
+            </p>
+            <div class="hero-actions">
+              <a class="button primary" href="#quickstart">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path d="m13 6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                5 分钟部署
+              </a>
+              <a class="button secondary" href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noreferrer">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M9 19c-4 1.5-4-2.5-5-3m10 6v-3.9c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6A4.6 4.6 0 0 0 17.7 7 4.2 4.2 0 0 0 17.6 4s-1.1-.3-3.6 1.3a12.4 12.4 0 0 0-6.5 0C5 3.7 3.9 4 3.9 4a4.2 4.2 0 0 0-.1 3A4.6 4.6 0 0 0 2.5 10c0 4.6 2.7 5.7 5.5 6-.5.5-.8 1.1-.8 2V22" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                查看仓库
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="quick-strip" aria-label="OpenSync 关键指标">
+        <div class="quick-strip-inner">
+          <div class="metric"><strong>8023</strong>默认 Web 访问端口</div>
+          <div class="metric"><strong>3</strong>同步模式覆盖备份、镜像、迁移</div>
+          <div class="metric"><strong>5+</strong>通知渠道与自定义 Webhook</div>
+          <div class="metric"><strong>7</strong>常见平台二进制产物</div>
+        </div>
+      </aside>
+
+      <section class="section-paper" id="features">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="kicker">为什么是 OpenSync</span>
+            <h2>给 NAS 用户的可视化同步中枢</h2>
+            <p>
+              如果你在飞牛 NAS 上想找一个类似群晖 Cloud Sync 的同步工具，OpenSync 把 AList / OpenList 已接入的各种存储变成可调度、可观察、可重试的同步任务。
+            </p>
+          </div>
+          <div class="problem-grid">
+            <article class="problem-note">
+              <h3>为家庭与小团队的真实目录工作流设计</h3>
+              <p>
+                照片库、影音库、下载目录、文档目录往往分散在本机、网盘、对象存储和 WebDAV。OpenSync 让这些路径以任务形式沉淀下来，减少手动搬运和重复检查。
+              </p>
+            </article>
+            <div class="feature-grid">
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <h3>多源到多目标</h3>
+                <p>支持单个或多个源目录同步到单个或多个目标目录，适合备份、镜像同步和归档迁移。</p>
+              </article>
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M12 8v5l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M4 13a8 8 0 1 0 2.3-5.7" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M4 5v4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </div>
+                <h3>定时与手动并行</h3>
+                <p>支持手动执行、按分钟间隔执行、Cron 定时执行和一键执行全部启用任务。</p>
+              </article>
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M4 6h16M7 12h10M10 18h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <h3>规则过滤</h3>
+                <p>支持 Gitignore 风格排除规则，也能按最小和最大文件大小过滤不需要同步的内容。</p>
+              </article>
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M4 19V5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M8 17v-6M13 17V7M18 17v-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M4 19h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <h3>实时进度</h3>
+                <p>展示扫描进度、传输速度、剩余时间，以及已完成、失败、等待和运行中明细。</p>
+              </article>
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M9.5 19a2.8 2.8 0 0 0 5 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                </div>
+                <h3>通知集成</h3>
+                <p>内置 Server 酱、钉钉、企业微信、飞书 / Lark，并支持任意 GET / POST / PUT Webhook。</p>
+              </article>
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M12 3 5 6v5c0 4.4 3 8.4 7 10 4-1.6 7-5.6 7-10V6l-7-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    <path d="m9.5 12 1.8 1.8 3.6-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </div>
+                <h3>账号与恢复密钥</h3>
+                <p>首次启动引导创建管理员账号，并提供 24 位恢复密钥用于 Web 端重置密码。</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-dark">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="kicker">任务如何流动</span>
+            <h2>从存储接入到任务复盘，保持一条清晰链路</h2>
+            <p>OpenSync 不只是复制文件，它把路径、规则、调度、进度、失败项和通知都收束在同一个管理界面里。</p>
+          </div>
+          <div class="workflow">
+            <article class="workflow-step">
+              <span>1</span>
+              <h3>连接 AList / OpenList</h3>
+              <p>添加多个引擎，保存前验证连接，令牌不会在列表中展示。</p>
+            </article>
+            <article class="workflow-step">
+              <span>2</span>
+              <h3>创建同步任务</h3>
+              <p>选择仅新增、全同步或移动模式，配置排除规则、大小过滤、并发和计划执行。</p>
+            </article>
+            <article class="workflow-step">
+              <span>3</span>
+              <h3>观察、重试、通知</h3>
+              <p>实时查看任务明细，失败后可继续执行、重新执行或只重试失败项。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-light" id="screenshots">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="kicker">界面预览</span>
+            <h2>真实控制台截图，不靠想象补全</h2>
+            <p>任务总览、实时进度、通知配置，一目了然。</p>
+          </div>
+          <div class="screens">
+            <figure class="shot shot-large">
+              <img src="images/tasks-overview.png" alt="OpenSync 任务总览界面截图" loading="lazy" />
+              <figcaption>
+                <span>任务总览</span>
+                <span>路径、调度、状态集中展示</span>
+              </figcaption>
+            </figure>
+            <div class="shot-stack">
+              <figure class="shot">
+                <img src="images/realtime-task.png" alt="OpenSync 实时任务界面截图" loading="lazy" />
+                <figcaption>
+                  <span>实时任务</span>
+                  <span>进度、速度、队列明细</span>
+                </figcaption>
+              </figure>
+              <figure class="shot">
+                <img src="images/notifications.png" alt="OpenSync 通知配置界面截图" loading="lazy" />
+                <figcaption>
+                  <span>通知配置</span>
+                  <span>多渠道与自定义 Webhook</span>
+                </figcaption>
+              </figure>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-paper" id="quickstart">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="kicker">快速开始</span>
+            <h2>推荐用 Docker Compose 部署</h2>
+            <p>默认数据保存在当前目录的 <span class="inline-code">data/</span> 文件夹。升级、迁移和排查问题前，请先备份这个目录。</p>
+          </div>
+          <div class="quick-layout">
+            <aside class="quick-card" aria-label="部署前检查">
+              <h3>部署前确认</h3>
+              <p>适合飞牛 fnOS、NAS、家用服务器、Linux 主机和 Docker 环境。</p>
+              <ul class="check-list">
+                <li>已准备 Docker 与 Docker Compose。</li>
+                <li>设备可以访问需要同步的 AList / OpenList 服务。</li>
+                <li>准备持久化保存 <span class="inline-code">data/</span> 目录。</li>
+                <li>首次启动后立即保存 24 位恢复密钥。</li>
+              </ul>
+            </aside>
+
+            <div class="docs-flow">
+              <article class="doc-block">
+                <div class="doc-title">
+                  <span>1. 创建目录并启动容器</span>
+                  <button class="copy-btn" type="button" data-copy="#code-compose">复制</button>
+                </div>
+                <pre><code id="code-compose">mkdir -p opensync
+cd opensync
+curl -O https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docker-compose.yml
+docker compose up -d</code></pre>
+              </article>
+
+              <article class="doc-block">
+                <div class="doc-title">
+                  <span>2. docker-compose.yml 示例</span>
+                  <button class="copy-btn" type="button" data-copy="#code-yml">复制</button>
+                </div>
+                <pre><code id="code-yml">services:
+  opensync:
+    image: chenbin3625/opensync:latest
+    container_name: opensync
+    restart: unless-stopped
+    ports:
+      - "8023:8023"
+    volumes:
+      - ./data:/app/data
+    environment:
+      OPENSYNC_PORT: 8023
+      GIN_MODE: release</code></pre>
+              </article>
+
+              <article class="doc-block">
+                <div class="doc-title">
+                  <span>3. 访问 Web 页面</span>
+                  <button class="copy-btn" type="button" data-copy="#code-url">复制</button>
+                </div>
+                <pre><code id="code-url">http://你的设备IP:8023/</code></pre>
+              </article>
+
+              <article class="quick-card">
+                <h3>首次登录与密码恢复</h3>
+                <ul class="plain-list">
+                  <li data-step="1">打开 Web 页面，根据引导创建管理员用户名和密码。</li>
+                  <li data-step="2">创建完成时页面会一次性展示 24 位恢复密钥，请立即保存。</li>
+                  <li data-step="3">忘记密码时，可用用户名和恢复密钥在 Web 端设置新密码。</li>
+                  <li data-step="4">恢复密钥丢失时，可在服务器执行 <span class="inline-code">reset-password</span> 兜底重置。</li>
+                </ul>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-dark" id="release">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="kicker">发布与平台</span>
+            <h2>容器镜像和二进制产物都能覆盖常见 NAS 架构</h2>
+            <p>Docker 镜像适合常驻服务，GitHub Release 二进制适合不方便使用容器的环境。二进制文件已内嵌前端静态资源。</p>
+          </div>
+          <div class="release-grid">
+            <article class="release-panel">
+              <h3>Docker 镜像</h3>
+              <p>推荐使用 <span class="inline-code">chenbin3625/opensync:latest</span>，也可以固定到版本标签。</p>
+              <div class="tag-row" aria-label="Docker 镜像标签">
+                <span class="tag">latest</span>
+                <span class="tag">1.7.0</span>
+                <span class="tag">1.7</span>
+              </div>
+            </article>
+            <article class="release-panel">
+              <h3>镜像平台</h3>
+              <p>覆盖常见 x86_64、ARM64 和 ARMv7 架构的飞牛系统、NAS 和服务器设备。</p>
+              <div class="tag-row" aria-label="镜像平台">
+                <span class="tag">linux/amd64</span>
+                <span class="tag">linux/arm64</span>
+                <span class="tag">linux/arm/v7</span>
+              </div>
+            </article>
+            <article class="release-panel">
+              <h3>二进制发布</h3>
+              <p>Release 上传 Linux、macOS、Windows 的 amd64 与 arm64 产物，并提供 linux-armv7。</p>
+              <div class="tag-row" aria-label="二进制产物平台">
+                <span class="tag">Linux</span>
+                <span class="tag">macOS</span>
+                <span class="tag">Windows</span>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-light" id="github">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="kicker">项目链接</span>
+            <h2>连接 GitHub 仓库、Release 和问题反馈</h2>
+            <p>获取源码、下载发布包、阅读文档或提交问题反馈。</p>
+          </div>
+          <div class="github-layout">
+            <article class="github-panel">
+              <h3>GitHub 仓库</h3>
+              <p>
+                源码地址：<strong>github.com/chenbin3625/OpenSync</strong>。页面中的快速开始命令也直接引用该仓库的 <span class="inline-code">docker-compose.yml</span>。
+              </p>
+              <div class="section-actions">
+                <a class="button primary" href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noreferrer">打开仓库</a>
+                <a class="button secondary" href="https://github.com/chenbin3625/OpenSync/releases" target="_blank" rel="noreferrer">查看 Release</a>
+              </div>
+            </article>
+            <article class="github-panel">
+              <h3>常用入口</h3>
+              <ul class="link-list">
+                <li><a href="https://github.com/chenbin3625/OpenSync/blob/main/README.md" target="_blank" rel="noreferrer"><span>README 文档</span><span aria-hidden="true">→</span></a></li>
+                <li><a href="https://github.com/chenbin3625/OpenSync/releases" target="_blank" rel="noreferrer"><span>下载正式版本</span><span aria-hidden="true">→</span></a></li>
+                <li><a href="https://github.com/chenbin3625/OpenSync/issues" target="_blank" rel="noreferrer"><span>提交问题反馈</span><span aria-hidden="true">→</span></a></li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <span>OpenSync, AList / OpenList 自动同步工具。</span>
+        <a href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noreferrer">GitHub: chenbin3625/OpenSync</a>
+      </div>
+    </footer>
+
+    <script>
+      const copyButtons = document.querySelectorAll("[data-copy]");
+
+      const selectTargetText = (target) => {
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      };
+
+      const copyText = async (text) => {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return;
+        }
+
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const copied = document.execCommand("copy");
+        textarea.remove();
+        if (!copied) {
+          throw new Error("Copy command was rejected");
+        }
+      };
+
+      copyButtons.forEach((button) => {
+        button.addEventListener("click", async () => {
+          const target = document.querySelector(button.dataset.copy);
+          if (!target) {
+            return;
+          }
+
+          const originalText = button.textContent;
+          try {
+            await copyText(target.textContent.trim());
+            button.textContent = "已复制";
+          } catch {
+            selectTargetText(target);
+            button.textContent = "已选中";
+          }
+
+          window.setTimeout(() => {
+            button.textContent = originalText;
+          }, 1600);
+        });
+      });
+    </script>
+  </body>
+</html>

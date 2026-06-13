@@ -6,11 +6,16 @@ import (
 	"log"
 	"opensync/internal/i18n"
 	"opensync/pkg/util"
+	"os"
 	"strings"
 	"sync"
+	"time"
+	_ "time/tzdata"
 
 	"github.com/robfig/cron/v3"
 )
+
+const defaultSchedulerTimeZone = "Asia/Shanghai"
 
 // Scheduler wraps robfig/cron for job scheduling
 type Scheduler struct {
@@ -21,9 +26,32 @@ type Scheduler struct {
 
 // NewScheduler creates a new scheduler
 func NewScheduler() *Scheduler {
-	c := cron.New(cron.WithSeconds())
+	c := cron.New(cron.WithSeconds(), cron.WithLocation(schedulerLocation()))
 	c.Start()
 	return &Scheduler{cron: c}
+}
+
+func schedulerLocation() *time.Location {
+	timeZone := strings.TrimSpace(os.Getenv("TZ"))
+	if timeZone == "" {
+		timeZone = defaultSchedulerTimeZone
+	}
+
+	loc, err := time.LoadLocation(timeZone)
+	if err == nil {
+		return loc
+	}
+
+	if timeZone != defaultSchedulerTimeZone {
+		log.Printf("Failed to load timezone %q, falling back to %s: %v", timeZone, defaultSchedulerTimeZone, err)
+	}
+	loc, err = time.LoadLocation(defaultSchedulerTimeZone)
+	if err == nil {
+		return loc
+	}
+
+	log.Printf("Failed to load timezone %q, falling back to fixed UTC+8: %v", defaultSchedulerTimeZone, err)
+	return time.FixedZone(defaultSchedulerTimeZone, 8*60*60)
 }
 
 // AddJob adds a scheduled job

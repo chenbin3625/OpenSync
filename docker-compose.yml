@@ -8,5 +8,6 @@ services:
     volumes:
       - ./data:/app/data
     environment:
+      TZ: Asia/Shanghai
       OPENSYNC_PORT: 8023
       GIN_MODE: release

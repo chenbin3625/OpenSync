@@ -32,8 +32,10 @@ RUN set -eux; \
 
 # Stage 3: Runtime
 FROM alpine:3.20
+RUN apk add --no-cache tzdata
 WORKDIR /app
 COPY --from=backend-builder /app/opensync .
+ENV TZ=Asia/Shanghai
 ENV OPENSYNC_PORT=8023
 ENV GIN_MODE=release
 EXPOSE 8023
