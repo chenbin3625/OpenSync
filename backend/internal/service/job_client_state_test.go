@@ -70,6 +70,40 @@ func TestStopJobKeepsClientBusyUntilTaskFinishes(t *testing.T) {
 	}
 }
 
+func TestPauseJobKeepsMemoryStateWhenDatabaseUpdateFails(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	restoreDB := mapper.SetDBForTest(testDB)
+	defer restoreDB()
+	if err := testDB.Close(); err != nil {
+		t.Fatalf("close test DB: %v", err)
+	}
+
+	client := &JobClient{
+		JobID:     10,
+		Job:       map[string]interface{}{"id": int64(10), "enable": 1, "isCron": 2},
+		Scheduler: NewScheduler(),
+	}
+	defer client.Scheduler.Stop()
+	task := &JobTask{TaskID: 10}
+	task.initRuntime()
+	client.setCurrentTask(task)
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatalf("StopJob(false) did not panic after database update failure")
+		}
+		if task.isBreak() {
+			t.Fatalf("StopJob(false) requested task break before database update succeeded")
+		}
+		if got := util.ToInt(client.Job["enable"]); got != 1 {
+			t.Fatalf("job enable after failed pause = %d, want 1", got)
+		}
+	}()
+
+	client.StopJob(false)
+}
+
 func TestDoScheduledSkipsWhenJobAlreadyRunning(t *testing.T) {
 	client := &JobClient{
 		Job: map[string]interface{}{"enable": 1, "isCron": 2},

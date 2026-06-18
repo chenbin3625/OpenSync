@@ -4,28 +4,13 @@ import (
 	"database/sql"
 	"opensync/internal/config"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
 
 func TestInitSQLCreatesSchemaWithoutInitialAdminUser(t *testing.T) {
-	oldDB := db
-	oldOnce := once
-	oldConfig := config.GetConfig()
-	t.Cleanup(func() {
-		if db != nil && db != oldDB {
-			_ = db.Close()
-		}
-		db = oldDB
-		once = oldOnce
-		config.SetConfigForTest(oldConfig)
-	})
-
-	db = nil
-	once = sync.Once{}
-	config.SetConfigForTest(&config.Config{
+	resetGlobalDBForTest(t, &config.Config{
 		DB:     config.DBConfig{DBName: filepath.Join(t.TempDir(), "opensync.db")},
 		Server: config.ServerConfig{PasswdStr: "test-secret"},
 	})

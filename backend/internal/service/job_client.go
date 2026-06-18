@@ -265,7 +265,9 @@ func (jc *JobClient) runMarkedJobWithRetryConfig(retryItems []map[string]interfa
 			errMsg := fmt.Sprintf("%v", r)
 			log.Printf("Job execution error: %s", errMsg)
 			if taskID > 0 {
-				UpdateJobTaskStatusSimple(taskID, taskStatusSystemFailed, &errMsg)
+				if err := UpdateJobTaskStatusSimple(taskID, taskStatusSystemFailed, &errMsg); err != nil {
+					log.Printf("Failed to mark task %d as failed after execution error: %v", taskID, err)
+				}
 			}
 		}
 	}()
@@ -361,18 +363,22 @@ func (jc *JobClient) ResumeJob() {
 	isCron := util.ToInt(job["isCron"])
 	if isCron == 2 {
 		// Manual only, just enable
-		mapper.UpdateJobEnable(jobID, 1)
+		if err := mapper.UpdateJobEnable(jobID, 1); err != nil {
+			panic(err.Error())
+		}
 		jc.setEnable(1)
 		return
 	}
 
+	if err := mapper.UpdateJobEnable(jobID, 1); err != nil {
+		panic(err.Error())
+	}
 	err := scheduler.Resume(isCron, job, func() {
 		jc.DoScheduled()
 	})
 	if err != nil {
 		panic(err.Error())
 	}
-	mapper.UpdateJobEnable(jobID, 1)
 	jc.setEnable(1)
 }
 
@@ -385,21 +391,29 @@ func (jc *JobClient) AbortJob() {
 
 // StopJob stops the job (for disable or delete)
 func (jc *JobClient) StopJob(remove bool) {
-	jc.setEnable(0)
-	if task := jc.currentTask(); task != nil {
-		task.requestBreak()
-	}
 	jobID := jc.idSnapshot()
 	scheduler := jc.schedulerSnapshot()
 	if remove {
+		jc.setEnable(0)
+		if task := jc.currentTask(); task != nil {
+			task.requestBreak()
+		}
 		if scheduler != nil {
 			scheduler.Stop()
 		}
 	} else {
+		if err := mapper.UpdateJobEnable(jobID, 0); err != nil {
+			panic(err.Error())
+		}
+		if err := mapper.UpdateJobTaskStatusByStatusAndJobID(jobID); err != nil {
+			panic(err.Error())
+		}
+		jc.setEnable(0)
+		if task := jc.currentTask(); task != nil {
+			task.requestBreak()
+		}
 		if scheduler != nil {
 			scheduler.Pause()
 		}
-		mapper.UpdateJobEnable(jobID, 0)
-		mapper.UpdateJobTaskStatusByStatusAndJobID(jobID)
 	}
 }

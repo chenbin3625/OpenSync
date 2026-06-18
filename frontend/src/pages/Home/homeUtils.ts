@@ -1,4 +1,4 @@
-import type { JobItem } from '../../types';
+import type { JobItem, TreeNode } from '../../types';
 
 export type ScheduleValues = {
   isCron?: number;
@@ -216,6 +216,81 @@ export const normalizeFormPaths = (value: string | string[] | undefined): string
 
 export const parseJobSrcPaths = parseJobPathList;
 export const parseJobDstPaths = parseJobPathList;
+
+export const normalizeTreePath = (value: unknown): string => {
+  const raw = String(value ?? '').trim();
+  if (!raw || raw === '/') return '/';
+  return `/${raw.replace(/^\/+/, '').replace(/\/+$/, '')}`.replace(/\/+/g, '/');
+};
+
+export const buildPathTreeData = (paths: string[]): TreeNode[] => {
+  const root: TreeNode = { title: '/', value: '/', key: '/', children: [] };
+  const normalizedPaths = [...new Set(paths.map(normalizeTreePath).filter(Boolean))];
+
+  normalizedPaths.forEach((path) => {
+    if (path === '/') return;
+    const segments = path.split('/').filter(Boolean);
+    let currentPath = '';
+    let currentChildren = root.children || [];
+    root.children = currentChildren;
+
+    segments.forEach((segment) => {
+      currentPath = `${currentPath}/${segment}`;
+      let node = currentChildren.find((item) => item.value === currentPath);
+      if (!node) {
+        node = {
+          title: segment,
+          value: currentPath,
+          key: currentPath,
+          isLeaf: false,
+          children: [],
+        };
+        currentChildren.push(node);
+      }
+      node.children = node.children || [];
+      currentChildren = node.children;
+    });
+  });
+
+  return [root];
+};
+
+const mergeTreeNode = (baseNode: TreeNode, extraNode: TreeNode): TreeNode => {
+  const mergedChildren = mergeTreeData(baseNode.children || [], extraNode.children || []);
+  const merged: TreeNode = {
+    ...extraNode,
+    ...baseNode,
+    title: baseNode.title || extraNode.title,
+    key: baseNode.key || extraNode.key,
+    value: baseNode.value || extraNode.value,
+  };
+  if (mergedChildren.length > 0) {
+    merged.children = mergedChildren;
+    merged.isLeaf = false;
+  } else {
+    delete merged.children;
+  }
+  return merged;
+};
+
+export const mergeTreeData = (baseTree: TreeNode[], extraTree: TreeNode[]): TreeNode[] => {
+  const merged: TreeNode[] = baseTree.map((node) => ({
+    ...node,
+    ...(node.children ? { children: mergeTreeData(node.children, []) } : {}),
+  }));
+  extraTree.forEach((extraNode) => {
+    const index = merged.findIndex((node) => node.value === extraNode.value);
+    if (index >= 0) {
+      merged[index] = mergeTreeNode(merged[index], extraNode);
+      return;
+    }
+    merged.push({
+      ...extraNode,
+      ...(extraNode.children ? { children: mergeTreeData(extraNode.children, []) } : {}),
+    });
+  });
+  return merged;
+};
 
 export const formatJobPaths = (value: unknown, separator = '、') => {
   const paths = parseJobPathList(value);

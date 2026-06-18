@@ -19,7 +19,7 @@ import (
 
 var (
 	db   *sql.DB
-	once sync.Once
+	once = &sync.Once{}
 )
 
 const maxPageSize = 500
@@ -81,7 +81,7 @@ func CloseDB() error {
 	}
 	err := db.Close()
 	db = nil
-	once = sync.Once{}
+	once = &sync.Once{}
 	return err
 }
 

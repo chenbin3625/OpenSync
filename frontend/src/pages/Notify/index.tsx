@@ -151,6 +151,7 @@ export default function Notify() {
   const [editingItem, setEditingItem] = useState<NotifyItem | null>(null);
   const [form] = Form.useForm();
   const [method, setMethod] = useState(0);
+  const [pendingNotifyValues, setPendingNotifyValues] = useState<Partial<NotifyFormValues> | null>(null);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -166,7 +167,7 @@ export default function Notify() {
   const handleAdd = () => {
     setEditingItem(null);
     form.resetFields();
-    form.setFieldsValue({ method: 0, enable: true });
+    setPendingNotifyValues({ method: 0, enable: true });
     setMethod(0);
     setModalVisible(true);
   };
@@ -177,10 +178,16 @@ export default function Notify() {
     try { params = asNotifyParams(JSON.parse(item.params || '{}')); } catch { /* ignore */ }
     params = getNotifyFormParams(item.method, params);
     form.resetFields();
-    form.setFieldsValue({ ...params, method: item.method, enable: item.enable === 1 });
+    setPendingNotifyValues({ ...params, method: item.method, enable: item.enable === 1 } as Partial<NotifyFormValues>);
     setMethod(item.method);
     setModalVisible(true);
   };
+
+  useEffect(() => {
+    if (!modalVisible || !pendingNotifyValues || pendingNotifyValues.method !== method) return;
+    form.setFieldsValue(pendingNotifyValues);
+    setPendingNotifyValues(null);
+  }, [form, method, modalVisible, pendingNotifyValues]);
 
   const handleDelete = async (notifyId: number) => {
     try {
