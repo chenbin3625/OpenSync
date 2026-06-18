@@ -27,8 +27,15 @@ test('custom webhook exposes advanced body and headers fields', () => {
 });
 
 test('editing or switching notification methods clears unrelated preserved fields', () => {
-  assert.match(notifySource, /form\.resetFields\(\);[\s\S]+form\.setFieldsValue\(\{ \.\.\.params, method: item\.method, enable: item\.enable === 1 \}\)/);
+  assert.match(notifySource, /form\.resetFields\(\);[\s\S]+setPendingNotifyValues\(\{ \.\.\.params, method: item\.method, enable: item\.enable === 1 \}/);
+  assert.match(notifySource, /if \(!modalVisible \|\| !pendingNotifyValues \|\| pendingNotifyValues\.method !== method\) return;/);
   assert.match(notifySource, /handleMethodChange/);
+});
+
+test('notification edit values are applied after method-specific fields are mounted', () => {
+  assert.match(notifySource, /const \[pendingNotifyValues, setPendingNotifyValues\]/);
+  assert.match(notifySource, /form\.setFieldsValue\(pendingNotifyValues\)/);
+  assert.match(notifySource, /\[form, method, modalVisible, pendingNotifyValues\]/);
 });
 
 test('history task queries request completed statuses from the server', () => {
@@ -38,6 +45,13 @@ test('history task queries request completed statuses from the server', () => {
 test('directory tree loading ignores stale engine responses', () => {
   assert.match(jobFormDrawerSource, /treeLoadRequestRef/);
   assert.match(jobFormDrawerSource, /if \(requestID !== treeLoadRequestRef\.current\) return;/);
+});
+
+test('job edit drawer seeds selected directory nodes before async tree data arrives', () => {
+  assert.match(jobFormDrawerSource, /buildPathTreeData\(editingSrcPaths\)/);
+  assert.match(jobFormDrawerSource, /setSrcTreeData\(srcPathTreeData\)/);
+  assert.match(jobFormDrawerSource, /mergeTreeData\(root, srcPathTreeData\)/);
+  assert.match(jobFormDrawerSource, /mergeTreeData\(structuredClone\(root\), dstPathTreeData\)/);
 });
 
 test('forms inside overlays are force rendered before form APIs run', () => {
@@ -59,6 +73,12 @@ test('system setting unit inputs bind the input control inside compact groups', 
       new RegExp(`<Form\\.Item[\\s\\S]{0,120}name="${field}"[\\s\\S]{0,120}noStyle[\\s\\S]{0,180}>\\s*<InputNumber`)
     );
   }
+});
+
+test('system settings keep fetched config in state before syncing into the mounted form', () => {
+  assert.match(settingSource, /const \[configValues, setConfigValues\] = useState<SystemSettings \| null>\(null\)/);
+  assert.match(settingSource, /setConfigValues\(res\.data\)/);
+  assert.match(settingSource, /if \(!loading && configValues\) \{\s+configForm\.setFieldsValue\(configValues\);/s);
 });
 
 test('login reset success uses context-aware modal feedback', () => {

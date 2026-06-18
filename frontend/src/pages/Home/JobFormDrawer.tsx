@@ -13,7 +13,7 @@ import {
   methodOptions, methodNames, cronTypeNames, cronFields, defaultCronFields,
   compactItemStyle, compactDividerStyle, defaultExclude,
   parseJobSrcPaths, parseJobDstPaths, normalizeFormPaths,
-  formatSchedulePlan, type ScheduleValues,
+  formatSchedulePlan, buildPathTreeData, mergeTreeData, type ScheduleValues,
 } from './homeUtils';
 
 export interface JobFormDrawerProps {
@@ -36,6 +36,9 @@ export default function JobFormDrawer({
   const treeLoadRequestRef = useRef(0);
 
   const selectedAlistId = Form.useWatch('alistId', form) as number | undefined;
+  const editingJobId = editingJob?.id;
+  const editingJobSrcPath = editingJob?.srcPath;
+  const editingJobDstPath = editingJob?.dstPath;
 
   // Tree data helpers
   const fetchDirChildren = useCallback(async (alistId: number, parentPath: string): Promise<TreeNode[]> => {
@@ -77,11 +80,17 @@ export default function JobFormDrawer({
       setTreeLoading(true);
       setSrcLoadedKeys([]);
       setDstLoadedKeys([]);
+      const editingSrcPaths = parseJobSrcPaths(editingJobSrcPath);
+      const editingDstPaths = parseJobDstPaths(editingJobDstPath);
+      const srcPathTreeData = buildPathTreeData(editingSrcPaths);
+      const dstPathTreeData = buildPathTreeData(editingDstPaths);
+      setSrcTreeData(srcPathTreeData);
+      setDstTreeData(dstPathTreeData);
       fetchDirChildren(selectedAlistId, '/').then((nodes) => {
         if (requestID !== treeLoadRequestRef.current) return;
         const root = [{ title: '/', value: '/', key: '/', children: nodes }];
-        setSrcTreeData(root);
-        setDstTreeData(structuredClone(root));
+        setSrcTreeData(mergeTreeData(root, srcPathTreeData));
+        setDstTreeData(mergeTreeData(structuredClone(root), dstPathTreeData));
       }).finally(() => {
         if (requestID === treeLoadRequestRef.current) setTreeLoading(false);
       });
@@ -91,7 +100,7 @@ export default function JobFormDrawer({
       setDstTreeData([]);
       setTreeLoading(false);
     }
-  }, [selectedAlistId, fetchDirChildren]);
+  }, [selectedAlistId, fetchDirChildren, editingJobId, editingJobSrcPath, editingJobDstPath]);
 
   const onLoadSrcData = async (node: TreeNode) => {
     if (!selectedAlistId || srcLoadedKeys.includes(node.value)) return;

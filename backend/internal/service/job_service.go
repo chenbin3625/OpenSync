@@ -27,7 +27,9 @@ var taskNumUpdateSlots = make(chan struct{}, 1)
 // InitJobs loads and starts all enabled jobs on startup
 func InitJobs() {
 	logger := log.Default()
-	mapper.UpdateJobTaskStatusByStatus()
+	if err := mapper.UpdateJobTaskStatusByStatus(); err != nil {
+		logger.Printf("Failed to mark unfinished task history as aborted: %v", err)
+	}
 	CleanupExpiredTasks(logger, config.GetConfig().Server.TaskSave, time.Now())
 	jobList, err := mapper.GetJobListAll()
 	if err != nil {

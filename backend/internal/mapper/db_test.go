@@ -8,6 +8,25 @@ import (
 	"opensync/internal/config"
 )
 
+func resetGlobalDBForTest(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	oldDB := db
+	oldOnce := once
+	oldConfig := config.GetConfig()
+	t.Cleanup(func() {
+		if db != nil && db != oldDB {
+			_ = db.Close()
+		}
+		db = oldDB
+		once = oldOnce
+		config.SetConfigForTest(oldConfig)
+	})
+
+	db = nil
+	once = &sync.Once{}
+	config.SetConfigForTest(cfg)
+}
+
 func TestParsePageParamsRejectsInvalidValues(t *testing.T) {
 	cases := []map[string]interface{}{
 		{"pageSize": "0", "pageNum": "1"},
@@ -64,21 +83,7 @@ func TestCheckAndAddSQLRejectsUnsafeColumnNames(t *testing.T) {
 }
 
 func TestInitDBAllowsConcurrentReadConnections(t *testing.T) {
-	oldDB := db
-	oldOnce := once
-	oldConfig := config.GetConfig()
-	t.Cleanup(func() {
-		if db != nil && db != oldDB {
-			_ = db.Close()
-		}
-		db = oldDB
-		once = oldOnce
-		config.SetConfigForTest(oldConfig)
-	})
-
-	db = nil
-	once = sync.Once{}
-	config.SetConfigForTest(&config.Config{
+	resetGlobalDBForTest(t, &config.Config{
 		DB: config.DBConfig{DBName: filepath.Join(t.TempDir(), "opensync.db")},
 	})
 
@@ -89,21 +94,7 @@ func TestInitDBAllowsConcurrentReadConnections(t *testing.T) {
 }
 
 func TestCloseDBClosesGlobalHandleAndAllowsReinit(t *testing.T) {
-	oldDB := db
-	oldOnce := once
-	oldConfig := config.GetConfig()
-	t.Cleanup(func() {
-		if db != nil && db != oldDB {
-			_ = db.Close()
-		}
-		db = oldDB
-		once = oldOnce
-		config.SetConfigForTest(oldConfig)
-	})
-
-	db = nil
-	once = sync.Once{}
-	config.SetConfigForTest(&config.Config{
+	resetGlobalDBForTest(t, &config.Config{
 		DB: config.DBConfig{DBName: filepath.Join(t.TempDir(), "opensync.db")},
 	})
 

@@ -28,6 +28,7 @@ export default function Setting() {
   const [passwordForm] = Form.useForm<PasswordFormValues>();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [configValues, setConfigValues] = useState<SystemSettings | null>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
 
@@ -36,20 +37,25 @@ export default function Setting() {
     try {
       const res = await getSystemConfig();
       if (res.data) {
-        configForm.setFieldsValue(res.data);
+        setConfigValues(res.data);
       }
     } catch { /* ignore */ }
     setLoading(false);
-  }, [configForm]);
+  }, []);
 
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
+  useEffect(() => {
+    if (!loading && configValues) {
+      configForm.setFieldsValue(configValues);
+    }
+  }, [configForm, configValues, loading]);
 
   const handleSaveConfig = async (values: SystemSettings) => {
     setSaving(true);
     try {
       const res = await updateSystemConfig(values);
       if (res.data) {
-        configForm.setFieldsValue(res.data);
+        setConfigValues(res.data);
       }
       message.success('系统配置已保存');
     } catch { /* ignore */ }

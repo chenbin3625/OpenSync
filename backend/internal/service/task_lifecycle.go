@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"opensync/internal/mapper"
 	"opensync/pkg/util"
 	"time"
@@ -23,7 +24,10 @@ func (jt *JobTask) finishSubmittedTask(persistErr error) {
 }
 
 func (jt *JobTask) finishSuccessfulTask() {
-	jt.updateTaskStatus()
+	if err := jt.updateTaskStatus(); err != nil {
+		jt.finishFailedTask(taskStatusUpdateErrorMessage(err))
+		return
+	}
 	jt.JobClient.markDone()
 	jt.JobClient.clearCurrentTask(jt)
 }
@@ -32,15 +36,21 @@ func taskPersistenceErrorMessage(err error) string {
 	return fmt.Sprintf("failed to save task items: %v", err)
 }
 
+func taskStatusUpdateErrorMessage(err error) string {
+	return fmt.Sprintf("failed to update task status: %v", err)
+}
+
 func (jt *JobTask) finishFailedTask(errMsg string) {
-	UpdateJobTaskStatusSimple(jt.TaskID, taskStatusSystemFailed, &errMsg)
+	if err := UpdateJobTaskStatusSimple(jt.TaskID, taskStatusSystemFailed, &errMsg); err != nil {
+		log.Printf("Failed to mark task %d as failed: %v", jt.TaskID, err)
+	}
 	if jt.JobClient != nil {
 		jt.JobClient.markDone()
 		jt.JobClient.clearCurrentTask(jt)
 	}
 }
 
-func (jt *JobTask) updateTaskStatus() {
+func (jt *JobTask) updateTaskStatus() error {
 	jt.GetCurrent()
 	taskNum := GetCuTaskNum(jt.TaskID)
 	failOrOtherNum := util.ToInt(taskNum["failNum"]) + util.ToInt(taskNum["otherNum"])
@@ -50,7 +60,7 @@ func (jt *JobTask) updateTaskStatus() {
 	taskNum["scanFinish"] = jt.ScanFinish.Load()
 	taskNum["scan"] = jt.scanProgress()
 
-	finishJobTaskStatus(jt.TaskID, status, nil, taskNum, duration, jt.CreateTime)
+	return finishJobTaskStatus(jt.TaskID, status, nil, taskNum, duration, jt.CreateTime)
 }
 
 func finalTaskStatus(isBreak bool, ctxErr error, failOrOtherNum int) taskStatus {
@@ -103,15 +113,20 @@ func UpdateJobTaskStatusFinal(taskID int64, status taskStatus, currentTasks map[
 		taskNum["duration"] = duration
 	}
 
-	finishJobTaskStatus(taskID, status, errMsg, taskNum, duration, createTime)
+	if err := finishJobTaskStatus(taskID, status, errMsg, taskNum, duration, createTime); err != nil {
+		log.Printf("Failed to finish task %d status update: %v", taskID, err)
+	}
 }
 
-func finishJobTaskStatus(taskID int64, status taskStatus, errMsg *string, taskNum map[string]interface{}, duration int, createTime float64) {
+func finishJobTaskStatus(taskID int64, status taskStatus, errMsg *string, taskNum map[string]interface{}, duration int, createTime float64) error {
 	taskNumJSON, _ := json.Marshal(taskNum)
-	mapper.UpdateJobTaskStatusAndNum(taskID, status.Int(), errMsg, string(taskNumJSON))
+	if err := mapper.UpdateJobTaskStatusAndNum(taskID, status.Int(), errMsg, string(taskNumJSON)); err != nil {
+		return err
+	}
 
 	// Send notifications
 	SendTaskNotification(taskID, status.Int(), taskNum, duration, createTime)
+	return nil
 }
 
 func taskDuration(createTime float64) int {
@@ -122,10 +137,10 @@ func taskDuration(createTime float64) int {
 }
 
 // UpdateJobTaskStatusSimple updates task status with error message
-func UpdateJobTaskStatusSimple(taskID int64, status taskStatus, errMsg *string) {
+func UpdateJobTaskStatusSimple(taskID int64, status taskStatus, errMsg *string) error {
 	taskNum := GetCuTaskNum(taskID)
 	taskNumJSON, _ := json.Marshal(taskNum)
-	mapper.UpdateJobTaskStatusAndNum(taskID, status.Int(), errMsg, string(taskNumJSON))
+	return mapper.UpdateJobTaskStatusAndNum(taskID, status.Int(), errMsg, string(taskNumJSON))
 }
 
 // GetCuTaskNum gets current task counts from DB

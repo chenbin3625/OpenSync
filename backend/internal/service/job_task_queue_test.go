@@ -524,6 +524,29 @@ func TestTaskSubmitMarksTaskFailedWhenFinishedItemPersistenceFails(t *testing.T)
 	}
 }
 
+func TestUpdateTaskStatusReturnsPersistenceErrors(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+	if err := testDB.Close(); err != nil {
+		t.Fatalf("close test DB: %v", err)
+	}
+
+	jt := &JobTask{
+		TaskID:     10,
+		CreateTime: float64(time.Now().Unix()),
+		Finish:     make([]JobTaskItem, 0),
+		Waiting:    newCopyQueue(),
+	}
+	jt.initRuntime()
+	jt.ScanFinish.Store(true)
+
+	err := jt.updateTaskStatus()
+	if err == nil {
+		t.Fatalf("updateTaskStatus() error = nil, want database write error")
+	}
+}
+
 func TestJobTaskStartRecoversPanickingSyncWorker(t *testing.T) {
 	testDB := newServiceTaskStatusTestDB(t)
 	oldDB := mapperDBForServiceTest(testDB)
