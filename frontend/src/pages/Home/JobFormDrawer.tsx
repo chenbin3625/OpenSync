@@ -360,18 +360,19 @@ export default function JobFormDrawer({
         <Row gutter={12}>
           <Col span={12}>
             <Form.Item
-              name="minFileSize"
               label="最小文件大小"
               tooltip="0 表示不限制小文件"
               style={compactItemStyle}
             >
               <Space.Compact style={{ width: '100%' }}>
-                <InputNumber
-                  min={0}
-                  precision={2}
-                  style={{ flex: 1 }}
-                  placeholder="0 不限"
-                />
+                <Form.Item name="minFileSize" noStyle>
+                  <InputNumber
+                    min={0}
+                    precision={2}
+                    style={{ flex: 1 }}
+                    placeholder="0 不限"
+                  />
+                </Form.Item>
                 <Form.Item name="minFileSizeUnit" noStyle>
                   <Select
                     options={fileSizeUnitOptions}
@@ -384,31 +385,35 @@ export default function JobFormDrawer({
           </Col>
           <Col span={12}>
             <Form.Item
-              name="maxFileSize"
               label="最大文件大小"
               tooltip="0 表示不限制大文件"
-              dependencies={['minFileSize', 'minFileSizeUnit', 'maxFileSizeUnit']}
-              rules={[
-                ({ getFieldValue }) => ({
-                  validator(_, value) {
-                    const minSize = fileSizeToBytes(getFieldValue('minFileSize'), getFieldValue('minFileSizeUnit'));
-                    const maxSize = fileSizeToBytes(value, getFieldValue('maxFileSizeUnit'));
-                    if (maxSize > 0 && minSize > maxSize) {
-                      return Promise.reject(new Error('最大文件大小必须大于等于最小文件大小'));
-                    }
-                    return Promise.resolve();
-                  },
-                }),
-              ]}
               style={compactItemStyle}
             >
               <Space.Compact style={{ width: '100%' }}>
-                <InputNumber
-                  min={0}
-                  precision={2}
-                  style={{ flex: 1 }}
-                  placeholder="0 不限"
-                />
+                <Form.Item
+                  name="maxFileSize"
+                  noStyle
+                  dependencies={['minFileSize', 'minFileSizeUnit', 'maxFileSizeUnit']}
+                  rules={[
+                    ({ getFieldValue }) => ({
+                      validator(_, value) {
+                        const minSize = fileSizeToBytes(getFieldValue('minFileSize'), getFieldValue('minFileSizeUnit'));
+                        const maxSize = fileSizeToBytes(value, getFieldValue('maxFileSizeUnit'));
+                        if (maxSize > 0 && minSize > maxSize) {
+                          return Promise.reject(new Error('最大文件大小必须大于等于最小文件大小'));
+                        }
+                        return Promise.resolve();
+                      },
+                    }),
+                  ]}
+                >
+                  <InputNumber
+                    min={0}
+                    precision={2}
+                    style={{ flex: 1 }}
+                    placeholder="0 不限"
+                  />
+                </Form.Item>
                 <Form.Item name="maxFileSizeUnit" noStyle>
                   <Select
                     options={fileSizeUnitOptions}

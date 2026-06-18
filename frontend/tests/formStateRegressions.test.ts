@@ -42,6 +42,15 @@ test('history task queries request completed statuses from the server', () => {
   assert.match(taskListSource, /params\.statusIn = historyCompletedStatuses/);
 });
 
+test('job edit drawer binds file size inputs to InputNumber via inner noStyle items', () => {
+  for (const field of ['minFileSize', 'maxFileSize']) {
+    const wrapPattern = new RegExp(`<Form\\.Item[^>]*name="${field}"[^>]*>\\s*<Space\\.Compact`);
+    assert.doesNotMatch(jobFormDrawerSource, wrapPattern);
+    const innerPattern = new RegExp(`<Form\\.Item\\b[^>]*name="${field}"[\\s\\S]{0,1500}?noStyle[\\s\\S]{0,1500}?>\\s*<InputNumber`);
+    assert.match(jobFormDrawerSource, innerPattern);
+  }
+});
+
 test('directory tree loading ignores stale engine responses', () => {
   assert.match(jobFormDrawerSource, /treeLoadRequestRef/);
   assert.match(jobFormDrawerSource, /if \(requestID !== treeLoadRequestRef\.current\) return;/);
