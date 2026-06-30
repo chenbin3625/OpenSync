@@ -379,16 +379,6 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 	return map[string]interface{}{"dataList": dataList, "count": util.ToInt64(count)}, nil
 }
 
-// GetFailedJobTaskItems returns failed task items that can be retried.
-func GetFailedJobTaskItems(taskID int64) ([]map[string]interface{}, error) {
-	return FetchAllToTable(
-		fmt.Sprintf(`SELECT %s FROM job_task_item
-		 WHERE taskId=? AND status=7
-		 ORDER BY createTime ASC, id ASC`, jobTaskItemRuntimeColumns),
-		taskID,
-	)
-}
-
 // CountJobTaskItemsByStatuses counts task items matching any of the given statuses.
 func CountJobTaskItemsByStatuses(taskID int64, statuses []int) (int64, error) {
 	if len(statuses) == 0 {
