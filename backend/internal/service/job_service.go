@@ -372,26 +372,6 @@ func RestartTask(taskID int64) {
 	client.DoManual()
 }
 
-// RetryFailedTask starts a fresh run that only retries failed items from the task.
-func RetryFailedTask(taskID int64) {
-	job, err := mapper.GetJobByTaskID(taskID)
-	if err != nil {
-		panic(err.Error())
-	}
-	client := GetJobClientByID(util.ToInt64(job["id"]))
-	if !client.enabled() {
-		panicPublic(i18n.G("disabled_job_cannot_run"))
-	}
-	count, err := countJobTaskItemsByStatuses(taskID, taskStatusValues(taskStatusFailed))
-	if err != nil {
-		panic(err.Error())
-	}
-	if count == 0 {
-		panicPublic(i18n.G("no_failed_task_items"))
-	}
-	client.DoRetryTaskItems(taskID)
-}
-
 // GetJobList returns paginated job list
 func GetJobList(params map[string]interface{}) map[string]interface{} {
 	result, err := mapper.GetJobList(params)

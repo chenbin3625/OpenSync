@@ -61,13 +61,6 @@ func NewJobTask(taskID int64, jc *JobClient) *JobTask {
 	return jt
 }
 
-func NewRetryJobTask(taskID int64, jc *JobClient, retryItems []map[string]interface{}) *JobTask {
-	jt := newJobTask(taskID, jc)
-	jt.RetryItems = cloneTaskRows(retryItems)
-	jt.Start()
-	return jt
-}
-
 func newJobTask(taskID int64, jc *JobClient) *JobTask {
 	job := jc.jobSnapshot()
 	jt := &JobTask{
