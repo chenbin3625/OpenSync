@@ -133,8 +133,6 @@ func UpdateJob(c *gin.Context) {
 			service.ResumeTask(taskID)
 		case "restart":
 			service.RestartTask(taskID)
-		case "retryFailed":
-			service.RetryFailedTask(taskID)
 		default:
 			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
 			return

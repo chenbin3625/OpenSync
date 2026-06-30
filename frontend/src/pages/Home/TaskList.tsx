@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typography, Tooltip, Spin, Pagination, Tabs, DatePicker, Input, Select } from 'antd';
 import {
-  DeleteOutlined, EyeOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined,
+  DeleteOutlined, EyeOutlined, PauseCircleOutlined, PlayCircleOutlined,
   ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined,
 } from '@ant-design/icons';
 import { jobGetTask, jobDeleteTask, jobTaskAction } from '../../api/job';
@@ -223,6 +223,21 @@ function RealtimeTaskCard({
     .reduce((sum, value) => sum + Number(value || 0), 0);
   const scanProgress = currentTask.scan;
 
+  // 计算各 tab 标签的计数，确保与分页器使用同步数据源，避免 React 状态更新一帧滞后导致不一致
+  const getTabCount = (tabKey: number): number => {
+    // 当前激活的 tab：直接使用内容分页器的 total（tabTaskTotal），与分页器完全同步
+    if (tabKey === activeTab) {
+      return total;
+    }
+    // "运行中" tab：其内容数据源是 currentTask.doingTask，从这里直接推导
+    if (tabKey === 1) {
+      return currentTask.doingTask?.length || 0;
+    }
+    // 其他未激活 tab：使用 currentTask.num 快照作为最佳近似值
+    const tab = statusTabs.find((t) => t.key === tabKey);
+    return tab ? (currentTask.num?.[tab.numKey] || 0) : 0;
+  };
+
   return (
     <Card
       className="task-progress-card"
@@ -285,7 +300,7 @@ function RealtimeTaskCard({
         onChange={(key) => onTabChange(Number(key))}
         items={statusTabs.map((tab) => ({
           key: String(tab.key),
-          label: `${tab.label} (${currentTask.num?.[tab.numKey] || 0})`,
+          label: `${tab.label} (${getTabCount(tab.key)})`,
           children: tab.key === activeTab ? (
             <RealtimeTaskItems
               activeTab={activeTab}
@@ -397,7 +412,7 @@ export default function TaskList({
 
   const handleTaskAction = useCallback(async (
     taskId: number,
-    action: 'pause' | 'resume' | 'restart' | 'retryFailed',
+    action: 'pause' | 'resume' | 'restart',
     successText: string,
   ) => {
     try {
@@ -465,17 +480,6 @@ export default function TaskList({
                 icon={<PlayCircleOutlined />}
                 aria-label="继续"
                 onClick={() => handleTaskAction(record.id, 'resume', '已提交继续执行')}
-              />
-            </Tooltip>
-          )}
-          {(record.failNum || 0) > 0 && (
-            <Tooltip title="重试失败">
-              <Button
-                size="small"
-                type="text"
-                icon={<ReloadOutlined />}
-                aria-label="重试失败"
-                onClick={() => handleTaskAction(record.id, 'retryFailed', '已提交失败项重试')}
               />
             </Tooltip>
           )}

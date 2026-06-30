@@ -321,24 +321,6 @@ func (jc *JobClient) DoManual() {
 	go jc.runMarkedJob()
 }
 
-// DoRetryItems triggers a manual execution that only retries selected failed items.
-func (jc *JobClient) DoRetryItems(items []map[string]interface{}) {
-	if len(items) == 0 {
-		panicPublic(i18n.G("no_failed_task_items"))
-	}
-	if !jc.tryMarkDoing() {
-		panicPublic(i18n.G("job_running"))
-	}
-	go jc.runMarkedJobWithRetryItems(items)
-}
-
-func (jc *JobClient) DoRetryTaskItems(sourceTaskID int64) {
-	if !jc.tryMarkDoing() {
-		panicPublic(i18n.G("job_running"))
-	}
-	go jc.runMarkedJobWithRetrySource(sourceTaskID, []taskStatus{taskStatusFailed})
-}
-
 // DoResumeItems triggers a manual execution for interrupted items from a stopped task.
 func (jc *JobClient) DoResumeItems(items []map[string]interface{}) {
 	if len(items) == 0 {
