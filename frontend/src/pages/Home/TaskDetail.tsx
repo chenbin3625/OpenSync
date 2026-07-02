@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import './Home.css';
 import { Table, Tag, Button, Space, Select, Progress, Empty, Typography, Card, Tooltip, Input } from 'antd';
 import { ArrowLeftOutlined, InfoCircleOutlined } from '@ant-design/icons';
@@ -84,9 +84,11 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
   const [errorFilter, setErrorFilter] = useState<number | undefined>(undefined);
   const [keywordInput, setKeywordInput] = useState('');
   const [keywordFilter, setKeywordFilter] = useState('');
+  const requestRef = useRef(0);
 
   const fetchData = useCallback(async () => {
     if (!taskId) return;
+    const requestID = ++requestRef.current;
     setLoading(true);
     try {
       const params: Record<string, unknown> = {
@@ -100,6 +102,9 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       if (errorFilter !== undefined) params.hasError = errorFilter;
       if (keywordFilter.trim()) params.keyword = keywordFilter.trim();
       const res = await jobGetTaskItem(params);
+      // Drop stale responses so a slow earlier request can't overwrite the
+      // latest filter/page state (e.g. rapidly switching status filters).
+      if (requestID !== requestRef.current) return;
       const data = res.data;
       const items = (data?.dataList || []).map((item) => {
         const prog = typeof item.progress === 'string' ? parseInt(item.progress, 10) : (item.progress || 0);
@@ -110,7 +115,9 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
     } catch {
       /* ignore */
     }
-    setLoading(false);
+    if (requestID === requestRef.current) {
+      setLoading(false);
+    }
   }, [errorFilter, keywordFilter, objectFilter, page, pageSize, statusFilter, taskId, typeFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);

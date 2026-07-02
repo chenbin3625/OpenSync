@@ -48,6 +48,18 @@ func errorRecovery() gin.HandlerFunc {
 	}
 }
 
+// maxRequestBodySize bounds JSON/form request bodies so an authenticated user
+// cannot exhaust memory with an oversized payload. The app does not accept file
+// uploads through HTTP (syncing happens via the AList API), so 1MB is generous.
+func maxRequestBodySize(max int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, max)
+		}
+		c.Next()
+	}
+}
+
 func serveWebFile(c *gin.Context, webDist fs.FS, filePath, contentType string) {
 	data, err := fs.ReadFile(webDist, filePath)
 	if err != nil {
@@ -135,6 +147,7 @@ func run(parent context.Context) error {
 
 	// Error recovery + Auth middleware
 	r.Use(errorRecovery())
+	r.Use(maxRequestBodySize(1<<20)) // 1MB; config/alist/notify payloads are small JSON
 	r.Use(middleware.AuthRequired())
 
 	// System routes (no auth needed)

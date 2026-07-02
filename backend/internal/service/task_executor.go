@@ -17,6 +17,14 @@ func (jt *JobTask) runCopyExecutor() {
 		if jt.stopCopyExecutorIfBroken() {
 			break
 		}
+		// Context cancelled (e.g. task timeout) without an explicit break flag:
+		// drain waiting items and stop the executor. Without this, the select in
+		// waitForCopyExecutorSignal returns immediately on the always-ready
+		// ctx.Done() channel and the loop spins at 100% CPU until scan finishes.
+		if jt.context().Err() != nil {
+			jt.markWaitingAsAborted()
+			break
+		}
 
 		started := jt.startAvailableCopyItems()
 		if jt.copyExecutorDrained() {

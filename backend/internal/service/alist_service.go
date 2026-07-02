@@ -139,9 +139,11 @@ func panicAlistClientLoadError(err error) {
 	if err == nil {
 		return
 	}
-	msg := i18n.G("add_alist_client_fail")
-	msg = strings.Replace(msg, "{}", err.Error(), 1)
-	panicPublic(msg)
+	// Log the full error (which may include internal host/IP/port details) but
+	// return only a generic message to the client so network topology is not
+	// leaked through the API response.
+	log.Printf("alist client load failed: %v", err)
+	panicPublic(i18n.G("alist_connect_fail"))
 }
 
 func normalizeAlistInput(alist map[string]interface{}) string {
@@ -190,7 +192,8 @@ func UpdateClient(alist map[string]interface{}) {
 		}
 		client, err := NewAlistClient(urlStr, fmt.Sprintf("%v", alist["token"]), alistID)
 		if err != nil {
-			panicPublic(err.Error())
+			log.Printf("alist client update failed: %v", err)
+			panicPublic(i18n.G("alist_connect_fail"))
 		}
 		storeAlistClient(alistID, client)
 	}
@@ -218,7 +221,7 @@ func AddClient(alist map[string]interface{}) {
 	client, err := NewAlistClient(urlStr, token, 0)
 	if err != nil {
 		log.Printf("Failed to add alist client: %v", err)
-		panicPublic(err.Error())
+		panicPublic(i18n.G("alist_connect_fail"))
 	}
 
 	remarkStr := ""

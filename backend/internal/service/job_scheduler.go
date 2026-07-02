@@ -160,9 +160,10 @@ func buildCronSpec(jobData map[string]interface{}) string {
 		return ""
 	}
 
-	// robfig/cron format: second minute hour dayOfMonth month dayOfWeek
-	// Convert day_of_week: Python uses 0-6 (Mon-Sun), cron uses 0-6 (Sun-Sat) or 1-7
-	// We'll keep as-is for now (close enough for most use cases)
+	// robfig/cron format: second minute hour dayOfMonth month dayOfWeek.
+	// day_of_week is a free-text cron field on the frontend, so users enter
+	// cron-standard values directly (0=Sunday..6=Saturday) and no conversion
+	// is needed. The values are passed through unchanged.
 	spec := strings.Join(parts, " ")
 	log.Printf("Built cron spec: %s", spec)
 	return spec

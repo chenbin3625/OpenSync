@@ -185,6 +185,13 @@ func InitializeUser(userName string, passwd string) (map[string]interface{}, str
 	recoveryKey, recoveryHash := newRecoveryKeyHash()
 	userID, err := mapper.CreateUser(userName, hash, recoveryHash)
 	if err != nil {
+		// A concurrent InitializeUser request can race past the IsInitialized
+		// check above. The unique index on userName (see mapper init) rejects
+		// the duplicate; surface a friendly "already initialized" message
+		// instead of leaking the raw constraint error.
+		if IsInitialized() {
+			panicPublic(i18n.G("system_initialized"))
+		}
 		panic(err.Error())
 	}
 	user, err := mapper.GetUserByID(userID)
@@ -231,9 +238,15 @@ func ResetPasswd(userName string, recoveryKey string, passwd string) string {
 	if userName == "" || recoveryKey == "" || strings.TrimSpace(passwd) == "" {
 		panicPublic(i18n.G("lost_part"))
 	}
+	// Rate-limit recovery key attempts the same way login attempts are limited,
+	// scoped per username. The 24-char key is not practically brute-forceable,
+	// but this endpoint is unauthenticated, so defense in depth applies.
+	scope := passwordErrorScope(0, userName, "recovery")
+	CheckPwdTimeForScope(scope)
 	user := GetUser(0, userName)
 	storedRecoveryHash := fmt.Sprintf("%v", user["recoveryKey"])
 	if !crypto.CheckPassword(recoveryKey, storedRecoveryHash) {
+		AddPwdErrorForScope(scope)
 		panicPublic(i18n.G("key_wrong"))
 	}
 	newRecoveryKey, newRecoveryHash := newRecoveryKeyHash()

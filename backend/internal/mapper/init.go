@@ -6,7 +6,7 @@ import (
 	"log"
 )
 
-const currentVersion = 260612
+const currentVersion = 260613
 
 // InitSQL initializes the database schema and runs migrations
 func InitSQL() {
@@ -25,7 +25,8 @@ func InitSQL() {
 				passwd text,
 				recoveryKey text,
 				sqlVersion integer DEFAULT %d,
-				createTime integer DEFAULT (strftime('%%s', 'now'))
+				createTime integer DEFAULT (strftime('%%s', 'now')),
+				UNIQUE (userName)
 			)`, currentVersion),
 
 			`CREATE TABLE alist_list(
@@ -138,6 +139,10 @@ func ensureIndexes(db *sql.DB) {
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status ON job_task_item(taskId, status)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status_time ON job_task_item(taskId, status, createTime DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_type ON job_task_item(taskId, type)",
+		// Enforce userName uniqueness on existing databases so the first-run
+		// InitializeUser endpoint cannot create a duplicate admin account under
+		// a TOCTOU race. Fresh databases get it via the CREATE TABLE statement.
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_user_list_username ON user_list(userName)",
 	}
 	for _, stmt := range indexes {
 		if _, err := db.Exec(stmt); err != nil {
@@ -155,8 +160,6 @@ func migrationStatements(fromVersion int64) []string {
 		)
 	}
 	if fromVersion < 240813 {
-		// SQLite doesn't support DROP COLUMN before 3.35.0, use recreate approach
-		// For simplicity, just add new columns (old 'cron' column will remain unused)
 		stmts = append(stmts,
 			"ALTER TABLE job ADD COLUMN isCron integer DEFAULT 0",
 			"ALTER TABLE job ADD COLUMN month text DEFAULT NULL",
@@ -216,6 +219,12 @@ func migrationStatements(fromVersion int64) []string {
 	}
 	if fromVersion < 260612 {
 		stmts = append(stmts, "ALTER TABLE user_list ADD COLUMN recoveryKey text")
+	}
+	if fromVersion < 260613 {
+		// Drop the legacy single 'cron' column carried over from the earlier
+		// Python implementation; scheduling now uses the dedicated isCron +
+		// second/minute/hour/day/month/day_of_week fields.
+		stmts = append(stmts, "ALTER TABLE job DROP COLUMN cron")
 	}
 	stmts = append(stmts, fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion))
 	return stmts
@@ -315,6 +324,8 @@ func shouldSkipMigrationStatement(tx *sql.Tx, stmt string) bool {
 		return txTableHasColumn(tx, "job", "maxFileSize")
 	case "ALTER TABLE user_list ADD COLUMN recoveryKey text":
 		return txTableHasColumn(tx, "user_list", "recoveryKey")
+	case "ALTER TABLE job DROP COLUMN cron":
+		return !txTableHasColumn(tx, "job", "cron")
 	case "ALTER TABLE job DROP COLUMN year":
 		return !txTableHasColumn(tx, "job", "year")
 	case "ALTER TABLE job DROP COLUMN week":

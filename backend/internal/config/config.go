@@ -179,11 +179,35 @@ func GetConfig() *Config {
 		sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
 	}
 
-	sysConfig = &Config{
+		sysConfig = &Config{
 		DB:     DBConfig{DBName: dbname},
 		Server: sCfg,
 	}
+	clampServerConfig(&sysConfig.Server)
 	return sysConfig
+}
+
+// clampServerConfig enforces the same ranges as validateSystemSettings on
+// values loaded from config.ini or environment variables. Manually edited
+// values that fall outside the allowed range fall back to the default rather
+// than silently taking effect (e.g. copy_concurrency=99999 spawning an
+// unbounded number of goroutines, or task_timeout=-1 producing a negative
+// timeout).
+func clampServerConfig(sCfg *ServerConfig) {
+	sCfg.Expires = clampInt(sCfg.Expires, minExpires, maxExpires, defaultExpires)
+	sCfg.Timeout = clampInt(sCfg.Timeout, minTaskTimeout, maxTaskTimeout, defaultTaskTimeout)
+	sCfg.TaskSave = clampInt(sCfg.TaskSave, minTaskSave, maxTaskSave, defaultTaskSave)
+	sCfg.CopyConcurrency = clampInt(sCfg.CopyConcurrency, MinCopyConcurrency, MaxCopyConcurrency, DefaultCopyConcurrency)
+	sCfg.ScanConcurrency = clampInt(sCfg.ScanConcurrency, MinScanConcurrency, MaxScanConcurrency, DefaultScanConcurrency)
+	sCfg.RealtimeFinishedItems = clampInt(sCfg.RealtimeFinishedItems, MinRealtimeFinishedItems, MaxRealtimeFinishedItems, DefaultRealtimeFinishedItems)
+	sCfg.MaxRetries = clampInt(sCfg.MaxRetries, MinMaxRetries, MaxRetryAttempts, DefaultMaxRetries)
+}
+
+func clampInt(value, min, max, fallback int) int {
+	if value < min || value > max {
+		return fallback
+	}
+	return value
 }
 
 // SetConfigForTest swaps the process config for tests in other packages.

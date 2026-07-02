@@ -2,16 +2,19 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
 	"opensync/pkg/util"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -23,7 +26,36 @@ var notifyHTTPClient = &http.Client{
 		MaxIdleConns:        50,
 		MaxIdleConnsPerHost: 10,
 		IdleConnTimeout:     90 * time.Second,
+		// DialContext intercepts the resolved address to block SSRF attempts
+		// (private/loopback/link-local targets) before any connection is made.
+		DialContext: ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second}),
 	},
+}
+
+// ssrfSafeDialContext wraps a dialer so that connections to non-routable or
+// internal IP ranges are rejected. The control runs after DNS resolution with
+// the resolved IP, which avoids TOCTOU gaps between resolving and dialing.
+func ssrfSafeDialContext(dialer *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer.Control = func(network, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return err
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return fmt.Errorf("invalid notify target address: %s", address)
+		}
+		if isBlockedNotifyIP(ip) {
+			return fmt.Errorf("notify target %s is not allowed", ip)
+		}
+		return nil
+	}
+	return dialer.DialContext
+}
+
+func isBlockedNotifyIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
 }
 
 // GetNotifyList returns notify list
@@ -390,7 +422,10 @@ func sendWeCom(client *http.Client, params map[string]interface{}, title, conten
 	}
 
 	// Get access token
-	tokenURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s", corpID, corpSecret)
+	tokenURL := "https://qyapi.weixin.qq.com/cgi-bin/gettoken?" + url.Values{
+		"corpid":     {corpID},
+		"corpsecret": {corpSecret},
+	}.Encode()
 	req, err := buildNotifyRequest(http.MethodGet, tokenURL, nil, "")
 	if err != nil {
 		panic(err.Error())
@@ -400,7 +435,10 @@ func sendWeCom(client *http.Client, params map[string]interface{}, title, conten
 		panic(err.Error())
 	}
 	defer resp.Body.Close()
-	tokenBody, _ := io.ReadAll(resp.Body)
+	tokenBody, err := readAllWithLimit(resp.Body, maxNotifyResponseBytes)
+	if err != nil {
+		panic(err.Error())
+	}
 	var tokenResult struct {
 		AccessToken string `json:"access_token"`
 		ErrCode     int    `json:"errcode"`
@@ -425,7 +463,9 @@ func sendWeCom(client *http.Client, params map[string]interface{}, title, conten
 	if err != nil {
 		panic(err.Error())
 	}
-	msgURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s", tokenResult.AccessToken)
+	msgURL := "https://qyapi.weixin.qq.com/cgi-bin/message/send?" + url.Values{
+		"access_token": {tokenResult.AccessToken},
+	}.Encode()
 	msgReq, err := buildNotifyRequest(http.MethodPost, msgURL, bytes.NewReader(jsonData), "application/json")
 	if err != nil {
 		panic(err.Error())
