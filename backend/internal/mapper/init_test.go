@@ -160,6 +160,52 @@ func TestMigrateDBTxDropsUnusedCronColumns(t *testing.T) {
 	}
 }
 
+func TestMigrateDBTxDropsLegacyCronColumn(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`CREATE TABLE user_list(
+		id integer primary key autoincrement,
+		userName text,
+		passwd text,
+		sqlVersion integer
+	)`); err != nil {
+		t.Fatalf("create user_list: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO user_list(userName, passwd, sqlVersion) VALUES ('admin', 'x', 260612)"); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	if _, err := testDB.Exec(`CREATE TABLE job(
+		id integer primary key autoincrement,
+		cron text DEFAULT NULL,
+		isCron integer DEFAULT 0,
+		month text DEFAULT NULL,
+		day text DEFAULT NULL,
+		day_of_week text DEFAULT NULL,
+		hour text DEFAULT NULL,
+		minute text DEFAULT NULL,
+		second text DEFAULT NULL
+	)`); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	if err := migrateDBTx(testDB, 260612); err != nil {
+		t.Fatalf("migrateDBTx() error: %v", err)
+	}
+
+	if tableHasColumn(testDB, "job", "cron") {
+		t.Fatalf("job table still has legacy cron column")
+	}
+	for _, column := range []string{"isCron", "month", "day", "day_of_week", "hour", "minute", "second"} {
+		if !tableHasColumn(testDB, "job", column) {
+			t.Fatalf("job table missing active scheduling column %q", column)
+		}
+	}
+}
+
 func TestEnsureIndexesCreatesTaskStatusTimeIndex(t *testing.T) {
 	testDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {

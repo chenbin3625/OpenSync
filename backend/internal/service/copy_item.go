@@ -302,8 +302,12 @@ func (ci *CopyItem) endIt() {
 		err := client.DeleteFileContext(ctx, ci.SrcPath, []string{ci.FileName}, scanIntervalS)
 		cancel()
 		if err != nil {
+			// The file was already moved to the destination successfully; a
+			// failure to delete the source is a cleanup warning, not a sync
+			// failure. Keep taskStatusSuccess so the overall task status is
+			// accurate, and record the reason in ErrMsg for diagnosis.
 			errMsg := strings.Replace(i18n.G("copy_success_but_delete_fail"), "{}", err.Error(), 1)
-			ci.setProgress(taskStatusFailed, ci.progress(), &errMsg)
+			ci.setProgress(taskStatusSuccess, ci.progress(), &errMsg)
 		}
 	}
 	runtime.finishCopyItem(ci)

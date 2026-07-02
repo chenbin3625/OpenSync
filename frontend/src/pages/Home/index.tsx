@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import './Home.css';
 import { App, Typography, Tabs, Drawer, Empty } from 'antd';
@@ -28,17 +28,24 @@ export default function Home() {
   const [selectedJobId, setSelectedJobId] = useState<number | null>(() => initialRouteState.jobId);
   const [activeJobTab, setActiveJobTab] = useState<HomeTabKey>(() => initialRouteState.tab);
   const [taskDetailDrawerTaskId, setTaskDetailDrawerTaskId] = useState<string>('');
+  const listRequestRef = useRef(0);
 
   const fetchList = useCallback(async (p = page, ps = pageSize) => {
+    const requestID = ++listRequestRef.current;
     setLoading(true);
     try {
       const res = await jobGetJob({ pageSize: ps, pageNum: p });
+      // Drop stale responses so a slow earlier page request can't overwrite
+      // the latest list (e.g. rapidly flipping through pagination).
+      if (requestID !== listRequestRef.current) return;
       setList(res.data?.dataList || []);
       setTotal(res.data?.count || 0);
     } catch { /* ignore */ }
     finally {
       setListLoaded(true);
-      setLoading(false);
+      if (requestID === listRequestRef.current) {
+        setLoading(false);
+      }
     }
   }, [page, pageSize]);
 

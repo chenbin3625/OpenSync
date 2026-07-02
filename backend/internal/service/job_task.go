@@ -259,10 +259,25 @@ func (jt *JobTask) lastWatchingUnix() int64 {
 }
 
 func (jt *JobTask) finishCopyItem(item *CopyItem) {
+	// Snapshot the fields CopyHook needs under the read lock, then release
+	// before invoking CopyHook. CopyHook -> appendFinish may perform a batched
+	// DB write (persistJobTaskItems); holding item.mu during that write blocks
+	// concurrent progress readers (doingTaskMaps) and inverts the lock order
+	// against finishedTaskMaps (FinishMu -> item.mu). Snapshotting avoids both.
 	item.mu.RLock()
-	jt.CopyHook(item.SrcPath, item.DstPath, item.FileName, item.FileSize, item.AlistTaskID,
-		item.Status, item.ErrMsg, taskItemFile, item.CopyType, item.CreateTime)
+	srcPath := item.SrcPath
+	dstPath := item.DstPath
+	fileName := item.FileName
+	fileSize := item.FileSize
+	alistTaskID := item.AlistTaskID
+	status := item.Status
+	errMsg := item.ErrMsg
+	copyType := item.CopyType
+	createTime := item.CreateTime
 	item.mu.RUnlock()
+
+	jt.CopyHook(srcPath, dstPath, fileName, fileSize, alistTaskID,
+		status, errMsg, taskItemFile, copyType, createTime)
 
 	jt.DoingMu.Lock()
 	delete(jt.Doing, item.DoingKey)
