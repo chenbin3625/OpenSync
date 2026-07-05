@@ -130,7 +130,6 @@ func UpdateSystemConfig(c *gin.Context) {
 		return
 	}
 	middleware.InitSecureCookie()
-	service.RefreshOutboundHTTPClients()
 	service.CleanupExpiredTasks(log.Default(), req.TaskSave, time.Now())
 	c.JSON(http.StatusOK, model.Success(config.GetSystemSettings()))
 }

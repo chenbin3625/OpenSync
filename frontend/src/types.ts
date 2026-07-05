@@ -31,7 +31,6 @@ export interface SystemSettings {
   scanConcurrency: number;
   realtimeFinishedItems: number;
   maxRetries: number;
-  proxyUrl: string;
 }
 
 export interface AlistItem {

@@ -22,22 +22,6 @@ const labelWithTip = (label: string, tip: string) => (
   </Space>
 );
 
-const proxyUrlRules = [{
-  validator(_: unknown, value?: string) {
-    const proxyUrl = (value || '').trim();
-    if (!proxyUrl) return Promise.resolve();
-    try {
-      const parsed = new URL(proxyUrl);
-      if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(parsed.protocol) || !parsed.hostname) {
-        throw new Error('unsupported proxy URL');
-      }
-      return Promise.resolve();
-    } catch {
-      return Promise.reject(new Error('请输入 http、https、socks5 或 socks5h 代理 URL'));
-    }
-  },
-}];
-
 const isFormValidationError = (err: unknown) => (
   !!err && typeof err === 'object' && 'errorFields' in err
 );
@@ -79,7 +63,7 @@ export default function Setting() {
   const handleSaveConfig = async (values: SystemSettings) => {
     setSaving(true);
     try {
-      const res = await updateSystemConfig({ ...values, proxyUrl: values.proxyUrl?.trim() || '' });
+      const res = await updateSystemConfig(values);
       if (res.data) {
         setConfigValues(res.data);
       }
@@ -212,15 +196,6 @@ export default function Setting() {
                   rules={[{ required: true, message: '请输入最大重试次数' }]}
                 >
                   <InputNumber min={0} max={10} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col xs={24}>
-                <Form.Item
-                  name="proxyUrl"
-                  label={labelWithTip('代理服务器', '后端访问 AList 和发送通知时使用的出站代理；留空表示直连。支持 http、https、socks5 和 socks5h。')}
-                  rules={proxyUrlRules}
-                >
-                  <Input allowClear placeholder="例如：http://127.0.0.1:7890" />
                 </Form.Item>
               </Col>
             </Row>
