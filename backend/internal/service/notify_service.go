@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -21,15 +22,23 @@ import (
 const maxNotifyResponseBytes = 1 << 20 // 1MB
 
 var notifyHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
-		MaxIdleConns:        50,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-		// DialContext intercepts the resolved address to block SSRF attempts
-		// (private/loopback/link-local targets) before any connection is made.
-		DialContext: ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second}),
-	},
+	Timeout:   30 * time.Second,
+	Transport: newNotifyTransport(),
+}
+
+func newNotifyTransport() *http.Transport {
+	plainDialer := &net.Dialer{Timeout: 15 * time.Second}
+	safeDialContext := ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second})
+	transport := newOutboundTransport(50, 10, 90*time.Second)
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if outboundProxyConfigured() {
+			return plainDialer.DialContext(ctx, network, addr)
+		}
+		// Direct notification requests still intercept the resolved address to
+		// block SSRF attempts before any connection is made.
+		return safeDialContext(ctx, network, addr)
+	}
+	return transport
 }
 
 // ssrfSafeDialContext wraps a dialer so that connections to non-routable or
@@ -58,27 +67,204 @@ func isBlockedNotifyIP(ip net.IP) bool {
 		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
 }
 
-// GetNotifyList returns notify list
+// GetNotifyList returns notify list with secret fields redacted so tokens
+// never reach the client DOM. Raw secrets are still held in the DB and used
+// internally by SendTaskNotification; only the list response is masked.
 func GetNotifyList() []map[string]interface{} {
 	list, err := mapper.GetNotifyList(false)
 	if err != nil {
 		panic(err.Error())
 	}
+	for _, notify := range list {
+		method := util.ToInt(notify["method"])
+		notify["params"] = redactNotifyParams(method, fmt.Sprintf("%v", notify["params"]))
+	}
 	return list
+}
+
+// notifySecretKeys are param keys whose values are redacted in list responses.
+var notifySecretKeys = map[int][]string{
+	0: {"url", "headers"},           // custom webhook: URL may embed token, headers carry auth
+	1: {"sendKey"},                  // Server酱
+	2: {"url", "webhook"},           // 钉钉 (access_token in URL query)
+	3: {"corpsecret", "corpSecret"}, // 企业微信应用密钥
+	4: {"url", "webhook"},           // 飞书 (token in URL path)
+}
+
+const notifyRedactionMarker = "****"
+
+func maskSecretValue(value string) string {
+	if len(value) <= 4 {
+		return notifyRedactionMarker
+	}
+	return notifyRedactionMarker + value[len(value)-4:]
+}
+
+// maskNotifyURL redacts token-like segments in a webhook URL while keeping
+// the host visible so the card summary stays identifiable. DingTalk embeds
+// the token in a query param (access_token); Lark embeds it in the path.
+func maskNotifyURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return maskSecretValue(rawURL)
+	}
+	masked := false
+	q := u.Query()
+	for k, vals := range q {
+		lk := strings.ToLower(k)
+		if strings.Contains(lk, "token") || strings.Contains(lk, "key") || strings.Contains(lk, "secret") {
+			for i := range vals {
+				vals[i] = maskSecretValue(vals[i])
+			}
+			q[k] = vals
+			masked = true
+		}
+	}
+	if masked {
+		u.RawQuery = q.Encode()
+	}
+	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(segs) > 0 {
+		last := segs[len(segs)-1]
+		if len(last) >= 16 {
+			segs[len(segs)-1] = maskSecretValue(last)
+			u.Path = "/" + strings.Join(segs, "/")
+		}
+	}
+	return u.String()
+}
+
+// redactNotifyParams returns paramsStr with secret fields masked for display.
+func redactNotifyParams(method int, paramsStr string) string {
+	params, err := parseNotifyParams(paramsStr)
+	if err != nil {
+		return paramsStr
+	}
+	for _, key := range notifySecretKeys[method] {
+		v, ok := params[key]
+		if !ok || v == nil {
+			continue
+		}
+		s, _ := v.(string)
+		if s == "" {
+			continue
+		}
+		switch key {
+		case "headers":
+			params[key] = ""
+		case "url", "webhook":
+			params[key] = maskNotifyURL(s)
+		default:
+			params[key] = maskSecretValue(s)
+		}
+	}
+	out, err := json.Marshal(params)
+	if err != nil {
+		return paramsStr
+	}
+	return string(out)
+}
+
+// isMaskedSecretValue reports whether value looks like a redacted secret, so
+// the caller should preserve the existing stored value instead of overwriting.
+func isMaskedSecretValue(value string) bool {
+	if strings.Contains(value, notifyRedactionMarker) {
+		return true
+	}
+	decoded, err := url.QueryUnescape(value)
+	return err == nil && strings.Contains(decoded, notifyRedactionMarker)
+}
+
+// resolveNotifyParams merges incoming params with stored secrets for fields
+// that were redacted (masked) or left empty. For new configs (no id) the
+// incoming params are returned unchanged. The returned map contains real
+// secret values, suitable for sending a test or persisting.
+func resolveNotifyParams(notify map[string]interface{}) (map[string]interface{}, error) {
+	method := util.ToInt(notify["method"])
+	incoming, err := parseNotifyParams(fmt.Sprintf("%v", notify["params"]))
+	if err != nil {
+		return nil, err
+	}
+	notifyID := util.ToInt64(notify["id"])
+	if notifyID <= 0 {
+		return incoming, nil
+	}
+	existing, err := mapper.GetNotifyByID(notifyID)
+	if err != nil || existing == nil {
+		return incoming, nil
+	}
+	existingParams, _ := parseNotifyParams(fmt.Sprintf("%v", existing["params"]))
+	for _, key := range notifySecretKeys[method] {
+		v, ok := incoming[key]
+		if !ok || v == nil {
+			if ev, ok2 := existingParams[key]; ok2 && ev != nil {
+				incoming[key] = ev
+			}
+			continue
+		}
+		s, _ := v.(string)
+		if s == "" || isMaskedSecretValue(s) {
+			if ev, ok2 := existingParams[key]; ok2 && ev != nil {
+				incoming[key] = ev
+			}
+		}
+	}
+	return incoming, nil
+}
+
+func validateNotifyParams(method int, params map[string]interface{}) error {
+	switch method {
+	case 0, 2, 4:
+		return validateNotifyHTTPSURL(paramString(params, "url", "webhook"))
+	default:
+		return nil
+	}
+}
+
+func validateNotifyHTTPSURL(rawURL string) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return errors.New(i18n.G("notify_url_invalid"))
+	}
+	if strings.ToLower(u.Scheme) != "https" {
+		return errors.New(i18n.G("notify_url_invalid"))
+	}
+	return nil
 }
 
 // AddNewNotify adds a new notify config
 func AddNewNotify(notify map[string]interface{}) {
-	_, err := mapper.AddNotify(notify)
+	method := util.ToInt(notify["method"])
+	params, err := parseNotifyParams(fmt.Sprintf("%v", notify["params"]))
+	if err != nil {
+		panic(err.Error())
+	}
+	if err := validateNotifyParams(method, params); err != nil {
+		panicPublic(err.Error())
+	}
+	_, err = mapper.AddNotify(notify)
 	if err != nil {
 		panic(err.Error())
 	}
 }
 
-// EditNotify updates a notify config
+// EditNotify updates a notify config. Secret fields that were redacted in
+// the list view (or left empty) are preserved from the stored config so the
+// user can edit other fields without re-entering credentials.
 func EditNotify(notify map[string]interface{}) {
-	err := mapper.EditNotify(notify)
+	resolved, err := resolveNotifyParams(notify)
 	if err != nil {
+		panic(err.Error())
+	}
+	if err := validateNotifyParams(util.ToInt(notify["method"]), resolved); err != nil {
+		panicPublic(err.Error())
+	}
+	out, err := json.Marshal(resolved)
+	if err != nil {
+		panic(err.Error())
+	}
+	notify["params"] = string(out)
+	if err := mapper.EditNotify(notify); err != nil {
 		panic(err.Error())
 	}
 }
@@ -99,13 +285,27 @@ func DeleteNotify(notifyID int64) {
 	}
 }
 
-// TestNotify sends a test notification
+// TestNotify sends a test notification. Secrets that were redacted in the
+// list view are restored from the stored config (when an id is given) so the
+// test sends with real credentials.
 func TestNotify(notify map[string]interface{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			panicPublic(fmt.Sprintf("%v", r))
 		}
 	}()
+	resolved, err := resolveNotifyParams(notify)
+	if err != nil {
+		panic(err.Error())
+	}
+	if err := validateNotifyParams(util.ToInt(notify["method"]), resolved); err != nil {
+		panicPublic(err.Error())
+	}
+	out, err := json.Marshal(resolved)
+	if err != nil {
+		panic(err.Error())
+	}
+	notify["params"] = string(out)
 	msg := i18n.G("notify_test_msg")
 	sendNotify(notify, "OpenSync Test", msg, false)
 }
@@ -193,6 +393,9 @@ func sendNotify(notify map[string]interface{}, title, content string, needNotSyn
 	}
 
 	method := util.ToInt(notify["method"])
+	if err := validateNotifyParams(method, params); err != nil {
+		panicPublic(err.Error())
+	}
 
 	// Check notSendNull flag
 	if needNotSync {
@@ -263,10 +466,10 @@ func sendNotifyRequest(client *http.Client, req *http.Request) {
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		msg := strings.TrimSpace(string(bodyBytes))
-		if msg == "" {
-			msg = resp.Status
+		if msg != "" {
+			log.Printf("notify request failed: status=%s body=%q", resp.Status, msg)
 		}
-		panic(msg)
+		panic(fmt.Sprintf("notify request failed: %s", resp.Status))
 	}
 }
 

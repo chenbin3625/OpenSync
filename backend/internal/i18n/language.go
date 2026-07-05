@@ -62,6 +62,8 @@ var allLng = map[string]map[string]interface{}{
 		"passwd_wrong_max_time":            "5分钟内密码错误超过3次，请稍后再试",
 		"notify_error":                     "发送通知过程中失败，原因为：{}",
 		"notify_test_msg":                  "这是一条由您自己发送的OpenSync测试消息，当你看到这条消息，说明你的配置是正确可用的。",
+		"notify_url_invalid":               "Webhook URL必须是有效的HTTPS地址",
+		"passwd_too_short":                 "密码长度至少需要8位",
 		"min_file_size_invalid":            "最小文件大小必须是大于等于0的整数",
 		"max_file_size_invalid":            "最大文件大小必须是大于等于0的整数",
 		"min_file_size_gt_max":             "最小文件大小不能大于最大文件大小",
@@ -72,7 +74,9 @@ var allLng = map[string]map[string]interface{}{
 		"settings_scan_concurrency":        "扫描并发数",
 		"settings_realtime_finished_items": "完成明细保留数",
 		"settings_max_retries":             "最大重试次数",
+		"settings_proxy_url":               "代理服务器",
 		"settings_range_error":             "%s必须在%d到%d之间",
+		"settings_proxy_url_invalid":       "代理服务器地址格式无效，请使用 http、https、socks5 或 socks5h URL",
 	},
 	"eng": {
 		"success":                          "success",
@@ -126,6 +130,8 @@ var allLng = map[string]map[string]interface{}{
 		"passwd_wrong_max_time":            "The password was incorrect more than 3 times within 5 minutes. Please try again later",
 		"notify_error":                     "Failed to send notification due to: {}",
 		"notify_test_msg":                  "This is a OpenSync test message sent by yourself. When you see this message, it means your configuration is correct and available.",
+		"notify_url_invalid":               "Webhook URL must be a valid HTTPS URL",
+		"passwd_too_short":                 "Password must be at least 8 characters long",
 		"min_file_size_invalid":            "Minimum file size must be an integer greater than or equal to 0",
 		"max_file_size_invalid":            "Maximum file size must be an integer greater than or equal to 0",
 		"min_file_size_gt_max":             "Minimum file size cannot be greater than maximum file size",
@@ -136,7 +142,9 @@ var allLng = map[string]map[string]interface{}{
 		"settings_scan_concurrency":        "Scan concurrency",
 		"settings_realtime_finished_items": "Completed detail retention",
 		"settings_max_retries":             "Maximum retries",
+		"settings_proxy_url":               "Proxy server",
 		"settings_range_error":             "%s must be between %d and %d",
+		"settings_proxy_url_invalid":       "Proxy server URL is invalid. Use an http, https, socks5, or socks5h URL.",
 	},
 }
 

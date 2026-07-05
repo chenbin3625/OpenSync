@@ -43,7 +43,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleLogout = async () => {
     try {
       await logout();
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('logout failed', err);
+    }
     setUserInfo(null);
     navigate('/login');
   };

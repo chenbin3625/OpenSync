@@ -46,6 +46,7 @@ copy_concurrency=13
 scan_concurrency=17
 realtime_finished_items=3500
 max_retries=4
+proxy_url=http://proxy.example:8080
 `), 0644); err != nil {
 		t.Fatalf("WriteFile(config.ini) error: %v", err)
 	}
@@ -72,6 +73,9 @@ max_retries=4
 	if cfg.Server.MaxRetries != 4 {
 		t.Fatalf("MaxRetries = %d, want 4", cfg.Server.MaxRetries)
 	}
+	if cfg.Server.ProxyURL != "http://proxy.example:8080" {
+		t.Fatalf("ProxyURL = %q, want http://proxy.example:8080", cfg.Server.ProxyURL)
+	}
 }
 
 func TestUpdateSystemSettingsPersistsAndUpdatesMemory(t *testing.T) {
@@ -86,6 +90,7 @@ func TestUpdateSystemSettingsPersistsAndUpdatesMemory(t *testing.T) {
 		ScanConcurrency:       19,
 		RealtimeFinishedItems: 4500,
 		MaxRetries:            3,
+		ProxyURL:              "socks5h://proxy.example:1080",
 	}
 	if err := UpdateSystemSettings(settings); err != nil {
 		t.Fatalf("UpdateSystemSettings() error: %v", err)
@@ -109,6 +114,7 @@ func TestUpdateSystemSettingsPersistsAndUpdatesMemory(t *testing.T) {
 		"scan_concurrency=19",
 		"realtime_finished_items=4500",
 		"max_retries=3",
+		"proxy_url=socks5h://proxy.example:1080",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("config.ini missing %q in:\n%s", want, text)
@@ -152,6 +158,30 @@ func TestUpdateSystemSettingsRejectsMaxRetriesAboveTen(t *testing.T) {
 		ScanConcurrency:       before.ScanConcurrency,
 		RealtimeFinishedItems: before.RealtimeFinishedItems,
 		MaxRetries:            11,
+	})
+	if err == nil {
+		t.Fatalf("UpdateSystemSettings() error = nil, want validation error")
+	}
+	after := GetSystemSettings()
+	if after != before {
+		t.Fatalf("settings changed after invalid update: got %#v, want %#v", after, before)
+	}
+}
+
+func TestUpdateSystemSettingsRejectsInvalidProxyURL(t *testing.T) {
+	withTempConfigDir(t)
+	_ = GetConfig()
+
+	before := GetSystemSettings()
+	err := UpdateSystemSettings(SystemSettings{
+		Expires:               before.Expires,
+		TaskTimeout:           before.TaskTimeout,
+		TaskSave:              before.TaskSave,
+		CopyConcurrency:       before.CopyConcurrency,
+		ScanConcurrency:       before.ScanConcurrency,
+		RealtimeFinishedItems: before.RealtimeFinishedItems,
+		MaxRetries:            before.MaxRetries,
+		ProxyURL:              "ftp://proxy.example:21",
 	})
 	if err == nil {
 		t.Fatalf("UpdateSystemSettings() error = nil, want validation error")

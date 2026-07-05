@@ -44,12 +44,8 @@ func NewAlistClient(alistURL string, token string, alistID int64) (*AlistClient,
 		AlistID: alistID,
 		waits:   make(map[string]time.Time),
 		client: &http.Client{
-			Timeout: 300 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 20,
-				IdleConnTimeout:     90 * time.Second,
-			},
+			Timeout:   300 * time.Second,
+			Transport: newOutboundTransport(100, 20, 90*time.Second),
 		},
 	}
 	if err := c.getUser(); err != nil {

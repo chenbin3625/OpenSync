@@ -24,6 +24,65 @@ export interface JobFormDrawerProps {
   onSubmit: () => void;
 }
 
+// Per-field value ranges for the six cron fields (robfig/cron with seconds).
+const cronFieldRanges: Record<string, [number, number]> = {
+  second: [0, 59],
+  minute: [0, 59],
+  hour: [0, 23],
+  day: [1, 31],
+  month: [1, 12],
+  day_of_week: [0, 6],
+};
+
+// Validates a single cron field value against its allowed range. Supports the
+// common robfig/cron syntax: *, */n, n, n-m, n-m/s, and comma-separated lists.
+function validateCronField(value: string, min: number, max: number): Promise<void> {
+  if (!value) return Promise.resolve();
+  const parts = value.split(',');
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed === '*') continue;
+    const stepMatch = trimmed.match(/^\*\/(\d+)$/);
+    if (stepMatch) {
+      const step = Number(stepMatch[1]);
+      if (step < 1 || step > max) return Promise.reject(new Error(`步长需在 1-${max}`));
+      continue;
+    }
+    const rangeMatch = trimmed.match(/^(\d+)-(\d+)(?:\/(\d+))?$/);
+    if (rangeMatch) {
+      const a = Number(rangeMatch[1]);
+      const b = Number(rangeMatch[2]);
+      if (a < min || a > max || b < min || b > max || a > b) {
+        return Promise.reject(new Error(`范围需在 ${min}-${max}`));
+      }
+      if (rangeMatch[3]) {
+        const step = Number(rangeMatch[3]);
+        if (step < 1 || step > max) return Promise.reject(new Error(`步长需在 1-${max}`));
+      }
+      continue;
+    }
+    if (/^\d+$/.test(trimmed)) {
+      const n = Number(trimmed);
+      if (n < min || n > max) return Promise.reject(new Error(`值需在 ${min}-${max}`));
+      continue;
+    }
+    return Promise.reject(new Error('仅支持数字、* / , - 组合'));
+  }
+  return Promise.resolve();
+}
+
+const cronFieldRules = (fieldName: string) => {
+  const range = cronFieldRanges[fieldName];
+  if (!range) return [{ required: true, message: '请输入' }];
+  return [
+    { required: true, message: '请输入' },
+    { pattern: /^[\d*,/-]+$/, message: '仅支持数字、* / , -' },
+    {
+      validator: (_: unknown, value: string) => validateCronField(value, range[0], range[1]),
+    },
+  ];
+};
+
 export default function JobFormDrawer({
   visible, editingJob, alistList, onClose, onSubmit,
 }: JobFormDrawerProps) {
@@ -33,6 +92,10 @@ export default function JobFormDrawer({
   const [srcLoadedKeys, setSrcLoadedKeys] = useState<Key[]>([]);
   const [dstLoadedKeys, setDstLoadedKeys] = useState<Key[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  // Synchronous re-entry guard: set before the await so a rapid second click
+  // cannot start a duplicate create before the submitting state re-renders.
+  const submittingRef = useRef(false);
   const treeLoadRequestRef = useRef(0);
 
   const selectedAlistId = Form.useWatch('alistId', form) as number | undefined;
@@ -174,8 +237,17 @@ export default function JobFormDrawer({
   }, [visible, editingJob, form]);
 
   const handleSubmit = async () => {
+    if (submittingRef.current) return;
+    let values: JobFormValues;
     try {
-      const values = await form.validateFields() as JobFormValues;
+      values = await form.validateFields() as JobFormValues;
+    } catch {
+      // Validation errors are shown inline by Ant Design; nothing else to do.
+      return;
+    }
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
       const srcPaths = normalizeFormPaths(values.srcPath);
       const dstPaths = normalizeFormPaths(values.dstPath);
       const { minFileSizeUnit, maxFileSizeUnit, ...jobValues } = values;
@@ -192,21 +264,35 @@ export default function JobFormDrawer({
       };
       await jobPost(jobData);
       onSubmit();
-    } catch { /* ignore */ }
+    } catch (err) {
+      // API errors are surfaced by the request interceptor; log unexpected
+      // (non-API) failures so they are not silently swallowed.
+      console.error('job submit failed', err);
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
   };
 
-  // Schedule preview
-  const watchedSchedule = Form.useWatch([], form) as Record<string, unknown> | undefined;
-  const isCronValue = watchedSchedule?.isCron as number | undefined;
+  // Schedule preview — watch only the schedule fields so typing in the exclude
+  // textarea or remark no longer re-renders the whole drawer.
+  const isCronValue = Form.useWatch('isCron', form) as number | undefined;
+  const intervalValue = Form.useWatch('interval', form) as number | undefined;
+  const secondValue = Form.useWatch('second', form) as string | undefined;
+  const minuteValue = Form.useWatch('minute', form) as string | undefined;
+  const hourValue = Form.useWatch('hour', form) as string | undefined;
+  const dayValue = Form.useWatch('day', form) as string | undefined;
+  const monthValue = Form.useWatch('month', form) as string | undefined;
+  const dayOfWeekValue = Form.useWatch('day_of_week', form) as string | undefined;
   const scheduleValues: ScheduleValues = {
-    isCron: (watchedSchedule?.isCron as number) ?? 1,
-    interval: watchedSchedule?.interval as number,
-    second: watchedSchedule?.second as string,
-    minute: watchedSchedule?.minute as string,
-    hour: watchedSchedule?.hour as string,
-    day: watchedSchedule?.day as string,
-    month: watchedSchedule?.month as string,
-    day_of_week: watchedSchedule?.day_of_week as string,
+    isCron: isCronValue ?? 1,
+    interval: intervalValue,
+    second: secondValue,
+    minute: minuteValue,
+    hour: hourValue,
+    day: dayValue,
+    month: monthValue,
+    day_of_week: dayOfWeekValue,
   };
   const schedulePlan = formatSchedulePlan(scheduleValues);
 
@@ -221,7 +307,7 @@ export default function JobFormDrawer({
       extra={
         <Space>
           <Button onClick={onClose}>取消</Button>
-          <Button type="primary" onClick={handleSubmit}>保存</Button>
+          <Button type="primary" onClick={handleSubmit} loading={submitting} disabled={submitting}>保存</Button>
         </Space>
       }
     >
@@ -350,7 +436,7 @@ export default function JobFormDrawer({
           <Row gutter={8}>
             {cronFields.map((field) => (
               <Col span={4} key={field.name}>
-                <Form.Item name={field.name} label={field.label} rules={[{ required: true, message: '请输入' }]} style={compactItemStyle}>
+                <Form.Item name={field.name} label={field.label} rules={cronFieldRules(field.name)} style={compactItemStyle}>
                   <Input placeholder={field.placeholder} />
                 </Form.Item>
               </Col>

@@ -3,6 +3,7 @@ import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typo
 import {
   DeleteOutlined, EyeOutlined, PauseCircleOutlined, PlayCircleOutlined,
   ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import { jobGetTask, jobDeleteTask, jobTaskAction } from '../../api/job';
 import dayjs from 'dayjs';
@@ -195,7 +196,6 @@ function RealtimeTaskItems({
 function RealtimeTaskCard({
   activeTab,
   currentTask,
-  metrics,
   loading,
   page,
   pageSize,
@@ -208,7 +208,6 @@ function RealtimeTaskCard({
 }: {
   activeTab: number;
   currentTask: CurrentTaskView;
-  metrics: ProgressMetric[];
   loading: boolean;
   page: number;
   pageSize: number;
@@ -219,9 +218,58 @@ function RealtimeTaskCard({
   onPageChange: (page: number) => void;
   onTabChange: (status: number) => void;
 }) {
+  const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
   const realtimeTotal = Object.values(currentTask.num || {})
     .reduce((sum, value) => sum + Number(value || 0), 0);
   const scanProgress = currentTask.scan;
+  const displayDuration = Math.max(
+    currentTask.duration || 0,
+    currentTask.createTime ? nowTick - currentTask.createTime : 0,
+  );
+  const metrics = useMemo<ProgressMetric[]>(() => [
+    {
+      key: 'duration',
+      label: '耗时',
+      icon: <ClockCircleOutlined />,
+      value: formatDuration(displayDuration),
+    },
+    {
+      key: 'speedAvg',
+      label: '平均速度',
+      icon: <DashboardOutlined />,
+      value: currentTask.speedAvg > 0 ? `${formatSize(currentTask.speedAvg)}/s` : '--',
+    },
+    {
+      key: 'speed',
+      label: '瞬时速度',
+      icon: <ThunderboltOutlined />,
+      value: currentTask.speed > 0 ? `${formatSize(currentTask.speed)}/s` : '--',
+    },
+    {
+      key: 'remainTime',
+      label: '预计剩余',
+      value: currentTask.remainTime > 0 ? formatDuration(currentTask.remainTime) : '--',
+    },
+    {
+      key: 'doneSize',
+      label: '已传输',
+      value: formatSize(currentTask.doneSize || 0),
+    },
+    {
+      key: 'remainSize',
+      label: '剩余',
+      value: formatSize(currentTask.remainSize || 0),
+    },
+  ], [currentTask.doneSize, currentTask.remainSize, currentTask.remainTime, currentTask.speed, currentTask.speedAvg, displayDuration]);
+
+  useEffect(() => {
+    const tickID = setInterval(() => {
+      if (canPollCurrentDocument()) {
+        setNowTick(Math.floor(Date.now() / 1000));
+      }
+    }, 1000);
+    return () => { clearInterval(tickID); };
+  }, [currentTask.createTime, currentTask.taskId]);
 
   // 计算各 tab 标签的计数，确保与分页器使用同步数据源，避免 React 状态更新一帧滞后导致不一致
   const getTabCount = (tabKey: number): number => {
@@ -334,6 +382,8 @@ export default function TaskList({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
+  const [queryJobId, setQueryJobId] = useState(jobId);
   const [historyStatusFilter, setHistoryStatusFilter] = useState<number | undefined>(undefined);
   const [historyKeywordInput, setHistoryKeywordInput] = useState('');
   const [historyKeywordFilter, setHistoryKeywordFilter] = useState('');
@@ -342,7 +392,7 @@ export default function TaskList({
   const listLoadingRequestRef = useRef(0);
   const showRealtime = shouldPollRealtime(view);
   const showHistory = view === 'all' || view === 'history';
-  const { currentTask, nowTick, refreshCurrentTask } = useRealtimeTask(jobId, showRealtime);
+  const { currentTask, refreshCurrentTask } = useRealtimeTask(jobId, showRealtime);
   const {
     activeTab,
     setActiveTab,
@@ -360,10 +410,13 @@ export default function TaskList({
   });
 
   const fetchList = useCallback(async (showLoading = false) => {
-    if (!jobId) return;
+    if (!jobId || queryJobId !== jobId) return;
     const requestID = ++listRequestRef.current;
     const loadingRequestID = showLoading ? ++listLoadingRequestRef.current : 0;
-    if (showLoading) setLoading(true);
+    if (showLoading) {
+      setLoading(true);
+      setHistoryError(false);
+    }
     try {
       const params: Record<string, unknown> = { id: jobId, pageSize, pageNum: page };
       if (historyStatusFilter !== undefined) {
@@ -375,21 +428,39 @@ export default function TaskList({
       if (historyTimeRange?.[0]) params.startTime = historyTimeRange[0].startOf('day').unix();
       if (historyTimeRange?.[1]) params.endTime = historyTimeRange[1].endOf('day').unix();
 
-      const res = await jobGetTask(params);
+      const res = await jobGetTask(params, { silent: !showLoading });
       if (requestID === listRequestRef.current) {
         setList((previous) => mergeTaskRecords(previous, res.data?.dataList || []));
         setTotal(res.data?.count || 0);
+        setHistoryError(false);
       }
-    } catch { /* ignore */ }
-    if (showLoading && loadingRequestID === listLoadingRequestRef.current) {
-      setLoading(false);
+    } catch (err) {
+      if (requestID === listRequestRef.current) {
+        console.error('task history fetch failed', err);
+        if (showLoading) {
+          setHistoryError(true);
+          setList([]);
+          setTotal(0);
+        }
+      }
+    } finally {
+      if (showLoading && loadingRequestID === listLoadingRequestRef.current) {
+        setLoading(false);
+      }
     }
-  }, [historyKeywordFilter, historyStatusFilter, historyTimeRange, jobId, page, pageSize]);
+  }, [historyKeywordFilter, historyStatusFilter, historyTimeRange, jobId, page, pageSize, queryJobId]);
 
   useEffect(() => {
+    setQueryJobId(jobId);
     setPage(1);
+    setPageSize(20);
     setList([]);
     setTotal(0);
+    setHistoryError(false);
+    setHistoryStatusFilter(undefined);
+    setHistoryKeywordInput('');
+    setHistoryKeywordFilter('');
+    setHistoryTimeRange(null);
   }, [jobId]);
 
   useEffect(() => {
@@ -407,7 +478,9 @@ export default function TaskList({
       await jobDeleteTask(taskId);
       message.success('删除成功');
       fetchList(false);
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('task delete failed', err);
+    }
   }, [fetchList, message]);
 
   const handleTaskAction = useCallback(async (
@@ -420,7 +493,9 @@ export default function TaskList({
       message.success(successText);
       fetchList(false);
       refreshCurrentTask();
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('task action failed', err);
+    }
   }, [fetchList, message, refreshCurrentTask]);
 
   const handleHistoryKeywordSearch = (value: string) => {
@@ -506,50 +581,10 @@ export default function TaskList({
   const hiddenCurrentTaskCount = list.length - historyList.length;
   const historyTotal = Math.max(0, total - hiddenCurrentTaskCount);
 
-  const displayDuration = currentTask
-    ? Math.max(currentTask.duration || 0, currentTask.createTime ? nowTick - currentTask.createTime : 0)
-    : 0;
-  const progressMetrics = useMemo<ProgressMetric[]>(() => currentTask ? [
-    {
-      key: 'duration',
-      label: '耗时',
-      icon: <ClockCircleOutlined />,
-      value: formatDuration(displayDuration),
-    },
-    {
-      key: 'speedAvg',
-      label: '平均速度',
-      icon: <DashboardOutlined />,
-      value: currentTask.speedAvg > 0 ? `${formatSize(currentTask.speedAvg)}/s` : '--',
-    },
-    {
-      key: 'speed',
-      label: '瞬时速度',
-      icon: <ThunderboltOutlined />,
-      value: currentTask.speed > 0 ? `${formatSize(currentTask.speed)}/s` : '--',
-    },
-    {
-      key: 'remainTime',
-      label: '预计剩余',
-      value: currentTask.remainTime > 0 ? formatDuration(currentTask.remainTime) : '--',
-    },
-    {
-      key: 'doneSize',
-      label: '已传输',
-      value: formatSize(currentTask.doneSize || 0),
-    },
-    {
-      key: 'remainSize',
-      label: '剩余',
-      value: formatSize(currentTask.remainSize || 0),
-    },
-  ] : [], [currentTask, displayDuration]);
-
   const realtimeContent = currentTask ? (
     <RealtimeTaskCard
       activeTab={activeTab}
       currentTask={currentTask}
-      metrics={progressMetrics}
       loading={tabLoading}
       page={tabTaskPage}
       pageSize={TAB_TASK_PAGE_SIZE}
@@ -567,7 +602,17 @@ export default function TaskList({
     />
   );
 
-  const historyBody = historyList.length === 0 && !loading ? (
+  const historyBody = historyError ? (
+    <div style={{ textAlign: 'center', padding: '32px 0' }}>
+      <Empty
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+        description={<Text type="secondary">历史任务加载失败</Text>}
+      />
+      <Button icon={<ReloadOutlined />} style={{ marginTop: 16 }} onClick={() => fetchList(true)} loading={loading}>
+        重试
+      </Button>
+    </div>
+  ) : historyList.length === 0 && !loading ? (
     <Empty
       image={Empty.PRESENTED_IMAGE_SIMPLE}
       description={<Text type="secondary">暂无历史任务记录，执行完成后将在此显示</Text>}

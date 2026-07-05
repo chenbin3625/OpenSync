@@ -183,6 +183,7 @@ docker run -d \
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | 单个任务的扫描并发数，范围 `1` 到 `20` |
 | `OPENSYNC_REALTIME_FINISHED_ITEMS` | `1000` | 实时任务页保留的已完成明细数量 |
 | `OPENSYNC_MAX_RETRIES` | `0` | 单个复制项失败后的最大自动重试次数，`0` 表示不自动重试 |
+| `OPENSYNC_PROXY_URL` | 空 | 后端访问 AList 和发送通知时使用的出站代理，支持 `http`、`https`、`socks5`、`socks5h` |
 
 如果需要使用配置文件，可以创建或通过系统设置页生成 `data/config.ini`：
 
@@ -199,9 +200,10 @@ copy_concurrency=5
 scan_concurrency=8
 realtime_finished_items=1000
 max_retries=0
+proxy_url=
 ```
 
-系统设置页可在线调整历史任务保留、任务超时、复制并发、扫描并发、实时明细保留和自动重试次数。端口、日志等级等启动期配置仍建议通过环境变量或配置文件维护。
+系统设置页可在线调整历史任务保留、任务超时、复制并发、扫描并发、实时明细保留、自动重试次数和代理服务器。端口、日志等级等启动期配置仍建议通过环境变量或配置文件维护。
 
 ## 本地构建镜像
 

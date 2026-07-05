@@ -78,6 +78,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
   const [statusFilter, setStatusFilter] = useState<number | undefined>(undefined);
   const [typeFilter, setTypeFilter] = useState<number | undefined>(undefined);
   const [objectFilter, setObjectFilter] = useState<number | undefined>(undefined);
@@ -85,11 +86,18 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
   const [keywordInput, setKeywordInput] = useState('');
   const [keywordFilter, setKeywordFilter] = useState('');
   const requestRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (options?: { silent?: boolean }) => {
     if (!taskId) return;
+    // Cancel any in-flight request before starting a new one so a slow earlier
+    // request (different filter/page) cannot overwrite fresh state.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     const requestID = ++requestRef.current;
     setLoading(true);
+    setError(false);
     try {
       const params: Record<string, unknown> = {
         taskId,
@@ -101,26 +109,50 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       if (objectFilter !== undefined) params.isPath = objectFilter;
       if (errorFilter !== undefined) params.hasError = errorFilter;
       if (keywordFilter.trim()) params.keyword = keywordFilter.trim();
-      const res = await jobGetTaskItem(params);
-      // Drop stale responses so a slow earlier request can't overwrite the
-      // latest filter/page state (e.g. rapidly switching status filters).
-      if (requestID !== requestRef.current) return;
+      const res = await jobGetTaskItem(params, { signal: controller.signal, silent: options?.silent });
+      if (requestID !== requestRef.current || controller.signal.aborted) return;
       const data = res.data;
-      const items = (data?.dataList || []).map((item) => {
+      // Guard against a malformed response shape: a non-array dataList would
+      // otherwise throw inside .map and be silently swallowed.
+      const rawList = Array.isArray(data?.dataList) ? data.dataList : [];
+      const items = rawList.map((item) => {
         const prog = typeof item.progress === 'string' ? parseInt(item.progress, 10) : (item.progress || 0);
-        return { ...item, progress: Math.min(prog || 0, 100) };
+        return { ...item, progress: Math.max(0, Math.min(prog || 0, 100)) };
       });
       setList(items);
       setTotal(data?.count || 0);
-    } catch {
-      /* ignore */
-    }
-    if (requestID === requestRef.current) {
-      setLoading(false);
+    } catch (err) {
+      if (controller.signal.aborted) return; // ignore cancellation, not a real error
+      if (requestID !== requestRef.current) return;
+      if (options?.silent) {
+        console.error('task detail polling failed', err);
+        return;
+      }
+      // Surface the failure instead of leaving stale data on screen: clear the
+      // list so the table no longer shows rows that do not match the filters.
+      setError(true);
+      setList([]);
+      setTotal(0);
+      console.error('task detail fetch failed', err);
+    } finally {
+      if (requestID === requestRef.current && !controller.signal.aborted) {
+        setLoading(false);
+      }
     }
   }, [errorFilter, keywordFilter, objectFilter, page, pageSize, statusFilter, taskId, typeFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  // Cancel any in-flight request when the component unmounts.
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
+
+  // Poll while there are in-progress items so the progress bars stay live.
+  useEffect(() => {
+    if (!taskId) return undefined;
+    const hasRunning = list.some((item) => item.status === 1);
+    if (!hasRunning) return undefined;
+    const pollID = setInterval(() => { fetchData({ silent: true }); }, 3000);
+    return () => { clearInterval(pollID); };
+  }, [list, taskId, fetchData]);
 
   const columns = useMemo(() => [
     {
@@ -238,7 +270,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
           <span />
         ) : (
           <Space className="task-detail-title">
-            <Button icon={<ArrowLeftOutlined />} onClick={() => (onBack ? onBack() : navigate(-1 as never))}>返回</Button>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => (onBack ? onBack() : navigate(-1))}>返回</Button>
             <h2>任务详情</h2>
           </Space>
         )}
@@ -290,7 +322,15 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
         </Space>
       </div>
 
-      {list.length === 0 && !loading ? (
+      {error ? (
+        <div style={{ textAlign: 'center', padding: '32px 0' }}>
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={<Text type="secondary">文件详情加载失败</Text>}
+          />
+          <Button style={{ marginTop: 16 }} onClick={() => fetchData()}>重试</Button>
+        </div>
+      ) : list.length === 0 && !loading ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           description={<Text type="secondary">暂无文件详情记录</Text>}

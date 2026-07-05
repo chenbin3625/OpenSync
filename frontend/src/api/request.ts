@@ -1,10 +1,17 @@
 import axios from 'axios';
+import type { AxiosError, AxiosRequestConfig } from 'axios';
 import { useStore } from '../stores/useStore';
 import { getMessageInstance } from './messageHolder';
 
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    silent?: boolean;
+  }
+}
+
 type ApiEnvelope = {
-  code?: number;
-  msg?: string;
+  code: number;
+  msg: string;
   data?: unknown;
 };
 
@@ -25,9 +32,11 @@ const serializeParams = (params: Record<string, unknown>) => {
   return searchParams.toString();
 };
 
-const isApiEnvelope = (data: unknown): data is ApiEnvelope => (
-  !!data && typeof data === 'object' && ('code' in data || 'msg' in data || 'data' in data)
-);
+const isApiEnvelope = (data: unknown): data is ApiEnvelope => {
+  if (!data || typeof data !== 'object') return false;
+  const envelope = data as Partial<ApiEnvelope>;
+  return typeof envelope.code === 'number' && typeof envelope.msg === 'string' && 'data' in envelope;
+};
 
 const redirectToLogin = () => {
   useStore.getState().setUserInfo(null);
@@ -35,7 +44,7 @@ const redirectToLogin = () => {
   window.location.hash = '#/login';
 };
 
-const rejectApiEnvelope = (data: ApiEnvelope, fallbackStatus?: number) => {
+const rejectApiEnvelope = (data: ApiEnvelope, fallbackStatus?: number, silent = false) => {
   const code = data.code ?? fallbackStatus ?? 200;
   const msg = data.msg || 'Error';
 
@@ -44,7 +53,7 @@ const rejectApiEnvelope = (data: ApiEnvelope, fallbackStatus?: number) => {
     return Promise.reject(new Error(msg));
   }
   if (code !== 200) {
-    getMessageInstance()?.error(msg);
+    if (!silent) getMessageInstance()?.error(msg);
     return Promise.reject(new Error(msg));
   }
   return null;
@@ -65,20 +74,22 @@ const service = axios.create({
 service.interceptors.response.use(
   (res) => {
     if (isApiEnvelope(res.data)) {
-      const rejection = rejectApiEnvelope(res.data, res.status);
+      const rejection = rejectApiEnvelope(res.data, res.status, res.config.silent);
       if (rejection) return rejection;
     }
     return res.data;
   },
-  (error) => {
+  (error: AxiosError) => {
+    const config = error.config as AxiosRequestConfig | undefined;
+    const silent = !!config?.silent;
     const status = error.response?.status;
     const data = error.response?.data;
     if (isApiEnvelope(data)) {
-      const rejection = rejectApiEnvelope(data, status);
+      const rejection = rejectApiEnvelope(data, status, silent);
       if (rejection) return rejection;
     }
 
-    let msg = error.message;
+    let msg = typeof error.message === 'string' ? error.message : 'Request failed';
     if (msg === 'Network Error') {
       msg = 'Connection error';
     } else if (msg.includes('timeout')) {
@@ -86,7 +97,7 @@ service.interceptors.response.use(
     }
     if (status === 401) {
       redirectToLogin();
-    } else {
+    } else if (!silent) {
       getMessageInstance()?.error(msg);
     }
     return Promise.reject(error);

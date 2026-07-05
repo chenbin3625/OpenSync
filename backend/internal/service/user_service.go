@@ -23,6 +23,7 @@ const (
 	pwdErrorWindowSeconds      = int64(300)
 	maxPwdErrorScopes          = 1024
 	cliGeneratedPasswordLength = 16
+	minPasswordLength          = 8
 )
 
 // CheckPwdTime checks if too many password errors in 5 minutes
@@ -128,6 +129,12 @@ func normalizePwdErrorScope(scope string) string {
 	return scope
 }
 
+func validatePassword(passwd string) {
+	if len(strings.TrimSpace(passwd)) < minPasswordLength {
+		panicPublic(i18n.G("passwd_too_short"))
+	}
+}
+
 func passwordErrorScope(userID int64, userName string, clientScope string) string {
 	principal := strings.ToLower(strings.TrimSpace(userName))
 	if principal == "" && userID > 0 {
@@ -173,6 +180,7 @@ func InitializeUser(userName string, passwd string) (map[string]interface{}, str
 	if userName == "" || strings.TrimSpace(passwd) == "" {
 		panicPublic(i18n.G("lost_part"))
 	}
+	validatePassword(passwd)
 
 	if IsInitialized() {
 		panicPublic(i18n.G("system_initialized"))
@@ -209,7 +217,20 @@ func CheckPwd(userID int64, passwd string, userName string) map[string]interface
 func CheckPwdScoped(userID int64, passwd string, userName string, clientScope string) map[string]interface{} {
 	scope := passwordErrorScope(userID, userName, clientScope)
 	CheckPwdTimeForScope(scope)
-	user := GetUser(userID, userName)
+	var user map[string]interface{}
+	var err error
+	if userID > 0 {
+		user, err = getUserByID(userID)
+	} else {
+		user, err = getUserByName(userName)
+	}
+	if err != nil {
+		if errors.Is(err, mapper.ErrUserNotFound) {
+			AddPwdErrorForScope(scope)
+			panicPublic(i18n.G("passwd_wrong"))
+		}
+		panic(err.Error())
+	}
 	storedHash := fmt.Sprintf("%v", user["passwd"])
 	if !crypto.CheckPassword(passwd, storedHash) {
 		AddPwdErrorForScope(scope)
@@ -221,6 +242,7 @@ func CheckPwdScoped(userID int64, passwd string, userName string, clientScope st
 // EditPasswd changes user password
 func EditPasswd(userID int64, passwd string, oldPasswd string) {
 	CheckPwd(userID, oldPasswd, "")
+	validatePassword(passwd)
 	hash, err := crypto.HashPassword(passwd)
 	if err != nil {
 		panic(err.Error())
@@ -243,12 +265,20 @@ func ResetPasswd(userName string, recoveryKey string, passwd string) string {
 	// but this endpoint is unauthenticated, so defense in depth applies.
 	scope := passwordErrorScope(0, userName, "recovery")
 	CheckPwdTimeForScope(scope)
-	user := GetUser(0, userName)
+	user, err := getUserByName(userName)
+	if err != nil {
+		if errors.Is(err, mapper.ErrUserNotFound) {
+			AddPwdErrorForScope(scope)
+			panicPublic(i18n.G("key_wrong"))
+		}
+		panic(err.Error())
+	}
 	storedRecoveryHash := fmt.Sprintf("%v", user["recoveryKey"])
 	if !crypto.CheckPassword(recoveryKey, storedRecoveryHash) {
 		AddPwdErrorForScope(scope)
 		panicPublic(i18n.G("key_wrong"))
 	}
+	validatePassword(passwd)
 	newRecoveryKey, newRecoveryHash := newRecoveryKeyHash()
 	hash, err := crypto.HashPassword(passwd)
 	if err != nil {

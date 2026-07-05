@@ -16,6 +16,7 @@ import (
 )
 
 const defaultSchedulerTimeZone = "Asia/Shanghai"
+const schedulerStopTimeout = 5 * time.Second
 
 // Scheduler wraps robfig/cron for job scheduling
 type Scheduler struct {
@@ -130,9 +131,19 @@ func (s *Scheduler) addJobLocked(isCron int, jobData map[string]interface{}, fn 
 // Stop shuts down the scheduler
 func (s *Scheduler) Stop() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cron != nil {
-		s.cron.Stop()
+	c := s.cron
+	s.cron = nil
+	s.entryID = 0
+	s.mu.Unlock()
+
+	if c == nil {
+		return
+	}
+	ctx := c.Stop()
+	select {
+	case <-ctx.Done():
+	case <-time.After(schedulerStopTimeout):
+		log.Printf("scheduler stop timed out after %s", schedulerStopTimeout)
 	}
 }
 

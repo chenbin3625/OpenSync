@@ -235,7 +235,20 @@ func EditJobClient(job map[string]interface{}) {
 	jobID := util.ToInt64(job["id"])
 	CleanJobInput(job)
 	client := GetJobClientByID(jobID)
+	oldJob := client.jobSnapshot()
 	nextScheduler := NewScheduler()
+	dbUpdated := false
+	defer func() {
+		if r := recover(); r != nil {
+			nextScheduler.Stop()
+			if dbUpdated && oldJob != nil {
+				if err := mapper.UpdateJob(oldJob); err != nil {
+					log.Printf("failed to roll back job %d after edit panic: %v", jobID, err)
+				}
+			}
+			panic(r)
+		}
+	}()
 	if err := nextScheduler.AddJob(util.ToInt(job["isCron"]), job, func() {
 		client.DoScheduled()
 	}); err != nil {
@@ -246,6 +259,7 @@ func EditJobClient(job map[string]interface{}) {
 		nextScheduler.Stop()
 		panic(err.Error())
 	}
+	dbUpdated = true
 	oldScheduler := client.replaceJobConfig(job, nextScheduler)
 	if oldScheduler != nil {
 		oldScheduler.Stop()

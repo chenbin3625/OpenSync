@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  App, Button, Card, Col, Form, Input, InputNumber, Modal, Row, Space, Tooltip,
+  Alert, App, Button, Card, Col, Form, Input, InputNumber, Modal, Row, Space, Tooltip,
 } from 'antd';
 import { LockOutlined, QuestionCircleOutlined, SaveOutlined } from '@ant-design/icons';
 import { editPwd } from '../../api/user';
@@ -22,25 +22,51 @@ const labelWithTip = (label: string, tip: string) => (
   </Space>
 );
 
+const proxyUrlRules = [{
+  validator(_: unknown, value?: string) {
+    const proxyUrl = (value || '').trim();
+    if (!proxyUrl) return Promise.resolve();
+    try {
+      const parsed = new URL(proxyUrl);
+      if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(parsed.protocol) || !parsed.hostname) {
+        throw new Error('unsupported proxy URL');
+      }
+      return Promise.resolve();
+    } catch {
+      return Promise.reject(new Error('请输入 http、https、socks5 或 socks5h 代理 URL'));
+    }
+  },
+}];
+
+const isFormValidationError = (err: unknown) => (
+  !!err && typeof err === 'object' && 'errorFields' in err
+);
+
 export default function Setting() {
   const { message } = App.useApp();
   const [configForm] = Form.useForm<SystemSettings>();
   const [passwordForm] = Form.useForm<PasswordFormValues>();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [configError, setConfigError] = useState(false);
   const [configValues, setConfigValues] = useState<SystemSettings | null>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
 
   const fetchConfig = useCallback(async () => {
     setLoading(true);
+    setConfigError(false);
     try {
       const res = await getSystemConfig();
       if (res.data) {
         setConfigValues(res.data);
       }
-    } catch { /* ignore */ }
-    setLoading(false);
+    } catch (err) {
+      setConfigError(true);
+      console.error('system config fetch failed', err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
@@ -53,13 +79,16 @@ export default function Setting() {
   const handleSaveConfig = async (values: SystemSettings) => {
     setSaving(true);
     try {
-      const res = await updateSystemConfig(values);
+      const res = await updateSystemConfig({ ...values, proxyUrl: values.proxyUrl?.trim() || '' });
       if (res.data) {
         setConfigValues(res.data);
       }
       message.success('系统配置已保存');
-    } catch { /* ignore */ }
-    setSaving(false);
+    } catch (err) {
+      console.error('system config save failed', err);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleChangePassword = async () => {
@@ -70,8 +99,13 @@ export default function Setting() {
       message.success('密码修改成功');
       passwordForm.resetFields();
       setPasswordVisible(false);
-    } catch { /* ignore */ }
-    setPasswordSaving(false);
+    } catch (err) {
+      if (!isFormValidationError(err)) {
+        console.error('password change failed', err);
+      }
+    } finally {
+      setPasswordSaving(false);
+    }
   };
 
   return (
@@ -89,6 +123,15 @@ export default function Setting() {
       </div>
 
       <div className="ops-page-main">
+        {configError && (
+          <Alert
+            type="error"
+            showIcon
+            message="系统配置加载失败"
+            action={<Button size="small" onClick={fetchConfig} loading={loading}>重试</Button>}
+            style={{ marginBottom: 12 }}
+          />
+        )}
         <Card className="ops-settings-panel" title={<span className="ops-section-title">运行配置</span>} loading={loading}>
           <Form
             form={configForm}
@@ -171,6 +214,15 @@ export default function Setting() {
                   <InputNumber min={0} max={10} style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
+              <Col xs={24}>
+                <Form.Item
+                  name="proxyUrl"
+                  label={labelWithTip('代理服务器', '后端访问 AList 和发送通知时使用的出站代理；留空表示直连。支持 http、https、socks5 和 socks5h。')}
+                  rules={proxyUrlRules}
+                >
+                  <Input allowClear placeholder="例如：http://127.0.0.1:7890" />
+                </Form.Item>
+              </Col>
             </Row>
 
             <Form.Item style={{ marginBottom: 0 }}>
@@ -202,7 +254,14 @@ export default function Setting() {
           <Form.Item name="oldPasswd" label="旧密码" rules={[{ required: true, message: '请输入旧密码' }]}>
             <Input.Password prefix={<LockOutlined />} placeholder="请输入旧密码" />
           </Form.Item>
-          <Form.Item name="passwd" label="新密码" rules={[{ required: true, message: '请输入新密码' }]}>
+          <Form.Item
+            name="passwd"
+            label="新密码"
+            rules={[
+              { required: true, message: '请输入新密码' },
+              { min: 8, message: '密码长度至少需要8位' },
+            ]}
+          >
             <Input.Password prefix={<LockOutlined />} placeholder="请输入新密码" />
           </Form.Item>
           <Form.Item
