@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"opensync/internal/config"
 	"strconv"
 	"strings"
 	"sync"
@@ -124,39 +123,6 @@ func TestGetContextDoesNotSendContentTypeWithoutBody(t *testing.T) {
 
 	if _, err := client.GetContext(context.Background(), "/api/me", nil); err != nil {
 		t.Fatalf("GetContext() error: %v", err)
-	}
-}
-
-func TestNewAlistClientUsesConfiguredProxy(t *testing.T) {
-	var proxiedURL string
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxiedURL = r.URL.String()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"username":"admin"}}`))
-	}))
-	defer proxy.Close()
-
-	oldConfig := config.GetConfig()
-	config.SetConfigForTest(&config.Config{
-		DB: oldConfig.DB,
-		Server: config.ServerConfig{
-			ProxyURL:  proxy.URL,
-			PasswdStr: "test-proxy-secret",
-		},
-	})
-	defer config.SetConfigForTest(oldConfig)
-
-	client, err := NewAlistClient("http://alist.example", "", 1)
-	if err != nil {
-		t.Fatalf("NewAlistClient() error = %v", err)
-	}
-	defer client.Close()
-
-	if proxiedURL != "http://alist.example/api/me" {
-		t.Fatalf("proxied URL = %q, want http://alist.example/api/me", proxiedURL)
-	}
-	if client.User != "admin" {
-		t.Fatalf("client.User = %q, want admin", client.User)
 	}
 }
 

@@ -34,7 +34,6 @@ func TestConfigFileInvalidNumbersKeepDefaults(t *testing.T) {
 port=not-a-number
 expires=5
 task_timeout=also-bad
-proxy_url=ftp://proxy.example:21
 `), 0644); err != nil {
 		t.Fatalf("WriteFile(config.ini) error: %v", err)
 	}
@@ -48,9 +47,6 @@ proxy_url=ftp://proxy.example:21
 	}
 	if cfg.Server.Timeout != 48 {
 		t.Fatalf("Timeout = %d, want default 48 for invalid config value", cfg.Server.Timeout)
-	}
-	if cfg.Server.ProxyURL != "" {
-		t.Fatalf("ProxyURL = %q, want empty for invalid config value", cfg.Server.ProxyURL)
 	}
 }
 
@@ -77,7 +73,6 @@ func TestEnvironmentInvalidNumbersKeepDefaultsAndLog(t *testing.T) {
 	t.Setenv("OPENSYNC_PORT", "not-a-number")
 	t.Setenv("OPENSYNC_EXPIRES", "6")
 	t.Setenv("OPENSYNC_TASK_TIMEOUT", "also-bad")
-	t.Setenv("OPENSYNC_PROXY_URL", "http://proxy.example:8080")
 
 	var logBuf bytes.Buffer
 	oldWriter := log.Writer()
@@ -93,9 +88,6 @@ func TestEnvironmentInvalidNumbersKeepDefaultsAndLog(t *testing.T) {
 	}
 	if cfg.Server.Timeout != 48 {
 		t.Fatalf("Timeout = %d, want default 48 for invalid env value", cfg.Server.Timeout)
-	}
-	if cfg.Server.ProxyURL != "http://proxy.example:8080" {
-		t.Fatalf("ProxyURL = %q, want env proxy URL", cfg.Server.ProxyURL)
 	}
 	logs := logBuf.String()
 	if !strings.Contains(logs, "OPENSYNC_PORT") || !strings.Contains(logs, "OPENSYNC_TASK_TIMEOUT") {

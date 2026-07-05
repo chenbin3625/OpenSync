@@ -2,10 +2,8 @@ package config
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"log"
-	"net/url"
 	"opensync/internal/i18n"
 	"opensync/pkg/crypto"
 	"os"
@@ -27,7 +25,6 @@ type ServerConfig struct {
 	ScanConcurrency       int
 	RealtimeFinishedItems int
 	MaxRetries            int
-	ProxyURL              string
 	PasswdStr             string
 }
 
@@ -55,7 +52,6 @@ const (
 	defaultLogSave      = 7
 	defaultTaskSave     = 30
 	defaultTaskTimeout  = 48
-	defaultProxyURL     = ""
 
 	minExpires     = 1
 	maxExpires     = 365
@@ -83,14 +79,13 @@ const (
 
 // SystemSettings is the subset of backend settings exposed for runtime editing.
 type SystemSettings struct {
-	Expires               int    `json:"expires"`
-	TaskTimeout           int    `json:"taskTimeout"`
-	TaskSave              int    `json:"taskSave"`
-	CopyConcurrency       int    `json:"copyConcurrency"`
-	ScanConcurrency       int    `json:"scanConcurrency"`
-	RealtimeFinishedItems int    `json:"realtimeFinishedItems"`
-	MaxRetries            int    `json:"maxRetries"`
-	ProxyURL              string `json:"proxyUrl"`
+	Expires               int `json:"expires"`
+	TaskTimeout           int `json:"taskTimeout"`
+	TaskSave              int `json:"taskSave"`
+	CopyConcurrency       int `json:"copyConcurrency"`
+	ScanConcurrency       int `json:"scanConcurrency"`
+	RealtimeFinishedItems int `json:"realtimeFinishedItems"`
+	MaxRetries            int `json:"maxRetries"`
 }
 
 // GetPasswordStr gets or generates the encryption secret key
@@ -168,9 +163,6 @@ func GetConfig() *Config {
 			if v, ok := opensync["max_retries"]; ok {
 				sCfg.MaxRetries = intConfigValue(v, sCfg.MaxRetries, "max_retries")
 			}
-			if v, ok := opensync["proxy_url"]; ok {
-				sCfg.ProxyURL = v
-			}
 		}
 	} else {
 		// Read from environment variables
@@ -185,9 +177,6 @@ func GetConfig() *Config {
 		sCfg.ScanConcurrency = envIntConfigValue("OPENSYNC_SCAN_CONCURRENCY", sCfg.ScanConcurrency)
 		sCfg.RealtimeFinishedItems = envIntConfigValue("OPENSYNC_REALTIME_FINISHED_ITEMS", sCfg.RealtimeFinishedItems)
 		sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
-		if proxyURL := strings.TrimSpace(os.Getenv("OPENSYNC_PROXY_URL")); proxyURL != "" {
-			sCfg.ProxyURL = proxyURL
-		}
 	}
 
 	sysConfig = &Config{
@@ -212,12 +201,6 @@ func clampServerConfig(sCfg *ServerConfig) {
 	sCfg.ScanConcurrency = clampInt(sCfg.ScanConcurrency, MinScanConcurrency, MaxScanConcurrency, DefaultScanConcurrency)
 	sCfg.RealtimeFinishedItems = clampInt(sCfg.RealtimeFinishedItems, MinRealtimeFinishedItems, MaxRealtimeFinishedItems, DefaultRealtimeFinishedItems)
 	sCfg.MaxRetries = clampInt(sCfg.MaxRetries, MinMaxRetries, MaxRetryAttempts, DefaultMaxRetries)
-	proxyURL, err := NormalizeProxyURL(sCfg.ProxyURL)
-	if err != nil {
-		log.Printf("配置项 proxy_url=%q 无效，将使用默认值", sCfg.ProxyURL)
-		proxyURL = defaultProxyURL
-	}
-	sCfg.ProxyURL = proxyURL
 }
 
 func clampInt(value, min, max, fallback int) int {
@@ -245,17 +228,12 @@ func GetSystemSettings() SystemSettings {
 		ScanConcurrency:       cfg.Server.ScanConcurrency,
 		RealtimeFinishedItems: cfg.Server.RealtimeFinishedItems,
 		MaxRetries:            cfg.Server.MaxRetries,
-		ProxyURL:              cfg.Server.ProxyURL,
 	}
 }
 
 // UpdateSystemSettings validates, persists, and applies runtime-editable settings.
 func UpdateSystemSettings(settings SystemSettings) error {
 	if err := validateSystemSettings(settings); err != nil {
-		return err
-	}
-	proxyURL, err := NormalizeProxyURL(settings.ProxyURL)
-	if err != nil {
 		return err
 	}
 
@@ -272,7 +250,6 @@ func UpdateSystemSettings(settings SystemSettings) error {
 	nextServer.ScanConcurrency = settings.ScanConcurrency
 	nextServer.RealtimeFinishedItems = settings.RealtimeFinishedItems
 	nextServer.MaxRetries = settings.MaxRetries
-	nextServer.ProxyURL = proxyURL
 
 	if err := writeConfigFile(nextServer); err != nil {
 		return err
@@ -303,30 +280,7 @@ func validateSystemSettings(settings SystemSettings) error {
 			return fmt.Errorf(i18n.G("settings_range_error"), item.name, item.min, item.max)
 		}
 	}
-	if _, err := NormalizeProxyURL(settings.ProxyURL); err != nil {
-		return err
-	}
 	return nil
-}
-
-// NormalizeProxyURL trims and validates the optional outbound proxy URL.
-func NormalizeProxyURL(rawURL string) (string, error) {
-	proxyURL := strings.TrimSpace(rawURL)
-	if proxyURL == "" {
-		return "", nil
-	}
-	u, err := url.Parse(proxyURL)
-	if err != nil || u.Scheme == "" || u.Host == "" || u.Hostname() == "" {
-		return "", errors.New(i18n.G("settings_proxy_url_invalid"))
-	}
-	u.Scheme = strings.ToLower(u.Scheme)
-	switch u.Scheme {
-	case "http", "https", "socks5", "socks5h":
-	default:
-		return "", errors.New(i18n.G("settings_proxy_url_invalid"))
-	}
-	u.Fragment = ""
-	return u.String(), nil
 }
 
 func envIntConfigValue(envName string, fallback int) int {
@@ -353,7 +307,6 @@ copy_concurrency=%d
 scan_concurrency=%d
 realtime_finished_items=%d
 max_retries=%d
-proxy_url=%s
 `,
 		sCfg.Port,
 		sCfg.Expires,
@@ -366,7 +319,6 @@ proxy_url=%s
 		sCfg.ScanConcurrency,
 		sCfg.RealtimeFinishedItems,
 		sCfg.MaxRetries,
-		sCfg.ProxyURL,
 	)
 	tmpFile, err := os.CreateTemp("data", "config.ini.*")
 	if err != nil {

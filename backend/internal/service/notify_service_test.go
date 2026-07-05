@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"opensync/internal/config"
 	"opensync/pkg/util"
 	"strings"
 	"testing"
@@ -82,42 +81,5 @@ func TestSendWebhookCustomBodyEscapesPlaceholderValues(t *testing.T) {
 	want := `title "quoted": content with "quotes"`
 	if got["text"] != want {
 		t.Fatalf("text = %q, want %q", got["text"], want)
-	}
-}
-
-func TestSendWebhookUsesConfiguredProxy(t *testing.T) {
-	var proxiedURL string
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		proxiedURL = r.URL.String()
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer proxy.Close()
-
-	oldConfig := config.GetConfig()
-	config.SetConfigForTest(&config.Config{
-		DB: oldConfig.DB,
-		Server: config.ServerConfig{
-			ProxyURL:  proxy.URL,
-			PasswdStr: "test-proxy-secret",
-		},
-	})
-	notifyHTTPClient.CloseIdleConnections()
-	defer func() {
-		config.SetConfigForTest(oldConfig)
-		notifyHTTPClient.CloseIdleConnections()
-	}()
-
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			t.Fatalf("sendWebhook() panic = %v, want proxy request to succeed", recovered)
-		}
-	}()
-
-	sendWebhook(notifyHTTPClient, map[string]interface{}{
-		"url": "http://notify.example/hook",
-	}, "title", "content")
-
-	if proxiedURL != "http://notify.example/hook" {
-		t.Fatalf("proxied URL = %q, want http://notify.example/hook", proxiedURL)
 	}
 }

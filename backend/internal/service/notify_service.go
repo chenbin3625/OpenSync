@@ -22,23 +22,15 @@ import (
 const maxNotifyResponseBytes = 1 << 20 // 1MB
 
 var notifyHTTPClient = &http.Client{
-	Timeout:   30 * time.Second,
-	Transport: newNotifyTransport(),
-}
-
-func newNotifyTransport() *http.Transport {
-	plainDialer := &net.Dialer{Timeout: 15 * time.Second}
-	safeDialContext := ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second})
-	transport := newOutboundTransport(50, 10, 90*time.Second)
-	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if outboundProxyConfigured() {
-			return plainDialer.DialContext(ctx, network, addr)
-		}
-		// Direct notification requests still intercept the resolved address to
-		// block SSRF attempts before any connection is made.
-		return safeDialContext(ctx, network, addr)
-	}
-	return transport
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        50,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		// DialContext intercepts the resolved address to block SSRF attempts
+		// (private/loopback/link-local targets) before any connection is made.
+		DialContext: ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second}),
+	},
 }
 
 // ssrfSafeDialContext wraps a dialer so that connections to non-routable or
