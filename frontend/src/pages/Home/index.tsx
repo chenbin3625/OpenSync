@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import './Home.css';
-import { App, Typography, Tabs, Drawer, Empty } from 'antd';
+import { Alert, App, Typography, Tabs, Drawer, Empty } from 'antd';
 import { jobGetJob, jobPut, jobDelete } from '../../api/job';
 import { alistGet } from '../../api/alist';
 import TaskList from './TaskList';
@@ -22,6 +22,7 @@ export default function Home() {
   const [pageSize] = useState(12);
   const [loading, setLoading] = useState(false);
   const [listLoaded, setListLoaded] = useState(false);
+  const [listError, setListError] = useState(false);
   const [alistList, setAlistList] = useState<AlistItem[]>([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [editingJob, setEditingJob] = useState<JobItem | null>(null);
@@ -33,6 +34,7 @@ export default function Home() {
   const fetchList = useCallback(async (p = page, ps = pageSize) => {
     const requestID = ++listRequestRef.current;
     setLoading(true);
+    setListError(false);
     try {
       const res = await jobGetJob({ pageSize: ps, pageNum: p });
       // Drop stale responses so a slow earlier page request can't overwrite
@@ -40,7 +42,13 @@ export default function Home() {
       if (requestID !== listRequestRef.current) return;
       setList(res.data?.dataList || []);
       setTotal(res.data?.count || 0);
-    } catch { /* ignore */ }
+    } catch (err) {
+      if (requestID !== listRequestRef.current) return;
+      setList([]);
+      setTotal(0);
+      setListError(true);
+      console.error('job list fetch failed', err);
+    }
     finally {
       setListLoaded(true);
       if (requestID === listRequestRef.current) {
@@ -53,7 +61,9 @@ export default function Home() {
     try {
       const res = await alistGet();
       setAlistList(res.data || []);
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('alist list fetch failed', err);
+    }
   }, []);
 
   useEffect(() => { fetchAlistList(); }, [fetchAlistList]);
@@ -101,7 +111,9 @@ export default function Home() {
       await jobDelete({ id });
       message.success('删除成功');
       fetchList();
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('job delete failed', err);
+    }
   };
 
   const handleToggle = async (job: JobItem) => {
@@ -109,7 +121,9 @@ export default function Home() {
       await jobPut({ id: String(job.id), pause: job.enable === 1 });
       message.success('操作成功');
       fetchList();
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('job toggle failed', err);
+    }
   };
 
   const handleRun = async (id: number) => {
@@ -117,14 +131,18 @@ export default function Home() {
       await jobPut({ id: String(id) });
       message.success('已提交执行');
       fetchList();
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('job run failed', err);
+    }
   };
 
   const handleRunAll = async () => {
     try {
       await jobPut({});
       message.success('已提交执行所有同步任务');
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('job run all failed', err);
+    }
   };
 
   const updateHomeRouteState = useCallback((state: Partial<HomeRouteState>) => {
@@ -162,6 +180,14 @@ export default function Home() {
       />
 
       <main className="sync-manager-content">
+        {listError && (
+          <Alert
+            type="error"
+            showIcon
+            message="同步任务列表加载失败"
+            style={{ marginBottom: 12 }}
+          />
+        )}
         {selectedJob ? (
           <Tabs
             className="sync-main-tabs"

@@ -38,11 +38,9 @@ function calcProgress(cur: CurrentTaskData, previous: CurrentTaskView | null) {
 
 export function useRealtimeTask(jobId: string, enabled: boolean): {
   currentTask: CurrentTaskView | null;
-  nowTick: number;
   refreshCurrentTask: () => Promise<void>;
 } {
   const [currentTask, setCurrentTask] = useState<CurrentTaskView | null>(null);
-  const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
   const prevTaskRef = useRef<CurrentTaskView | null>(null);
   const requestRef = useRef(0);
 
@@ -50,7 +48,7 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
     if (!jobId || !canPollCurrentDocument()) return;
     const requestID = ++requestRef.current;
     try {
-      const res = await jobGetTaskCurrent({ id: jobId });
+      const res = await jobGetTaskCurrent({ id: jobId }, { silent: true });
       if (requestID !== requestRef.current) return;
       const data = res.data || null;
       if (isCurrentTaskData(data)) {
@@ -80,15 +78,5 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
     return () => { clearInterval(pollID); };
   }, [enabled, refreshCurrentTask]);
 
-  useEffect(() => {
-    if (!currentTask) return undefined;
-    const tickID = setInterval(() => {
-      if (canPollCurrentDocument()) {
-        setNowTick(Math.floor(Date.now() / 1000));
-      }
-    }, 1000);
-    return () => { clearInterval(tickID); };
-  }, [currentTask]);
-
-  return { currentTask, nowTick, refreshCurrentTask };
+  return { currentTask, refreshCurrentTask };
 }

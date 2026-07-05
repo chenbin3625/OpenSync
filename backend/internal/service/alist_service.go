@@ -259,7 +259,8 @@ func GetChildPath(ctx context.Context, alistID int64, path string) []map[string]
 	client := GetClientByID(alistID)
 	result, err := client.FilePathList(ctx, path)
 	if err != nil {
-		panicPublic(err.Error())
+		log.Printf("alist path list failed: alistID=%d path=%q: %v", alistID, path, err)
+		panicPublic(i18n.G("alist_connect_fail"))
 	}
 	return result
 }

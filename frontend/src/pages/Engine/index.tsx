@@ -3,7 +3,7 @@ import {
   Card, Button, Modal, Form, Input, Space, Popconfirm, App, Empty, Typography, Descriptions, Tooltip,
 } from 'antd';
 import {
-  PlusOutlined, EditOutlined, DeleteOutlined, CloudServerOutlined, ApiOutlined,
+  PlusOutlined, EditOutlined, DeleteOutlined, CloudServerOutlined, ApiOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { alistGet, alistGetPath, alistPost, alistPut, alistDelete } from '../../api/alist';
 import dayjs from 'dayjs';
@@ -21,17 +21,24 @@ export default function Engine() {
   const { message } = App.useApp();
   const [list, setList] = useState<AlistItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<AlistItem | null>(null);
   const [form] = Form.useForm();
 
   const fetchList = useCallback(async () => {
     setLoading(true);
+    setListError(false);
     try {
       const res = await alistGet();
       setList(res.data || []);
-    } catch { /* ignore */ }
-    setLoading(false);
+    } catch (err) {
+      setList([]);
+      setListError(true);
+      console.error('alist fetchList failed', err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetchList(); }, [fetchList]);
@@ -54,7 +61,9 @@ export default function Engine() {
       await alistDelete(id);
       message.success('删除成功');
       fetchList();
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('alist delete failed', err);
+    }
   };
 
   const handleTest = async (item: AlistItem) => {
@@ -65,7 +74,8 @@ export default function Engine() {
       } else {
         message.error('连接失败: ' + (res.msg || '未知错误'));
       }
-    } catch {
+    } catch (err) {
+      console.error('alist test failed', err);
       message.error('连接测试失败');
     }
   };
@@ -85,7 +95,9 @@ export default function Engine() {
       message.success(editingItem ? '更新成功' : '新增成功');
       setModalVisible(false);
       fetchList();
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('alist submit failed', err);
+    }
   };
 
   return (
@@ -101,7 +113,17 @@ export default function Engine() {
       </div>
 
       <div className="ops-page-main ops-page-panel">
-        {list.length === 0 && !loading ? (
+        {listError ? (
+          <div className="ops-empty-surface">
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={<Text type="secondary">引擎列表加载失败</Text>}
+            />
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <Button icon={<ReloadOutlined />} onClick={fetchList} loading={loading}>重试</Button>
+            </div>
+          </div>
+        ) : list.length === 0 && !loading ? (
           <div className="ops-empty-surface">
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -116,15 +138,13 @@ export default function Engine() {
                 hoverable
                 actions={[
                   <Tooltip title="测试连接" key="test">
-                    <ApiOutlined onClick={() => handleTest(item)} />
+                    <Button type="text" size="small" icon={<ApiOutlined />} aria-label="测试连接" onClick={() => handleTest(item)} />
                   </Tooltip>,
                   <Tooltip title="编辑" key="edit">
-                    <EditOutlined onClick={() => handleEdit(item)} />
+                    <Button type="text" size="small" icon={<EditOutlined />} aria-label="编辑" onClick={() => handleEdit(item)} />
                   </Tooltip>,
                   <Popconfirm title="确认删除此引擎？" onConfirm={() => handleDelete(item.id)} key="del">
-                    <Tooltip title="删除">
-                      <DeleteOutlined />
-                    </Tooltip>
+                    <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label="删除" />
                   </Popconfirm>,
                 ]}
                 key={item.id}

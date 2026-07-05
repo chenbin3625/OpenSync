@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Card, Button, Modal, Form, Input, Select, Switch, Space, Popconfirm, Tag, App, Empty, Typography, Descriptions, Tooltip,
 } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined, ReloadOutlined } from '@ant-design/icons';
 import { notifyGet, notifyPost, notifyPut, notifyDelete } from '../../api/notify';
 import dayjs from 'dayjs';
 import type { NotifyFormValues, NotifyItem } from '../../types';
@@ -12,6 +12,51 @@ const { Text } = Typography;
 const methodNames: Record<number, string> = {
   0: '自定义Webhook', 1: 'Server酱', 2: '钉钉', 3: '企业微信', 4: 'Lark (飞书)',
 };
+
+// Display a secret value, masking it client-side as defense in depth when the
+// backend has not already redacted it (e.g. values entered during the same
+// session before a refetch).
+const displaySecret = (value: string): string => {
+  if (!value) return '—';
+  if (value.includes('****')) return value;
+  return `****${value.slice(-4)}`;
+};
+
+const displayWebhookUrl = (value: string): string => {
+  if (!value) return '—';
+  if (value.includes('****')) return value;
+  try {
+    const url = new URL(value);
+    let masked = false;
+    url.searchParams.forEach((paramValue, key) => {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey.includes('token') || lowerKey.includes('key') || lowerKey.includes('secret')) {
+        url.searchParams.set(key, displaySecret(paramValue));
+        masked = true;
+      }
+    });
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (parts.length > 0 && parts[parts.length - 1].length >= 16) {
+      parts[parts.length - 1] = displaySecret(parts[parts.length - 1]);
+      url.pathname = `/${parts.join('/')}`;
+      masked = true;
+    }
+    if (!masked && url.search) {
+      url.search = '?****';
+    }
+    return url.toString().replace(/%2A/gi, '*');
+  } catch {
+    return displaySecret(value);
+  }
+};
+
+// URL validation rules. Webhook URLs commonly embed access tokens, so require
+// HTTPS for notification methods that store a webhook URL directly.
+const urlRules = (requireHttps: boolean) => [
+  { required: true, message: '请输入 URL' },
+  { type: 'url' as const, message: '请输入合法 URL' },
+  ...(requireHttps ? [{ pattern: /^https:\/\//i, message: '请使用 https URL 以保护 token' }] : []),
+];
 
 type NotifyParamValue = string | number | boolean | Record<string, unknown> | null | undefined;
 type NotifyParams = Record<string, NotifyParamValue>;
@@ -147,19 +192,32 @@ export default function Notify() {
   const { message } = App.useApp();
   const [list, setList] = useState<NotifyItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<NotifyItem | null>(null);
   const [form] = Form.useForm();
   const [method, setMethod] = useState(0);
   const [pendingNotifyValues, setPendingNotifyValues] = useState<Partial<NotifyFormValues> | null>(null);
+  // Monotonic request counter so a stale list refetch (e.g. after rapid
+  // toggle/delete) cannot overwrite a newer response.
+  const listReqRef = useRef(0);
 
   const fetchList = useCallback(async () => {
+    const reqID = ++listReqRef.current;
     setLoading(true);
+    setListError(false);
     try {
       const res = await notifyGet();
+      if (reqID !== listReqRef.current) return;
       setList(res.data || []);
-    } catch { /* ignore */ }
-    setLoading(false);
+    } catch (err) {
+      if (reqID !== listReqRef.current) return;
+      setListError(true);
+      setList([]);
+      console.error('notify fetchList failed', err);
+    } finally {
+      if (reqID === listReqRef.current) setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetchList(); }, [fetchList]);
@@ -175,8 +233,16 @@ export default function Notify() {
   const handleEdit = (item: NotifyItem) => {
     setEditingItem(item);
     let params: NotifyParams = {};
-    try { params = asNotifyParams(JSON.parse(item.params || '{}')); } catch { /* ignore */ }
-    params = getNotifyFormParams(item.method, params);
+    try {
+      const raw = asNotifyParams(JSON.parse(item.params || '{}'));
+      params = getNotifyFormParams(item.method, raw);
+    } catch (err) {
+      // Stored params are malformed (migrated or externally edited). Fall back
+      // to bare method/enable so the modal still opens instead of silently
+      // aborting the edit action.
+      console.error('notify params parse failed', err);
+      message.error('通知配置解析失败，仅显示基本信息');
+    }
     form.resetFields();
     setPendingNotifyValues({ ...params, method: item.method, enable: item.enable === 1 } as Partial<NotifyFormValues>);
     setMethod(item.method);
@@ -194,7 +260,9 @@ export default function Notify() {
       await notifyDelete(notifyId);
       message.success('删除成功');
       fetchList();
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('notify delete failed', err);
+    }
   };
 
   const handleToggleStatus = async (item: NotifyItem, checked: boolean) => {
@@ -202,16 +270,27 @@ export default function Notify() {
       await notifyPut({ notifyId: item.id, enable: checked ? 1 : 0 });
       message.success('状态更新成功');
       fetchList();
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('notify toggle failed', err);
+    }
   };
 
   const handleTest = async () => {
     try {
       const values = await form.validateFields() as NotifyFormValues;
       const m = values.method;
-      await notifyPost({ notify: { method: m, params: JSON.stringify(getNotifyParamsFromValues(values)) } });
+      // Send the id when editing so the backend can restore redacted secrets
+      // from the stored config; for new configs the user enters real values.
+      const notifyData = {
+        ...(editingItem ? { id: editingItem.id } : {}),
+        method: m,
+        params: JSON.stringify(getNotifyParamsFromValues(values)),
+      };
+      await notifyPost({ notify: notifyData });
       message.success('测试消息已发送');
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('notify test failed', err);
+    }
   };
 
   const handleSubmit = async () => {
@@ -232,7 +311,9 @@ export default function Notify() {
       message.success(editingItem ? '更新成功' : '新增成功');
       setModalVisible(false);
       fetchList();
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('notify submit failed', err);
+    }
   };
 
   const parseParams = (item: NotifyItem): NotifyParams => {
@@ -242,23 +323,23 @@ export default function Notify() {
   const getParamSummary = (item: NotifyItem) => {
     const p = parseParams(item);
     switch (item.method) {
-      case 0: return paramString(p, 'url') || '—';
-      case 1: {
-        const sendKey = paramString(p, 'sendKey');
-        return sendKey ? `****${sendKey.slice(-4)}` : '—';
-      }
-      case 2: return paramString(p, 'url') || paramString(p, 'webhook') || '—';
+      case 0: return displayWebhookUrl(paramString(p, 'url'));
+      case 1: return displaySecret(paramString(p, 'sendKey'));
+      case 2: return displayWebhookUrl(paramString(p, 'url') || paramString(p, 'webhook'));
       case 3: return paramString(p, 'corpid') || paramString(p, 'corpId') || '—';
-      case 4: return paramString(p, 'url') || paramString(p, 'webhook') || '—';
+      case 4: return displayWebhookUrl(paramString(p, 'url') || paramString(p, 'webhook'));
       default: return '—';
     }
   };
 
   const handleTestSend = async (item: NotifyItem) => {
     try {
-      await notifyPost({ notify: { method: item.method, params: item.params } });
+      // Send the id so the backend tests with the stored (real) config; the
+      // list params are redacted and would fail if sent verbatim.
+      await notifyPost({ notify: { id: item.id, method: item.method, params: item.params } });
       message.success('测试消息已发送');
-    } catch {
+    } catch (err) {
+      console.error('notify test send failed', err);
       message.error('发送失败');
     }
   };
@@ -275,7 +356,7 @@ export default function Notify() {
       case 0:
         return (
           <>
-            <Form.Item name="url" label="URL" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="url" label="URL" rules={urlRules(true)}><Input /></Form.Item>
             <Form.Item name="httpMethod" label="HTTP方法" initialValue="POST">
               <Select options={[{ value: 'GET' }, { value: 'POST' }, { value: 'PUT' }]} />
             </Form.Item>
@@ -305,7 +386,7 @@ export default function Notify() {
       case 2:
         return (
           <>
-            <Form.Item name="url" label="Webhook URL" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="url" label="Webhook URL" rules={urlRules(true)}><Input /></Form.Item>
             <Form.Item name="notSendNull" label="无需同步时不发送" valuePropName="checked"><Switch /></Form.Item>
           </>
         );
@@ -322,7 +403,7 @@ export default function Notify() {
       case 4:
         return (
           <>
-            <Form.Item name="url" label="Webhook URL" rules={[{ required: true }]}><Input /></Form.Item>
+            <Form.Item name="url" label="Webhook URL" rules={urlRules(true)}><Input /></Form.Item>
             <Form.Item name="notSendNull" label="无需同步时不发送" valuePropName="checked"><Switch /></Form.Item>
           </>
         );
@@ -343,7 +424,17 @@ export default function Notify() {
       </div>
 
       <div className="ops-page-main ops-page-panel">
-        {list.length === 0 && !loading ? (
+        {listError ? (
+          <div className="ops-empty-surface">
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={<Text type="secondary">通知配置加载失败</Text>}
+            />
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <Button icon={<ReloadOutlined />} onClick={fetchList} loading={loading}>重试</Button>
+            </div>
+          </div>
+        ) : list.length === 0 && !loading ? (
           <div className="ops-empty-surface">
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -360,15 +451,13 @@ export default function Notify() {
                   hoverable
                   actions={[
                     <Tooltip title="测试发送" key="test">
-                      <SendOutlined onClick={() => handleTestSend(item)} />
+                      <Button type="text" size="small" icon={<SendOutlined />} aria-label="测试发送" onClick={() => handleTestSend(item)} />
                     </Tooltip>,
                     <Tooltip title="编辑" key="edit">
-                      <EditOutlined onClick={() => handleEdit(item)} />
+                      <Button type="text" size="small" icon={<EditOutlined />} aria-label="编辑" onClick={() => handleEdit(item)} />
                     </Tooltip>,
                     <Popconfirm title="确认删除此通知？" onConfirm={() => handleDelete(item.id)} key="del">
-                      <Tooltip title="删除">
-                        <DeleteOutlined />
-                      </Tooltip>
+                      <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label="删除" />
                     </Popconfirm>,
                   ]}
                   key={item.id}
@@ -391,6 +480,7 @@ export default function Notify() {
                         checked={item.enable === 1}
                         onChange={(checked) => handleToggleStatus(item, checked)}
                         size="small"
+                        aria-label={`${item.enable === 1 ? '禁用' : '启用'}${methodNames[item.method] || '通知'}`}
                       />
                     </Space>
                   </div>

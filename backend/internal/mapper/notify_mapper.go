@@ -8,6 +8,18 @@ func GetNotifyList(needEnable bool) ([]map[string]interface{}, error) {
 	return FetchAllToTable("SELECT * FROM notify")
 }
 
+// GetNotifyByID gets a single notify config by ID (raw params, internal use only).
+func GetNotifyByID(notifyID int64) (map[string]interface{}, error) {
+	rows, err := FetchAllToTable("SELECT * FROM notify WHERE id=?", notifyID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return rows[0], nil
+}
+
 // AddNotify inserts a new notify config
 func AddNotify(notify map[string]interface{}) (int64, error) {
 	return ExecuteInsert(

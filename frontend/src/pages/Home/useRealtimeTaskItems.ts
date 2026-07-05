@@ -104,7 +104,7 @@ export function useRealtimeTaskItems({
           status: activeTab,
           pageSize,
           pageNum: tabTaskPage,
-        });
+        }, { silent: true });
         if (requestID !== requestRef.current) return;
         const { rows, total } = normalizeTaskItemPage(res.data);
         setTabTaskList((previous) => replaceRows ? rows : mergeTaskItems(previous, rows));
