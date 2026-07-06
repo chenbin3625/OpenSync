@@ -286,7 +286,7 @@ func TestMigrateDBTxCreatesJobTaskItemFTS(t *testing.T) {
 		t.Fatalf("expected job_task_item_fts to exist")
 	}
 	var rowID int64
-	if err := testDB.QueryRow("SELECT rowid FROM job_task_item_fts WHERE job_task_item_fts MATCH ?", fts5Phrase("copy failed")).Scan(&rowID); err != nil {
+	if err := testDB.QueryRow("SELECT rowid FROM job_task_item_fts WHERE job_task_item_fts MATCH ?", fts5Phrase("cat.jpg")).Scan(&rowID); err != nil {
 		t.Fatalf("query rebuilt fts row: %v", err)
 	}
 	if rowID != 1 {
@@ -297,7 +297,7 @@ func TestMigrateDBTxCreatesJobTaskItemFTS(t *testing.T) {
 		VALUES (2, 10, 'movie.mkv', 'move_task_004')`); err != nil {
 		t.Fatalf("insert triggered task item: %v", err)
 	}
-	if err := testDB.QueryRow("SELECT rowid FROM job_task_item_fts WHERE job_task_item_fts MATCH ?", fts5Phrase("move_task")).Scan(&rowID); err != nil {
+	if err := testDB.QueryRow("SELECT rowid FROM job_task_item_fts WHERE job_task_item_fts MATCH ?", fts5Phrase("movie.mkv")).Scan(&rowID); err != nil {
 		t.Fatalf("query triggered fts row: %v", err)
 	}
 	if rowID != 2 {

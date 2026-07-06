@@ -29,7 +29,6 @@ export interface SystemSettings {
   taskSave: number;
   copyConcurrency: number;
   scanConcurrency: number;
-  realtimeFinishedItems: number;
   maxRetries: number;
 }
 

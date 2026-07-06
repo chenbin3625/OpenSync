@@ -30,10 +30,10 @@ docker compose up -d
 http://你的设备IP:8023/
 ```
 
-首次启动时，初始管理员密码会打印在容器日志里：
+首次启动后，打开 Web 页面按提示创建管理员用户名和密码。创建完成时会一次性展示 24 位恢复密钥，请立即保存。
 
 ```bash
-docker logs opensync
+docker compose exec opensync ./opensync reset-password --user admin
 ```
 
 ## docker-compose.yml
@@ -56,8 +56,8 @@ services:
 ## 镜像标签
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.5.1`
-- `chenbin3625/opensync:1.5`
+- `chenbin3625/opensync:1.8.3`
+- `chenbin3625/opensync:1.8`
 
 镜像支持以下平台：
 
@@ -75,9 +75,9 @@ services:
 - 多源目录、多目标目录同步。
 - 文件大小过滤和 Gitignore 风格排除规则。
 - 实时扫描进度、传输速度、剩余大小和任务明细。
-- 运行中任务暂停、历史任务继续执行、失败项单独重试。
+- 运行中任务暂停、历史任务继续执行和删除记录。
 - Webhook、Server 酱、钉钉、企业微信、飞书通知。
-- 登录、修改密码、深色模式、中英文语言。
+- 登录、密码恢复、系统设置、深色模式、中英文语言。
 - SQLite 本地数据存储。
 
 ## 数据持久化

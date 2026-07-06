@@ -139,7 +139,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.7.3
+image: chenbin3625/opensync:1.8.3
 ```
 
 ## Docker 命令部署
@@ -181,7 +181,6 @@ docker run -d \
 | `OPENSYNC_TASK_TIMEOUT` | `48` | 单次任务超时时间，单位小时，`0` 表示不限制 |
 | `OPENSYNC_COPY_CONCURRENCY` | `5` | 单个任务的复制并发数，范围 `1` 到 `100` |
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | 单个任务的扫描并发数，范围 `1` 到 `20` |
-| `OPENSYNC_REALTIME_FINISHED_ITEMS` | `1000` | 实时任务页保留的已完成明细数量 |
 | `OPENSYNC_MAX_RETRIES` | `0` | 单个复制项失败后的最大自动重试次数，`0` 表示不自动重试 |
 
 如果需要使用配置文件，可以创建或通过系统设置页生成 `data/config.ini`：
@@ -197,11 +196,10 @@ task_save=30
 task_timeout=48
 copy_concurrency=5
 scan_concurrency=8
-realtime_finished_items=1000
 max_retries=0
 ```
 
-系统设置页可在线调整历史任务保留、任务超时、复制并发、扫描并发、实时明细保留和自动重试次数。端口、日志等级等启动期配置仍建议通过环境变量或配置文件维护。
+系统设置页可在线调整历史任务保留、任务超时、复制并发、扫描并发和自动重试次数。端口、日志等级等启动期配置仍建议通过环境变量或配置文件维护。
 
 ## 本地构建镜像
 
@@ -280,8 +278,8 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.7.3`
-- `chenbin3625/opensync:1.7`
+- `chenbin3625/opensync:1.8.3`
+- `chenbin3625/opensync:1.8`
 
 镜像支持以下平台：
 

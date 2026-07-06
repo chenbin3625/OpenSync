@@ -6,7 +6,7 @@ import (
 	"log"
 )
 
-const currentVersion = 260613
+const currentVersion = 260614
 
 // InitSQL initializes the database schema and runs migrations
 func InitSQL() {
@@ -135,6 +135,7 @@ func ensureIndexes(db *sql.DB) {
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_job_task_job_time ON job_task(jobId, createTime DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_status_job ON job_task(status, jobId)",
+		"CREATE INDEX IF NOT EXISTS idx_job_task_effective_time ON job_task(COALESCE(NULLIF(runTime, 0), createTime), id)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_time ON job_task_item(taskId, createTime DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status ON job_task_item(taskId, status)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status_time ON job_task_item(taskId, status, createTime DESC)",
@@ -226,6 +227,9 @@ func migrationStatements(fromVersion int64) []string {
 		// second/minute/hour/day/month/day_of_week fields.
 		stmts = append(stmts, "ALTER TABLE job DROP COLUMN cron")
 	}
+	if fromVersion >= 260611 && fromVersion < 260614 {
+		stmts = append(stmts, rebuildJobTaskItemFTSStatements()...)
+	}
 	stmts = append(stmts, fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion))
 	return stmts
 }
@@ -243,14 +247,22 @@ func installJobTaskItemFTS(exec sqlExecer, rebuild bool) error {
 	return nil
 }
 
+func rebuildJobTaskItemFTSStatements() []string {
+	stmts := []string{
+		"DROP TRIGGER IF EXISTS job_task_item_ai",
+		"DROP TRIGGER IF EXISTS job_task_item_ad",
+		"DROP TRIGGER IF EXISTS job_task_item_au",
+		"DROP TABLE IF EXISTS job_task_item_fts",
+	}
+	return append(stmts, jobTaskItemFTSStatements(true)...)
+}
+
 func jobTaskItemFTSStatements(rebuild bool) []string {
 	stmts := []string{
 		`CREATE VIRTUAL TABLE IF NOT EXISTS job_task_item_fts USING fts5(
 			fileName,
 			srcPath,
 			dstPath,
-			alistTaskId,
-			errMsg,
 			content='job_task_item',
 			content_rowid='id',
 			tokenize='trigram'
@@ -261,18 +273,18 @@ func jobTaskItemFTSStatements(rebuild bool) []string {
 	}
 	stmts = append(stmts,
 		`CREATE TRIGGER IF NOT EXISTS job_task_item_ai AFTER INSERT ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
-			VALUES (new.id, new.fileName, new.srcPath, new.dstPath, new.alistTaskId, new.errMsg);
+			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath)
+			VALUES (new.id, new.fileName, new.srcPath, new.dstPath);
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS job_task_item_ad AFTER DELETE ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
-			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath, old.alistTaskId, old.errMsg);
+			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath)
+			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath);
 		END`,
 		`CREATE TRIGGER IF NOT EXISTS job_task_item_au AFTER UPDATE ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
-			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath, old.alistTaskId, old.errMsg);
-			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
-			VALUES (new.id, new.fileName, new.srcPath, new.dstPath, new.alistTaskId, new.errMsg);
+			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath)
+			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath);
+			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath)
+			VALUES (new.id, new.fileName, new.srcPath, new.dstPath);
 		END`,
 	)
 	return stmts
@@ -338,8 +350,6 @@ func shouldSkipMigrationStatement(tx *sql.Tx, stmt string) bool {
 			fileName,
 			srcPath,
 			dstPath,
-			alistTaskId,
-			errMsg,
 			content='job_task_item',
 			content_rowid='id',
 			tokenize='trigram'
@@ -348,20 +358,20 @@ func shouldSkipMigrationStatement(tx *sql.Tx, stmt string) bool {
 	case "INSERT INTO job_task_item_fts(job_task_item_fts) VALUES('rebuild')":
 		return !txTableExists(tx, "job_task_item_fts")
 	case `CREATE TRIGGER IF NOT EXISTS job_task_item_ai AFTER INSERT ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
-			VALUES (new.id, new.fileName, new.srcPath, new.dstPath, new.alistTaskId, new.errMsg);
+			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath)
+			VALUES (new.id, new.fileName, new.srcPath, new.dstPath);
 		END`:
 		return !txTableExists(tx, "job_task_item") || !txTableExists(tx, "job_task_item_fts")
 	case `CREATE TRIGGER IF NOT EXISTS job_task_item_ad AFTER DELETE ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
-			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath, old.alistTaskId, old.errMsg);
+			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath)
+			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath);
 		END`:
 		return !txTableExists(tx, "job_task_item") || !txTableExists(tx, "job_task_item_fts")
 	case `CREATE TRIGGER IF NOT EXISTS job_task_item_au AFTER UPDATE ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
-			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath, old.alistTaskId, old.errMsg);
-			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
-			VALUES (new.id, new.fileName, new.srcPath, new.dstPath, new.alistTaskId, new.errMsg);
+			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath)
+			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath);
+			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath)
+			VALUES (new.id, new.fileName, new.srcPath, new.dstPath);
 		END`:
 		return !txTableExists(tx, "job_task_item") || !txTableExists(tx, "job_task_item_fts")
 	default:
