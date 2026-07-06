@@ -668,14 +668,26 @@ func TestNewTaskContextFallsBackToCancelableContextWhenTimeoutDisabled(t *testin
 }
 
 func TestFinalTaskStatusUsesTimeoutWhenContextDeadlineExceeded(t *testing.T) {
-	if status := finalTaskStatus(false, context.DeadlineExceeded, 0); status != taskStatusTimeout {
+	if status := finalTaskStatus(false, context.DeadlineExceeded, 0, 0); status != taskStatusTimeout {
 		t.Fatalf("finalTaskStatus() = %d, want timeout status 5", status)
 	}
 }
 
 func TestFinalTaskStatusKeepsManualBreakAsStopped(t *testing.T) {
-	if status := finalTaskStatus(true, context.DeadlineExceeded, 0); status != taskStatusFailed {
+	if status := finalTaskStatus(true, context.DeadlineExceeded, 0, 0); status != taskStatusFailed {
 		t.Fatalf("finalTaskStatus() = %d, want stopped status 7", status)
+	}
+}
+
+func TestFinalTaskStatusUsesNoSyncWhenNothingWasQueued(t *testing.T) {
+	if status := finalTaskStatus(false, nil, 0, 0); status != taskStatusNoSync {
+		t.Fatalf("finalTaskStatus() = %d, want no-sync status 8", status)
+	}
+}
+
+func TestFinalTaskStatusUsesSuccessWhenItemsCompleted(t *testing.T) {
+	if status := finalTaskStatus(false, nil, 3, 0); status != taskStatusSuccess {
+		t.Fatalf("finalTaskStatus() = %d, want success status 2", status)
 	}
 }
 

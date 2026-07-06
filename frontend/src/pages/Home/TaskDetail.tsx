@@ -6,16 +6,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { jobGetTaskItem } from '../../api/job';
 import dayjs from 'dayjs';
 import type { TaskItem } from '../../types';
-import { displayText, formatSize, taskItemStatusColors, taskTypeNames } from './homeUtils';
+import {
+  displayText, formatSize, taskItemStatusColors, taskItemStatusNames,
+  taskItemStatusOptions, taskTypeNames,
+} from './homeUtils';
 
 const { Text } = Typography;
-
-const taskItemStatusList = [
-  '等待中', '进行中', '成功', '取消中', '已取消',
-  '出错（将重试）', '失败中', '已失败', '等待重试中', '等待重试前',
-];
-
-const statusFilterOptions = taskItemStatusList.map((label, value) => ({ label, value }));
 
 const typeFilterOptions = [
   { label: '复制/创建', value: 0 },
@@ -221,7 +217,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
         const errorReason = typeof record.errMsg === 'string' ? record.errMsg.trim() : '';
         const statusTag = (
           <Tag color={taskItemStatusColors[status]}>
-            {taskItemStatusList[status] || String(status)}
+            {taskItemStatusNames[status] || String(status)}
           </Tag>
         );
         if (taskItemStatusColors[status] !== 'error' || !errorReason) {
@@ -292,7 +288,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
             style={{ width: 140 }}
             value={statusFilter}
             onChange={(v) => { setStatusFilter(v); setPage(1); }}
-            options={statusFilterOptions}
+            options={taskItemStatusOptions}
           />
           <Select
             placeholder="操作类型"
