@@ -137,11 +137,10 @@ func TestJobTaskRuntimeInitializationIsConcurrentSafe(t *testing.T) {
 
 func TestRuntimeTaskLimitsUseConfiguredValues(t *testing.T) {
 	limits := taskRuntimeLimitsFromServer(config.ServerConfig{
-		Timeout:               72,
-		CopyConcurrency:       7,
-		ScanConcurrency:       20,
-		RealtimeFinishedItems: 120,
-		MaxRetries:            4,
+		Timeout:         72,
+		CopyConcurrency: 7,
+		ScanConcurrency: 20,
+		MaxRetries:      4,
 	})
 
 	if limits.CopyConcurrency != 7 {
@@ -150,9 +149,6 @@ func TestRuntimeTaskLimitsUseConfiguredValues(t *testing.T) {
 	if limits.ScanConcurrency != 20 {
 		t.Fatalf("ScanConcurrency = %d, want 20", limits.ScanConcurrency)
 	}
-	if limits.RealtimeFinishedItems != 120 {
-		t.Fatalf("RealtimeFinishedItems = %d, want 120", limits.RealtimeFinishedItems)
-	}
 	if limits.MaxRetries != 4 {
 		t.Fatalf("MaxRetries = %d, want 4", limits.MaxRetries)
 	}
@@ -160,10 +156,9 @@ func TestRuntimeTaskLimitsUseConfiguredValues(t *testing.T) {
 
 func TestRuntimeTaskLimitsClampInvalidConfiguredValues(t *testing.T) {
 	limits := taskRuntimeLimitsFromServer(config.ServerConfig{
-		CopyConcurrency:       0,
-		ScanConcurrency:       99,
-		RealtimeFinishedItems: 0,
-		MaxRetries:            99,
+		CopyConcurrency: 0,
+		ScanConcurrency: 99,
+		MaxRetries:      99,
 	})
 
 	if limits.CopyConcurrency != config.DefaultCopyConcurrency {
@@ -171,9 +166,6 @@ func TestRuntimeTaskLimitsClampInvalidConfiguredValues(t *testing.T) {
 	}
 	if limits.ScanConcurrency != 20 {
 		t.Fatalf("ScanConcurrency = %d, want max 20", limits.ScanConcurrency)
-	}
-	if limits.RealtimeFinishedItems != config.DefaultRealtimeFinishedItems {
-		t.Fatalf("RealtimeFinishedItems = %d, want default %d", limits.RealtimeFinishedItems, config.DefaultRealtimeFinishedItems)
 	}
 	if limits.MaxRetries != config.MaxRetryAttempts {
 		t.Fatalf("MaxRetries = %d, want max %d", limits.MaxRetries, config.MaxRetryAttempts)
@@ -191,13 +183,15 @@ func TestCopyItemRetriesFailedCopyBeforeSuccess(t *testing.T) {
 	copyRetryDelay = func(int) time.Duration { return 0 }
 	config.SetConfigForTest(&config.Config{
 		Server: config.ServerConfig{
-			Timeout:               0,
-			CopyConcurrency:       1,
-			ScanConcurrency:       1,
-			RealtimeFinishedItems: 100,
-			MaxRetries:            2,
+			Timeout:         0,
+			CopyConcurrency: 1,
+			ScanConcurrency: 1,
+			MaxRetries:      2,
 		},
 	})
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
 
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +216,6 @@ func TestCopyItemRetriesFailedCopyBeforeSuccess(t *testing.T) {
 	jt := &JobTask{
 		TaskID:  42,
 		Job:     map[string]interface{}{},
-		Finish:  make([]JobTaskItem, 0),
 		Waiting: newCopyQueue(),
 		AlistClient: &AlistClient{
 			URL:    server.URL,
@@ -246,16 +239,14 @@ func TestCopyItemRetriesFailedCopyBeforeSuccess(t *testing.T) {
 		t.Fatalf("item ErrMsg = %q, want nil after successful retry", *item.ErrMsg)
 	}
 
-	jt.FinishMu.Lock()
-	defer jt.FinishMu.Unlock()
-	if len(jt.Finish) != 1 {
-		t.Fatalf("finish len = %d, want 1", len(jt.Finish))
+	if len(persisted) != 1 {
+		t.Fatalf("persisted len = %d, want 1", len(persisted))
 	}
-	if jt.Finish[0].Status != taskStatusSuccess {
-		t.Fatalf("finish status = %v, want 2", jt.Finish[0].Status)
+	if persisted[0]["status"] != taskStatusSuccess.Int() {
+		t.Fatalf("persisted status = %v, want 2", persisted[0]["status"])
 	}
-	if jt.Finish[0].ErrMsg != nil {
-		t.Fatalf("finish errMsg = %q, want nil", *jt.Finish[0].ErrMsg)
+	if errMsg, ok := persisted[0]["errMsg"].(*string); !ok || errMsg != nil {
+		t.Fatalf("persisted errMsg = %q, want nil", persisted[0]["errMsg"])
 	}
 }
 
@@ -357,9 +348,12 @@ func TestWaitForBreakReturnsWhenBreakRequested(t *testing.T) {
 }
 
 func TestMarkWaitingAsAbortedMovesQueuedItemsToFinish(t *testing.T) {
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
 	jt := &JobTask{
 		TaskID:  42,
-		Finish:  make([]JobTaskItem, 0),
 		Waiting: newCopyQueue(),
 	}
 	jt.initRuntime()
@@ -388,111 +382,76 @@ func TestMarkWaitingAsAbortedMovesQueuedItemsToFinish(t *testing.T) {
 	if jt.Waiting.len() != 0 {
 		t.Fatalf("waiting queue len = %d, want 0", jt.Waiting.len())
 	}
-	if len(jt.Finish) != 2 {
-		t.Fatalf("finish len = %d, want 2", len(jt.Finish))
+	if len(persisted) != 2 {
+		t.Fatalf("persisted len = %d, want 2", len(persisted))
 	}
-	for i, item := range jt.Finish {
-		if item.Status != 4 {
-			t.Fatalf("finish[%d].status = %v, want 4", i, item.Status)
+	for i, item := range persisted {
+		if item["status"] != taskStatusStopped.Int() {
+			t.Fatalf("persisted[%d].status = %v, want 4", i, item["status"])
 		}
-		if item.TaskID != int64(42) {
-			t.Fatalf("finish[%d].taskId = %v, want 42", i, item.TaskID)
+		if item["taskId"] != int64(42) {
+			t.Fatalf("persisted[%d].taskId = %v, want 42", i, item["taskId"])
 		}
 	}
 }
 
-func TestCopyHookBuffersOldFinishedItemsBeforePersistThreshold(t *testing.T) {
-	oldPersist := persistJobTaskItems
-	defer func() {
-		persistJobTaskItems = oldPersist
-	}()
-
+func TestCopyHookPersistsFinishedItemsImmediately(t *testing.T) {
 	var persisted []map[string]interface{}
-	var calls int
 	var batchSizes []int
-	persistJobTaskItems = func(items []map[string]interface{}) error {
-		calls++
+	restorePersist := stubPersistJobTaskItems(t, &persisted, func(items []map[string]interface{}) {
 		batchSizes = append(batchSizes, len(items))
-		persisted = append(persisted, items...)
-		return nil
-	}
+	})
+	defer restorePersist()
 
 	jt := &JobTask{
 		TaskID: 42,
-		Finish: make([]JobTaskItem, 0),
 	}
 	jt.initRuntime()
 
-	for i := 0; i < config.DefaultRealtimeFinishedItems+3; i++ {
+	for i := 0; i < 3; i++ {
 		jt.CopyHook("/src/", "/dst/", "file.txt", int64(10), "", taskStatusSuccess, nil, taskItemFile, taskItemTypeCopy, int64(100+i))
 	}
 
-	if len(jt.Finish) != config.DefaultRealtimeFinishedItems {
-		t.Fatalf("finish len = %d, want capped len %d", len(jt.Finish), config.DefaultRealtimeFinishedItems)
-	}
-	if len(persisted) != 0 {
-		t.Fatalf("persisted len = %d, want 0 before persist batch threshold", len(persisted))
-	}
-	if calls != 0 {
-		t.Fatalf("persist calls = %d with batch sizes %v, want 0 before persist batch threshold", calls, batchSizes)
-	}
-	if len(jt.pendingPersist) != 3 {
-		t.Fatalf("pendingPersist len = %d, want 3 buffered items", len(jt.pendingPersist))
-	}
-	if jt.pendingPersist[0].CreateTime != int64(100) {
-		t.Fatalf("first pending createTime = %v, want 100", jt.pendingPersist[0].CreateTime)
-	}
-}
-
-func TestFlushPendingTaskItemsPersistsOverflowInOneBatch(t *testing.T) {
-	oldPersist := persistJobTaskItems
-	defer func() {
-		persistJobTaskItems = oldPersist
-	}()
-
-	var calls int
-	var batchSizes []int
-	var persisted []map[string]interface{}
-	persistJobTaskItems = func(items []map[string]interface{}) error {
-		calls++
-		batchSizes = append(batchSizes, len(items))
-		persisted = append(persisted, items...)
-		return nil
-	}
-
-	jt := &JobTask{
-		TaskID: 42,
-		Finish: make([]JobTaskItem, 0),
-	}
-	jt.initRuntime()
-
-	for i := 0; i < config.DefaultRealtimeFinishedItems+3; i++ {
-		jt.CopyHook("/src/", "/dst/", "file.txt", int64(10), "", taskStatusSuccess, nil, taskItemFile, taskItemTypeCopy, int64(100+i))
-	}
-
-	if err := jt.flushPendingTaskItems(); err != nil {
-		t.Fatalf("flushPendingTaskItems() error: %v", err)
-	}
-
-	if calls != 1 || len(batchSizes) != 1 || batchSizes[0] != 3 {
-		t.Fatalf("persist calls = %d with batch sizes %v, want one batch of 3", calls, batchSizes)
-	}
 	if len(persisted) != 3 {
-		t.Fatalf("persisted len = %d, want 3 flushed items", len(persisted))
+		t.Fatalf("persisted len = %d, want 3", len(persisted))
 	}
-	if len(jt.pendingPersist) != 0 {
-		t.Fatalf("pendingPersist len = %d, want 0 after flush", len(jt.pendingPersist))
+	if len(batchSizes) != 3 || batchSizes[0] != 1 || batchSizes[1] != 1 || batchSizes[2] != 1 {
+		t.Fatalf("persist batch sizes = %v, want three one-item writes", batchSizes)
+	}
+	if persisted[0]["createTime"] != int64(100) {
+		t.Fatalf("first persisted createTime = %v, want 100", persisted[0]["createTime"])
+	}
+	count, size := jt.finishedAggregateForStatus(taskStatusSuccess)
+	if count != 3 || size != 30 {
+		t.Fatalf("finished aggregate = count %d size %d, want 3/30", count, size)
+	}
+}
+
+func TestCopyHookRecordsPersistenceError(t *testing.T) {
+	writeErr := errors.New("write failed")
+	restorePersist := stubPersistJobTaskItems(t, nil, nil)
+	persistJobTaskItems = func([]map[string]interface{}) error {
+		return writeErr
+	}
+	defer restorePersist()
+
+	jt := &JobTask{
+		TaskID: 42,
+	}
+	jt.initRuntime()
+
+	jt.CopyHook("/src/", "/dst/", "file.txt", int64(10), "", taskStatusSuccess, nil, taskItemFile, taskItemTypeCopy, 100)
+
+	if err := jt.persistRemainingTaskItems(); !errors.Is(err, writeErr) {
+		t.Fatalf("persistRemainingTaskItems() = %v, want write error", err)
+	}
+	if !jt.isBreak() {
+		t.Fatalf("CopyHook did not request break after persistence error")
 	}
 }
 
 func TestTaskSubmitMarksTaskFailedWhenFinishedItemPersistenceFails(t *testing.T) {
-	oldPersist := persistJobTaskItems
-	defer func() {
-		persistJobTaskItems = oldPersist
-	}()
-	persistJobTaskItems = func([]map[string]interface{}) error {
-		return errors.New("write failed")
-	}
+	writeErr := errors.New("write failed")
 
 	testDB := newServiceTaskStatusTestDB(t)
 	oldDB := mapperDBForServiceTest(testDB)
@@ -504,12 +463,9 @@ func TestTaskSubmitMarksTaskFailedWhenFinishedItemPersistenceFails(t *testing.T)
 		TaskID:     10,
 		JobClient:  client,
 		CreateTime: float64(time.Now().Unix()),
-		Finish: []JobTaskItem{
-			NewCopyJobTaskItem(10, "/src/", "/dst/", "failed.txt", int64(1), "",
-				taskStatusFailed, nil, taskItemFile, taskItemTypeCopy, 100),
-		},
 	}
 	jt.initRuntime()
+	jt.recordTaskPersistenceError(writeErr)
 	jt.ScanFinish.Store(true)
 	client.setCurrentTask(jt)
 
@@ -535,7 +491,6 @@ func TestUpdateTaskStatusReturnsPersistenceErrors(t *testing.T) {
 	jt := &JobTask{
 		TaskID:     10,
 		CreateTime: float64(time.Now().Unix()),
-		Finish:     make([]JobTaskItem, 0),
 		Waiting:    newCopyQueue(),
 	}
 	jt.initRuntime()
@@ -563,7 +518,6 @@ func TestJobTaskStartRecoversPanickingSyncWorker(t *testing.T) {
 		JobClient:  client,
 		Job:        map[string]interface{}{"srcPath": "/src", "dstPath": "/dst"},
 		CreateTime: float64(time.Now().Unix()),
-		Finish:     make([]JobTaskItem, 0),
 		Waiting:    newCopyQueue(),
 	}
 	jt.initRuntime()
@@ -615,6 +569,7 @@ func newServiceTaskStatusTestDB(t *testing.T) *sql.DB {
 		type integer,
 		alistTaskId text,
 		status integer,
+		progress real,
 		errMsg text,
 		createTime integer DEFAULT 1
 	)`); err != nil {
@@ -628,6 +583,23 @@ func newServiceTaskStatusTestDB(t *testing.T) *sql.DB {
 
 func mapperDBForServiceTest(testDB *sql.DB) func() {
 	return mapper.SetDBForTest(testDB)
+}
+
+func stubPersistJobTaskItems(t *testing.T, persisted *[]map[string]interface{}, after func([]map[string]interface{})) func() {
+	t.Helper()
+	oldPersist := persistJobTaskItems
+	persistJobTaskItems = func(items []map[string]interface{}) error {
+		if persisted != nil {
+			*persisted = append(*persisted, items...)
+		}
+		if after != nil {
+			after(items)
+		}
+		return nil
+	}
+	return func() {
+		persistJobTaskItems = oldPersist
+	}
 }
 
 func readServiceTaskStatus(t *testing.T, testDB *sql.DB, taskID int64) (int, string) {
@@ -718,7 +690,6 @@ func TestGetCurrentIncludesTaskIDForTaskActions(t *testing.T) {
 	jt := &JobTask{
 		TaskID:     123,
 		CreateTime: float64(time.Now().Unix()),
-		Finish:     make([]JobTaskItem, 0),
 		Waiting:    newCopyQueue(),
 	}
 	jt.initRuntime()
@@ -731,10 +702,13 @@ func TestGetCurrentIncludesTaskIDForTaskActions(t *testing.T) {
 }
 
 func TestGetCurrentDoesNotCacheFinishedTaskLists(t *testing.T) {
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
 	jt := &JobTask{
 		TaskID:     123,
 		CreateTime: float64(time.Now().Unix()),
-		Finish:     make([]JobTaskItem, 0),
 		Waiting:    newCopyQueue(),
 	}
 	jt.initRuntime()
@@ -748,16 +722,22 @@ func TestGetCurrentDoesNotCacheFinishedTaskLists(t *testing.T) {
 	if current["doingTask"] == nil {
 		t.Fatalf("doingTask missing from current payload")
 	}
+	if len(persisted) != 3 {
+		t.Fatalf("persisted len = %d, want 3", len(persisted))
+	}
 	if tasks := jt.CurrentTasks[taskStatusSuccess.Int()]; len(tasks) != 0 {
 		t.Fatalf("cached success task list len = %d, want 0 so polling avoids finished-list snapshots", len(tasks))
 	}
 }
 
 func TestGetCurrentByStatusPagePaginatesRecentFinishedItems(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+
 	jt := &JobTask{
 		TaskID:     123,
 		CreateTime: float64(time.Now().Unix()),
-		Finish:     make([]JobTaskItem, 0),
 		Waiting:    newCopyQueue(),
 	}
 	jt.initRuntime()
@@ -769,7 +749,7 @@ func TestGetCurrentByStatusPagePaginatesRecentFinishedItems(t *testing.T) {
 	page := jt.GetCurrentByStatusPage(taskStatusSuccess.Int(), 2, 2)
 	items := page["dataList"].([]map[string]interface{})
 
-	if page["count"] != 5 {
+	if page["count"] != int64(5) {
 		t.Fatalf("count = %v, want 5", page["count"])
 	}
 	if len(items) != 2 {

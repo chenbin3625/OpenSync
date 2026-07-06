@@ -12,11 +12,10 @@ func TestEditEnabledJobClientUpdatesNextRunWithoutBreakingCurrentTask(t *testing
 	config.SetConfigForTest(&config.Config{
 		DB: config.DBConfig{DBName: filepath.Join(t.TempDir(), "opensync-test.db")},
 		Server: config.ServerConfig{
-			Timeout:               0,
-			CopyConcurrency:       1,
-			ScanConcurrency:       1,
-			RealtimeFinishedItems: 100,
-			PasswdStr:             "test-secret",
+			Timeout:         0,
+			CopyConcurrency: 1,
+			ScanConcurrency: 1,
+			PasswdStr:       "test-secret",
 		},
 	})
 	defer config.SetConfigForTest(oldConfig)

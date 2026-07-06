@@ -7,9 +7,8 @@ import (
 )
 
 const (
-	maxQueuedCopyItems      = 5000
-	maxPersistTaskItemBatch = 500
-	retryTaskItemBatchSize  = 500
+	maxQueuedCopyItems     = 5000
+	retryTaskItemBatchSize = 500
 )
 
 var errScanAborted = errors.New("scan aborted")
@@ -20,10 +19,9 @@ var countJobTaskItemsByStatuses = mapper.CountJobTaskItemsByStatuses
 var copyRetryDelay = defaultCopyRetryDelay
 
 type taskRuntimeLimits struct {
-	CopyConcurrency       int
-	ScanConcurrency       int
-	RealtimeFinishedItems int
-	MaxRetries            int
+	CopyConcurrency int
+	ScanConcurrency int
+	MaxRetries      int
 }
 
 func runtimeTaskLimits() taskRuntimeLimits {
@@ -43,12 +41,6 @@ func taskRuntimeLimitsFromServer(server config.ServerConfig) taskRuntimeLimits {
 			config.MinScanConcurrency,
 			config.MaxScanConcurrency,
 			config.DefaultScanConcurrency,
-		),
-		RealtimeFinishedItems: intInRangeOrDefault(
-			server.RealtimeFinishedItems,
-			config.MinRealtimeFinishedItems,
-			config.MaxRealtimeFinishedItems,
-			config.DefaultRealtimeFinishedItems,
 		),
 		MaxRetries: intInRangeOrDefault(
 			server.MaxRetries,

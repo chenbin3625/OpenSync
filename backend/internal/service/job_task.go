@@ -21,9 +21,7 @@ type JobTask struct {
 	AlistClient *AlistClient
 	CreateTime  float64
 
-	Finish         []JobTaskItem
 	FinishMu       sync.Mutex
-	pendingPersist []JobTaskItem
 	FinishedCounts map[taskStatus]int
 	FinishedSizes  map[taskStatus]int64
 	Doing          map[int64]*CopyItem
@@ -52,6 +50,8 @@ type JobTask struct {
 	RetryStatuses     []taskStatus
 	FatalMu           sync.Mutex
 	FatalErr          *string
+	PersistMu         sync.Mutex
+	PersistErr        error
 }
 
 // NewJobTask creates and starts a new task
@@ -69,8 +69,6 @@ func newJobTask(taskID int64, jc *JobClient) *JobTask {
 		Job:            job,
 		AlistClient:    GetClientByID(util.ToInt64(job["alistId"])),
 		CreateTime:     float64(time.Now().Unix()),
-		Finish:         make([]JobTaskItem, 0),
-		pendingPersist: make([]JobTaskItem, 0),
 		FinishedCounts: make(map[taskStatus]int),
 		FinishedSizes:  make(map[taskStatus]int64),
 		Doing:          make(map[int64]*CopyItem),
@@ -173,12 +171,6 @@ func (jt *JobTask) ensureRuntimeLocked() {
 	if jt.Doing == nil {
 		jt.Doing = make(map[int64]*CopyItem)
 	}
-	if jt.Finish == nil {
-		jt.Finish = make([]JobTaskItem, 0)
-	}
-	if jt.pendingPersist == nil {
-		jt.pendingPersist = make([]JobTaskItem, 0)
-	}
 	if jt.FinishedCounts == nil {
 		jt.FinishedCounts = make(map[taskStatus]int)
 	}
@@ -260,10 +252,9 @@ func (jt *JobTask) lastWatchingUnix() int64 {
 
 func (jt *JobTask) finishCopyItem(item *CopyItem) {
 	// Snapshot the fields CopyHook needs under the read lock, then release
-	// before invoking CopyHook. CopyHook -> appendFinish may perform a batched
-	// DB write (persistJobTaskItems); holding item.mu during that write blocks
-	// concurrent progress readers (doingTaskMaps) and inverts the lock order
-	// against finishedTaskMaps (FinishMu -> item.mu). Snapshotting avoids both.
+	// before invoking CopyHook. CopyHook -> appendFinish writes the completed
+	// item to the DB; holding item.mu during that write blocks concurrent
+	// progress readers.
 	item.mu.RLock()
 	srcPath := item.SrcPath
 	dstPath := item.DstPath

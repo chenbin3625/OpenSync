@@ -182,15 +182,6 @@ export default function Setting() {
               </Col>
               <Col xs={24} md={12}>
                 <Form.Item
-                  name="realtimeFinishedItems"
-                  label={labelWithTip('完成明细保留数', '任务详情实时视图中保留的已完成明细数量，超过后会批量写入数据库；新任务生效。')}
-                  rules={[{ required: true, message: '请输入完成明细保留数' }]}
-                >
-                  <InputNumber min={100} max={50000} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={12}>
-                <Form.Item
                   name="maxRetries"
                   label={labelWithTip('最大重试次数', '单个复制项失败后的最大自动重试次数，0 表示不自动重试；新任务生效。')}
                   rules={[{ required: true, message: '请输入最大重试次数' }]}

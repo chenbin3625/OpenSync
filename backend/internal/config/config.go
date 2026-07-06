@@ -14,18 +14,17 @@ import (
 
 // ServerConfig holds server configuration
 type ServerConfig struct {
-	Port                  int
-	Expires               int
-	LogLevel              int
-	ConsoleLevel          int
-	LogSave               int
-	TaskSave              int
-	Timeout               int
-	CopyConcurrency       int
-	ScanConcurrency       int
-	RealtimeFinishedItems int
-	MaxRetries            int
-	PasswdStr             string
+	Port            int
+	Expires         int
+	LogLevel        int
+	ConsoleLevel    int
+	LogSave         int
+	TaskSave        int
+	Timeout         int
+	CopyConcurrency int
+	ScanConcurrency int
+	MaxRetries      int
+	PasswdStr       string
 }
 
 // DBConfig holds database configuration
@@ -62,30 +61,26 @@ const (
 )
 
 const (
-	DefaultCopyConcurrency       = 5
-	DefaultScanConcurrency       = 8
-	DefaultRealtimeFinishedItems = 1000
-	DefaultMaxRetries            = 0
+	DefaultCopyConcurrency = 5
+	DefaultScanConcurrency = 8
+	DefaultMaxRetries      = 0
 
-	MinCopyConcurrency       = 1
-	MaxCopyConcurrency       = 100
-	MinScanConcurrency       = 1
-	MaxScanConcurrency       = 20
-	MinRealtimeFinishedItems = 100
-	MaxRealtimeFinishedItems = 50000
-	MinMaxRetries            = 0
-	MaxRetryAttempts         = 10
+	MinCopyConcurrency = 1
+	MaxCopyConcurrency = 100
+	MinScanConcurrency = 1
+	MaxScanConcurrency = 20
+	MinMaxRetries      = 0
+	MaxRetryAttempts   = 10
 )
 
 // SystemSettings is the subset of backend settings exposed for runtime editing.
 type SystemSettings struct {
-	Expires               int `json:"expires"`
-	TaskTimeout           int `json:"taskTimeout"`
-	TaskSave              int `json:"taskSave"`
-	CopyConcurrency       int `json:"copyConcurrency"`
-	ScanConcurrency       int `json:"scanConcurrency"`
-	RealtimeFinishedItems int `json:"realtimeFinishedItems"`
-	MaxRetries            int `json:"maxRetries"`
+	Expires         int `json:"expires"`
+	TaskTimeout     int `json:"taskTimeout"`
+	TaskSave        int `json:"taskSave"`
+	CopyConcurrency int `json:"copyConcurrency"`
+	ScanConcurrency int `json:"scanConcurrency"`
+	MaxRetries      int `json:"maxRetries"`
 }
 
 // GetPasswordStr gets or generates the encryption secret key
@@ -112,18 +107,17 @@ func GetConfig() *Config {
 	dbname := "data/openSync.db"
 
 	sCfg := ServerConfig{
-		Port:                  defaultPort,
-		Expires:               defaultExpires,
-		LogLevel:              defaultLogLevel,
-		ConsoleLevel:          defaultConsoleLevel,
-		LogSave:               defaultLogSave,
-		TaskSave:              defaultTaskSave,
-		Timeout:               defaultTaskTimeout,
-		CopyConcurrency:       DefaultCopyConcurrency,
-		ScanConcurrency:       DefaultScanConcurrency,
-		RealtimeFinishedItems: DefaultRealtimeFinishedItems,
-		MaxRetries:            DefaultMaxRetries,
-		PasswdStr:             passwdStr,
+		Port:            defaultPort,
+		Expires:         defaultExpires,
+		LogLevel:        defaultLogLevel,
+		ConsoleLevel:    defaultConsoleLevel,
+		LogSave:         defaultLogSave,
+		TaskSave:        defaultTaskSave,
+		Timeout:         defaultTaskTimeout,
+		CopyConcurrency: DefaultCopyConcurrency,
+		ScanConcurrency: DefaultScanConcurrency,
+		MaxRetries:      DefaultMaxRetries,
+		PasswdStr:       passwdStr,
 	}
 
 	if _, err := os.Stat("data/config.ini"); err == nil {
@@ -157,9 +151,6 @@ func GetConfig() *Config {
 			if v, ok := opensync["scan_concurrency"]; ok {
 				sCfg.ScanConcurrency = intConfigValue(v, sCfg.ScanConcurrency, "scan_concurrency")
 			}
-			if v, ok := opensync["realtime_finished_items"]; ok {
-				sCfg.RealtimeFinishedItems = intConfigValue(v, sCfg.RealtimeFinishedItems, "realtime_finished_items")
-			}
 			if v, ok := opensync["max_retries"]; ok {
 				sCfg.MaxRetries = intConfigValue(v, sCfg.MaxRetries, "max_retries")
 			}
@@ -175,7 +166,6 @@ func GetConfig() *Config {
 		sCfg.Timeout = envIntConfigValue("OPENSYNC_TASK_TIMEOUT", sCfg.Timeout)
 		sCfg.CopyConcurrency = envIntConfigValue("OPENSYNC_COPY_CONCURRENCY", sCfg.CopyConcurrency)
 		sCfg.ScanConcurrency = envIntConfigValue("OPENSYNC_SCAN_CONCURRENCY", sCfg.ScanConcurrency)
-		sCfg.RealtimeFinishedItems = envIntConfigValue("OPENSYNC_REALTIME_FINISHED_ITEMS", sCfg.RealtimeFinishedItems)
 		sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
 	}
 
@@ -199,7 +189,6 @@ func clampServerConfig(sCfg *ServerConfig) {
 	sCfg.TaskSave = clampInt(sCfg.TaskSave, minTaskSave, maxTaskSave, defaultTaskSave)
 	sCfg.CopyConcurrency = clampInt(sCfg.CopyConcurrency, MinCopyConcurrency, MaxCopyConcurrency, DefaultCopyConcurrency)
 	sCfg.ScanConcurrency = clampInt(sCfg.ScanConcurrency, MinScanConcurrency, MaxScanConcurrency, DefaultScanConcurrency)
-	sCfg.RealtimeFinishedItems = clampInt(sCfg.RealtimeFinishedItems, MinRealtimeFinishedItems, MaxRealtimeFinishedItems, DefaultRealtimeFinishedItems)
 	sCfg.MaxRetries = clampInt(sCfg.MaxRetries, MinMaxRetries, MaxRetryAttempts, DefaultMaxRetries)
 }
 
@@ -221,13 +210,12 @@ func SetConfigForTest(cfg *Config) {
 func GetSystemSettings() SystemSettings {
 	cfg := GetConfig()
 	return SystemSettings{
-		Expires:               cfg.Server.Expires,
-		TaskTimeout:           cfg.Server.Timeout,
-		TaskSave:              cfg.Server.TaskSave,
-		CopyConcurrency:       cfg.Server.CopyConcurrency,
-		ScanConcurrency:       cfg.Server.ScanConcurrency,
-		RealtimeFinishedItems: cfg.Server.RealtimeFinishedItems,
-		MaxRetries:            cfg.Server.MaxRetries,
+		Expires:         cfg.Server.Expires,
+		TaskTimeout:     cfg.Server.Timeout,
+		TaskSave:        cfg.Server.TaskSave,
+		CopyConcurrency: cfg.Server.CopyConcurrency,
+		ScanConcurrency: cfg.Server.ScanConcurrency,
+		MaxRetries:      cfg.Server.MaxRetries,
 	}
 }
 
@@ -248,7 +236,6 @@ func UpdateSystemSettings(settings SystemSettings) error {
 	nextServer.TaskSave = settings.TaskSave
 	nextServer.CopyConcurrency = settings.CopyConcurrency
 	nextServer.ScanConcurrency = settings.ScanConcurrency
-	nextServer.RealtimeFinishedItems = settings.RealtimeFinishedItems
 	nextServer.MaxRetries = settings.MaxRetries
 
 	if err := writeConfigFile(nextServer); err != nil {
@@ -272,7 +259,6 @@ func validateSystemSettings(settings SystemSettings) error {
 		{i18n.G("settings_task_save"), settings.TaskSave, minTaskSave, maxTaskSave},
 		{i18n.G("settings_copy_concurrency"), settings.CopyConcurrency, MinCopyConcurrency, MaxCopyConcurrency},
 		{i18n.G("settings_scan_concurrency"), settings.ScanConcurrency, MinScanConcurrency, MaxScanConcurrency},
-		{i18n.G("settings_realtime_finished_items"), settings.RealtimeFinishedItems, MinRealtimeFinishedItems, MaxRealtimeFinishedItems},
 		{i18n.G("settings_max_retries"), settings.MaxRetries, MinMaxRetries, MaxRetryAttempts},
 	}
 	for _, item := range checks {
@@ -305,7 +291,6 @@ task_save=%d
 task_timeout=%d
 copy_concurrency=%d
 scan_concurrency=%d
-realtime_finished_items=%d
 max_retries=%d
 `,
 		sCfg.Port,
@@ -317,7 +302,6 @@ max_retries=%d
 		sCfg.Timeout,
 		sCfg.CopyConcurrency,
 		sCfg.ScanConcurrency,
-		sCfg.RealtimeFinishedItems,
 		sCfg.MaxRetries,
 	)
 	tmpFile, err := os.CreateTemp("data", "config.ini.*")

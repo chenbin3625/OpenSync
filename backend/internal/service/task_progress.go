@@ -1,6 +1,8 @@
 package service
 
 import (
+	"log"
+	"opensync/internal/mapper"
 	"opensync/pkg/util"
 	"sort"
 	"time"
@@ -76,11 +78,21 @@ func (jt *JobTask) GetCurrent() map[string]interface{} {
 // GetCurrentByStatus returns tasks filtered by status
 func (jt *JobTask) GetCurrentByStatus(status int) []map[string]interface{} {
 	jt.initRuntime()
-	return jt.currentTasksForStatus(status)
+	statusValue := taskStatusFromValue(status)
+	if statusValue == taskStatusWaiting || statusValue == taskStatusRunning {
+		return jt.currentTasksForStatus(status)
+	}
+	page := jt.finishedTaskPageFromDB(status, 0, 0)
+	tasks, _ := page["dataList"].([]map[string]interface{})
+	return tasks
 }
 
 func (jt *JobTask) GetCurrentByStatusPage(status, pageSize, pageNum int) map[string]interface{} {
 	jt.initRuntime()
+	statusValue := taskStatusFromValue(status)
+	if statusValue != taskStatusWaiting && statusValue != taskStatusRunning {
+		return jt.finishedTaskPageFromDB(status, pageSize, pageNum)
+	}
 	tasks := jt.currentTasksForStatus(status)
 	count := len(tasks)
 	if pageSize > 0 && pageNum > 0 {
@@ -99,6 +111,26 @@ func (jt *JobTask) GetCurrentByStatusPage(status, pageSize, pageNum int) map[str
 		"dataList": tasks,
 		"count":    count,
 	}
+}
+
+func (jt *JobTask) finishedTaskPageFromDB(status, pageSize, pageNum int) map[string]interface{} {
+	params := map[string]interface{}{
+		"taskId": jt.TaskID,
+		"status": status,
+	}
+	if pageSize > 0 && pageNum > 0 {
+		params["pageSize"] = pageSize
+		params["pageNum"] = pageNum
+	}
+	result, err := mapper.GetJobTaskItemList(params)
+	if err != nil {
+		log.Printf("Failed to load task items for task %d status %d: %v", jt.TaskID, status, err)
+		return map[string]interface{}{
+			"dataList": []map[string]interface{}{},
+			"count":    0,
+		}
+	}
+	return result
 }
 
 func (jt *JobTask) finishedAggregateForStatus(status taskStatus) (int, int64) {
@@ -146,29 +178,10 @@ func (jt *JobTask) currentTasksForStatus(statusValue int) []map[string]interface
 		tasks = jt.waitingTaskMaps()
 	case taskStatusRunning:
 		tasks = jt.doingTaskMaps()
-	case taskStatusOther:
-		tasks = jt.finishedTaskMaps(func(status taskStatus) bool {
-			return isOtherTaskStatus(status)
-		})
 	default:
-		tasks = jt.finishedTaskMaps(func(itemStatus taskStatus) bool {
-			return itemStatus == status
-		})
+		tasks = []map[string]interface{}{}
 	}
 	sortTaskMapsByCreateTimeDesc(tasks)
-	return tasks
-}
-
-func (jt *JobTask) finishedTaskMaps(match func(status taskStatus) bool) []map[string]interface{} {
-	jt.FinishMu.Lock()
-	defer jt.FinishMu.Unlock()
-
-	tasks := make([]map[string]interface{}, 0)
-	for _, item := range jt.Finish {
-		if match(item.Status) {
-			tasks = append(tasks, item.ToMap())
-		}
-	}
 	return tasks
 }
 

@@ -44,7 +44,6 @@ task_save=30
 task_timeout=12
 copy_concurrency=13
 scan_concurrency=17
-realtime_finished_items=3500
 max_retries=4
 `), 0644); err != nil {
 		t.Fatalf("WriteFile(config.ini) error: %v", err)
@@ -66,9 +65,6 @@ max_retries=4
 	if cfg.Server.ScanConcurrency != 17 {
 		t.Fatalf("ScanConcurrency = %d, want 17", cfg.Server.ScanConcurrency)
 	}
-	if cfg.Server.RealtimeFinishedItems != 3500 {
-		t.Fatalf("RealtimeFinishedItems = %d, want 3500", cfg.Server.RealtimeFinishedItems)
-	}
 	if cfg.Server.MaxRetries != 4 {
 		t.Fatalf("MaxRetries = %d, want 4", cfg.Server.MaxRetries)
 	}
@@ -79,13 +75,12 @@ func TestUpdateSystemSettingsPersistsAndUpdatesMemory(t *testing.T) {
 	_ = GetConfig()
 
 	settings := SystemSettings{
-		Expires:               6,
-		TaskTimeout:           48,
-		TaskSave:              15,
-		CopyConcurrency:       11,
-		ScanConcurrency:       19,
-		RealtimeFinishedItems: 4500,
-		MaxRetries:            3,
+		Expires:         6,
+		TaskTimeout:     48,
+		TaskSave:        15,
+		CopyConcurrency: 11,
+		ScanConcurrency: 19,
+		MaxRetries:      3,
 	}
 	if err := UpdateSystemSettings(settings); err != nil {
 		t.Fatalf("UpdateSystemSettings() error: %v", err)
@@ -107,7 +102,6 @@ func TestUpdateSystemSettingsPersistsAndUpdatesMemory(t *testing.T) {
 		"task_save=15",
 		"copy_concurrency=11",
 		"scan_concurrency=19",
-		"realtime_finished_items=4500",
 		"max_retries=3",
 	} {
 		if !strings.Contains(text, want) {
@@ -122,13 +116,12 @@ func TestUpdateSystemSettingsRejectsScanConcurrencyAboveTwenty(t *testing.T) {
 
 	before := GetSystemSettings()
 	err := UpdateSystemSettings(SystemSettings{
-		Expires:               before.Expires,
-		TaskTimeout:           before.TaskTimeout,
-		TaskSave:              before.TaskSave,
-		CopyConcurrency:       before.CopyConcurrency,
-		ScanConcurrency:       21,
-		RealtimeFinishedItems: before.RealtimeFinishedItems,
-		MaxRetries:            before.MaxRetries,
+		Expires:         before.Expires,
+		TaskTimeout:     before.TaskTimeout,
+		TaskSave:        before.TaskSave,
+		CopyConcurrency: before.CopyConcurrency,
+		ScanConcurrency: 21,
+		MaxRetries:      before.MaxRetries,
 	})
 	if err == nil {
 		t.Fatalf("UpdateSystemSettings() error = nil, want validation error")
@@ -145,13 +138,12 @@ func TestUpdateSystemSettingsRejectsMaxRetriesAboveTen(t *testing.T) {
 
 	before := GetSystemSettings()
 	err := UpdateSystemSettings(SystemSettings{
-		Expires:               before.Expires,
-		TaskTimeout:           before.TaskTimeout,
-		TaskSave:              before.TaskSave,
-		CopyConcurrency:       before.CopyConcurrency,
-		ScanConcurrency:       before.ScanConcurrency,
-		RealtimeFinishedItems: before.RealtimeFinishedItems,
-		MaxRetries:            11,
+		Expires:         before.Expires,
+		TaskTimeout:     before.TaskTimeout,
+		TaskSave:        before.TaskSave,
+		CopyConcurrency: before.CopyConcurrency,
+		ScanConcurrency: before.ScanConcurrency,
+		MaxRetries:      11,
 	})
 	if err == nil {
 		t.Fatalf("UpdateSystemSettings() error = nil, want validation error")
@@ -175,13 +167,12 @@ func TestSystemSettingsCanBeReadWhileUpdated(t *testing.T) {
 		<-start
 		for i := 0; i < 200; i++ {
 			settings := SystemSettings{
-				Expires:               6 + i%3,
-				TaskTimeout:           24 + i%5,
-				TaskSave:              15 + i%7,
-				CopyConcurrency:       3 + i%5,
-				ScanConcurrency:       2 + i%4,
-				RealtimeFinishedItems: 1000 + i%100,
-				MaxRetries:            i % 4,
+				Expires:         6 + i%3,
+				TaskTimeout:     24 + i%5,
+				TaskSave:        15 + i%7,
+				CopyConcurrency: 3 + i%5,
+				ScanConcurrency: 2 + i%4,
+				MaxRetries:      i % 4,
 			}
 			if err := UpdateSystemSettings(settings); err != nil {
 				t.Errorf("UpdateSystemSettings() error: %v", err)

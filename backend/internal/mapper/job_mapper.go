@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	jobTaskItemListColumns    = "id, taskId, srcPath, dstPath, isPath, fileName, fileSize, type, alistTaskId, status, progress, errMsg, createTime"
-	jobTaskItemRuntimeColumns = "id, taskId, srcPath, dstPath, isPath, fileName, fileSize, type, alistTaskId, status, errMsg, createTime"
+	jobTaskItemListColumns     = "id, taskId, srcPath, dstPath, isPath, fileName, fileSize, type, alistTaskId, status, progress, errMsg, createTime"
+	jobTaskItemRuntimeColumns  = "id, taskId, srcPath, dstPath, isPath, fileName, fileSize, type, alistTaskId, status, errMsg, createTime"
+	expiredTaskDeleteBatchSize = 500
 )
 
 // GetJobList gets paginated job list
@@ -238,11 +239,62 @@ func DeleteJobTaskByTaskID(taskID int64) error {
 
 // DeleteJobTaskByRunTime deletes old tasks
 func DeleteJobTaskByRunTime(runTime int64) error {
-	return withTx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec("DELETE FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE runTime < ?)", runTime); err != nil {
+	for {
+		taskIDs, err := expiredJobTaskIDs(runTime, expiredTaskDeleteBatchSize)
+		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec("DELETE FROM job_task WHERE runTime < ?", runTime); err != nil {
+		if len(taskIDs) == 0 {
+			_, _ = GetDB().Exec("PRAGMA wal_checkpoint(PASSIVE)")
+			return nil
+		}
+		if err := deleteJobTasksByIDs(taskIDs); err != nil {
+			return err
+		}
+	}
+}
+
+func expiredJobTaskIDs(cutoff int64, limit int) ([]int64, error) {
+	if limit <= 0 {
+		limit = expiredTaskDeleteBatchSize
+	}
+	rows, err := GetDB().Query(
+		`SELECT id FROM job_task
+		 WHERE COALESCE(NULLIF(runTime, 0), createTime) < ?
+		 ORDER BY COALESCE(NULLIF(runTime, 0), createTime), id
+		 LIMIT ?`,
+		cutoff,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var taskIDs []int64
+	for rows.Next() {
+		var taskID int64
+		if err := rows.Scan(&taskID); err != nil {
+			return nil, err
+		}
+		taskIDs = append(taskIDs, taskID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return taskIDs, nil
+}
+
+func deleteJobTasksByIDs(taskIDs []int64) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+	clause, args := int64InClause(taskIDs)
+	return withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec("DELETE FROM job_task_item WHERE taskId IN ("+clause+")", args...); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM job_task WHERE id IN ("+clause+")", args...); err != nil {
 			return err
 		}
 		return nil
@@ -320,8 +372,12 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 	args := []interface{}{taskID}
 
 	if status, ok := params["status"]; ok {
-		where += " AND status=?"
-		args = append(args, status)
+		if util.ToInt(status) == -1 {
+			where += " AND status NOT IN (0,1,2,7)"
+		} else {
+			where += " AND status=?"
+			args = append(args, status)
+		}
 	}
 	if typ, ok := params["type"]; ok {
 		where += " AND type=?"
@@ -546,10 +602,14 @@ func int64InClause(values []int64) (string, []interface{}) {
 }
 
 func taskItemKeywordFilter(keyword string) (string, []interface{}) {
-	if taskItemFTSAvailable() && utf8.RuneCountInString(keyword) >= 3 {
-		return " AND id IN (SELECT rowid FROM job_task_item_fts WHERE job_task_item_fts MATCH ?)", []interface{}{fts5Phrase(keyword)}
-	}
 	like := "%" + escapeLike(keyword) + "%"
+	if taskItemFTSAvailable() && utf8.RuneCountInString(keyword) >= 3 {
+		return ` AND (
+			id IN (SELECT rowid FROM job_task_item_fts WHERE job_task_item_fts MATCH ?)
+			OR alistTaskId LIKE ? ESCAPE '\'
+			OR errMsg LIKE ? ESCAPE '\'
+		)`, []interface{}{fts5Phrase(keyword), like, like}
+	}
 	return " AND (fileName LIKE ? ESCAPE '\\' OR srcPath LIKE ? ESCAPE '\\' OR dstPath LIKE ? ESCAPE '\\' OR alistTaskId LIKE ? ESCAPE '\\' OR errMsg LIKE ? ESCAPE '\\')",
 		[]interface{}{like, like, like, like, like}
 }
