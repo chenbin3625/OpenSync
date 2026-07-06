@@ -16,7 +16,9 @@ const (
 	taskStatusTimeout      taskStatus = 5
 	taskStatusSystemFailed taskStatus = 6
 	taskStatusFailed       taskStatus = 7
-	taskStatusRetrying     taskStatus = 8
+	taskStatusNoSync       taskStatus = 8 // job_task only
+	taskStatusRetrying     taskStatus = 8 // job_task_item only
+	taskStatusRetryDelay   taskStatus = 9 // job_task_item only
 
 	taskItemTypeCopy   taskItemType = 0
 	taskItemTypeDelete taskItemType = 1

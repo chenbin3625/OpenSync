@@ -54,7 +54,8 @@ func (jt *JobTask) updateTaskStatus() error {
 	jt.GetCurrent()
 	taskNum := GetCuTaskNum(jt.TaskID)
 	failOrOtherNum := util.ToInt(taskNum["failNum"]) + util.ToInt(taskNum["otherNum"])
-	status := finalTaskStatus(jt.isBreak(), jt.context().Err(), failOrOtherNum)
+	allNum := util.ToInt(taskNum["allNum"])
+	status := finalTaskStatus(jt.isBreak(), jt.context().Err(), allNum, failOrOtherNum)
 	duration := taskDuration(jt.CreateTime)
 	taskNum["duration"] = duration
 	taskNum["scanFinish"] = jt.ScanFinish.Load()
@@ -63,7 +64,7 @@ func (jt *JobTask) updateTaskStatus() error {
 	return finishJobTaskStatus(jt.TaskID, status, nil, taskNum, duration, jt.CreateTime)
 }
 
-func finalTaskStatus(isBreak bool, ctxErr error, failOrOtherNum int) taskStatus {
+func finalTaskStatus(isBreak bool, ctxErr error, allNum, failOrOtherNum int) taskStatus {
 	if isBreak {
 		return taskStatusFailed
 	}
@@ -72,6 +73,9 @@ func finalTaskStatus(isBreak bool, ctxErr error, failOrOtherNum int) taskStatus 
 	}
 	if failOrOtherNum > 0 {
 		return taskStatusPartialFail
+	}
+	if allNum == 0 {
+		return taskStatusNoSync
 	}
 	return taskStatusSuccess
 }

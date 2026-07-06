@@ -27,6 +27,20 @@ export const taskItemStatusColors: Record<number, string> = {
   0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
   4: 'default', 5: 'error', 6: 'error', 7: 'error', 8: 'default', 9: 'default',
 };
+export const taskItemStatusNames: Record<number, string> = {
+  0: '等待中',
+  1: '进行中',
+  2: '成功',
+  3: '取消中',
+  4: '已取消',
+  5: '出错（将重试）',
+  6: '失败中',
+  7: '已失败',
+  8: '等待重试中',
+  9: '等待重试前',
+};
+export const taskItemStatusOptions = Object.entries(taskItemStatusNames)
+  .map(([value, label]) => ({ value: Number(value), label }));
 export const taskTypeNames: Record<number, string> = {
   0: '复制', 1: '删除', 2: '移动',
 };

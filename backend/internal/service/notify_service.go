@@ -323,13 +323,15 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 		statusName = "Unknown"
 	}
 
-	needNotSync := false
-	if status == 2 {
+	needNotSync := status == taskStatusNoSync.Int()
+	if status == taskStatusSuccess.Int() {
 		allNum := util.ToInt(taskNum["allNum"])
 		if allNum == 0 {
 			needNotSync = true
-			statusName = statusNames[8]
 		}
+	}
+	if needNotSync {
+		statusName = statusNames[8]
 	}
 
 	remark := ""
