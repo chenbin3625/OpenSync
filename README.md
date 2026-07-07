@@ -4,6 +4,10 @@ OpenSync 是面向飞牛 fnOS / 飞牛 NAS 和 Docker 环境的 AList / OpenList
 
 如果你在飞牛 NAS 上想找一个类似群晖 Cloud Sync 的同步工具，用来把照片库、影音库、下载目录或文档目录同步到网盘、对象存储或另一台存储设备，OpenSync 就是面向这个场景做的。
 
+**English Summary**
+
+OpenSync is an AList / OpenList automation tool for fnOS, NAS, and Docker environments. It provides visual sync jobs for backup, archive, mirroring, and migration workflows across local folders, cloud drives, object storage, WebDAV, and other AList-compatible backends.
+
 ## 重点功能
 
 - 支持单个或多个源目录同步到单个或多个目标目录。
