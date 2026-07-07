@@ -117,10 +117,13 @@ http://你的设备IP:8023/
 Docker Compose 部署可执行：
 
 ```bash
-docker compose exec opensync ./opensync reset-password --user admin
+[ -f .env ] && . ./.env
+docker compose exec --user "${PUID:-1000}:${PGID:-1000}" opensync ./opensync reset-password --user admin
 ```
 
 默认配置会把运行数据保存到当前目录的 `data/` 文件夹。请保留这个目录，它包含数据库、密钥、配置和日志。
+
+容器启动时会根据 `PUID` 和 `PGID` 修正 `/app/data` 的文件归属，并以该用户身份运行 OpenSync，避免宿主机 `data/` 目录生成 root 权限文件。默认 UID:GID 为 `1000:1000`；如需改成其它宿主机用户，可在 `.env` 中设置 `PUID` 和 `PGID`。
 
 ## docker-compose.yml
 
@@ -136,6 +139,8 @@ services:
       - ./data:/app/data
     environment:
       TZ: Asia/Shanghai
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
       OPENSYNC_BIND: 0.0.0.0
       OPENSYNC_PORT: 8023
       GIN_MODE: release
@@ -144,7 +149,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.8.5
+image: chenbin3625/opensync:1.8.6
 ```
 
 ## Docker 命令部署
@@ -286,7 +291,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.8.5`
+- `chenbin3625/opensync:1.8.6`
 - `chenbin3625/opensync:1.8`
 
 镜像支持以下平台：
