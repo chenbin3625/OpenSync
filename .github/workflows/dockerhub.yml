@@ -8,11 +8,11 @@ on:
       version:
         description: Version to publish, for example 1.5.0 or v1.5.0
         required: true
-        default: "1.8.4"
+        default: "1.8.5"
       ref:
         description: Git ref to build
         required: true
-        default: "v1.8.4"
+        default: "v1.8.5"
       repository:
         description: Docker Hub repository
         required: true
@@ -95,10 +95,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
+      - name: Set up Docker Buildx for cross-compiled images
         uses: docker/setup-buildx-action@v4
 
-      - name: Build and push
+      # The Dockerfile keeps RUN steps on BUILDPLATFORM and cross-compiles the
+      # Go binary for TARGETOS/TARGETARCH. Do not add setup-qemu-action here.
+      - name: Build and push cross-compiled image
         uses: docker/build-push-action@v7
         with:
           context: .

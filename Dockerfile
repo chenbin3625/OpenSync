@@ -30,11 +30,18 @@ RUN set -eux; \
     CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" \
       go build -trimpath -ldflags="-s -w" -o opensync ./cmd/server/
 
-# Stage 3: Runtime
-FROM alpine:3.20
-RUN apk add --no-cache tzdata
+# Stage 3: Runtime data
+FROM --platform=$BUILDPLATFORM alpine:3.20 AS runtime-deps
+RUN apk add --no-cache ca-certificates tzdata
+
+# Stage 4: Runtime
+FROM scratch
+WORKDIR /tmp
 WORKDIR /app
+COPY --from=runtime-deps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=runtime-deps /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=backend-builder /app/opensync .
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV TZ=Asia/Shanghai
 ENV OPENSYNC_BIND=0.0.0.0
 ENV OPENSYNC_PORT=8023
