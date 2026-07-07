@@ -149,7 +149,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.8.6
+image: chenbin3625/opensync:1.8.7
 ```
 
 ## Docker 命令部署
@@ -183,7 +183,7 @@ docker run -d \
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `TZ` | `Asia/Shanghai` | 容器和定时任务使用的时区 |
-| `OPENSYNC_BIND` | `127.0.0.1` | HTTP 监听地址，Docker 部署默认设为 `0.0.0.0` |
+| `OPENSYNC_BIND` | `0.0.0.0` | HTTP 监听地址 |
 | `OPENSYNC_PORT` | `8023` | HTTP 服务端口 |
 | `OPENSYNC_EXPIRES` | `7` | 登录有效期，单位天 |
 | `OPENSYNC_LOG_LEVEL` | `1` | 文件日志等级 |
@@ -199,7 +199,7 @@ docker run -d \
 
 ```ini
 [opensync]
-bind=127.0.0.1
+bind=0.0.0.0
 port=8023
 expires=7
 log_level=1
@@ -291,7 +291,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.8.6`
+- `chenbin3625/opensync:1.8.7`
 - `chenbin3625/opensync:1.8`
 
 镜像支持以下平台：

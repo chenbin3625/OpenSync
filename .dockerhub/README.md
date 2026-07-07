@@ -57,7 +57,7 @@ services:
 ## 镜像标签
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.8.6`
+- `chenbin3625/opensync:1.8.7`
 - `chenbin3625/opensync:1.8`
 
 镜像支持以下平台：
