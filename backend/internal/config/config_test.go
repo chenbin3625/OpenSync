@@ -39,8 +39,8 @@ task_timeout=also-bad
 	}
 
 	cfg := GetConfig()
-	if cfg.Server.Bind != "127.0.0.1" {
-		t.Fatalf("Bind = %q, want default 127.0.0.1", cfg.Server.Bind)
+	if cfg.Server.Bind != "0.0.0.0" {
+		t.Fatalf("Bind = %q, want default 0.0.0.0", cfg.Server.Bind)
 	}
 	if cfg.Server.Port != 8023 {
 		t.Fatalf("Port = %d, want default 8023 for invalid config value", cfg.Server.Port)

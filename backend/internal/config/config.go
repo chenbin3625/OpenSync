@@ -45,7 +45,7 @@ var (
 )
 
 const (
-	defaultBind         = "127.0.0.1"
+	defaultBind         = "0.0.0.0"
 	defaultPort         = 8023
 	defaultExpires      = 7
 	defaultLogLevel     = 1
