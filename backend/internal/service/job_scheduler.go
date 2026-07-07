@@ -86,6 +86,9 @@ func (s *Scheduler) AddJob(isCron int, jobData map[string]interface{}, fn func()
 func (s *Scheduler) Pause() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.cron == nil {
+		return
+	}
 	if s.entryID != 0 {
 		s.cron.Remove(s.entryID)
 		s.entryID = 0
@@ -100,6 +103,9 @@ func (s *Scheduler) Resume(isCron int, jobData map[string]interface{}, fn func()
 	if isCron == 2 {
 		return nil
 	}
+	if s.cron == nil {
+		return errors.New(i18n.G("cannot_resume_lost_job"))
+	}
 	if s.entryID != 0 {
 		return nil
 	}
@@ -113,6 +119,9 @@ func (s *Scheduler) Resume(isCron int, jobData map[string]interface{}, fn func()
 }
 
 func (s *Scheduler) addJobLocked(isCron int, jobData map[string]interface{}, fn func()) (cron.EntryID, error) {
+	if s.cron == nil {
+		return 0, errors.New(i18n.G("cannot_resume_lost_job"))
+	}
 	if isCron == 0 {
 		interval := util.ToInt(jobData["interval"])
 		if interval <= 0 {
@@ -121,11 +130,19 @@ func (s *Scheduler) addJobLocked(isCron int, jobData map[string]interface{}, fn 
 		spec := fmt.Sprintf("@every %dm", interval)
 		return s.cron.AddFunc(spec, fn)
 	}
-	spec := buildCronSpec(jobData)
+	spec, err := buildCronSpec(jobData)
+	if err != nil {
+		return 0, err
+	}
 	if spec == "" {
 		return 0, errors.New(i18n.G("cron_lost"))
 	}
-	return s.cron.AddFunc(spec, fn)
+	entryID, err := s.cron.AddFunc(spec, fn)
+	if err != nil {
+		return 0, err
+	}
+	log.Printf("Built cron spec: %q", spec)
+	return entryID, nil
 }
 
 // Stop shuts down the scheduler
@@ -149,7 +166,7 @@ func (s *Scheduler) Stop() {
 
 // buildCronSpec builds a cron expression from job data
 // Format: second minute hour day month dayOfWeek (robfig/cron with seconds)
-func buildCronSpec(jobData map[string]interface{}) string {
+func buildCronSpec(jobData map[string]interface{}) (string, error) {
 	fields := []string{"second", "minute", "hour", "day", "month", "day_of_week"}
 	parts := make([]string, 6)
 	hasValue := false
@@ -162,20 +179,36 @@ func buildCronSpec(jobData map[string]interface{}) string {
 		if val == "" {
 			parts[i] = "*"
 		} else {
+			if !isSafeCronField(val) {
+				return "", errors.New(i18n.G("cron_lost"))
+			}
 			parts[i] = val
 			hasValue = true
 		}
 	}
 
 	if !hasValue {
-		return ""
+		return "", nil
 	}
 
 	// robfig/cron format: second minute hour dayOfMonth month dayOfWeek.
 	// day_of_week is a free-text cron field on the frontend, so users enter
 	// cron-standard values directly (0=Sunday..6=Saturday) and no conversion
 	// is needed. The values are passed through unchanged.
-	spec := strings.Join(parts, " ")
-	log.Printf("Built cron spec: %s", spec)
-	return spec
+	return strings.Join(parts, " "), nil
+}
+
+func isSafeCronField(value string) bool {
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		switch r {
+		case '*', '/', ',', '-':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }

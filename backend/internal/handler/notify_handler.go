@@ -50,7 +50,16 @@ func UpdateNotify(c *gin.Context) {
 			c.JSON(http.StatusOK, model.Error(err.Error()))
 			return
 		}
-		enable := util.ToInt(req["enable"])
+		enableRaw, ok := req["enable"]
+		if !ok {
+			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+			return
+		}
+		enable, err := parseEnableValue(enableRaw)
+		if err != nil {
+			c.JSON(http.StatusOK, model.Error(err.Error()))
+			return
+		}
 		service.UpdateNotifyStatus(notifyID, enable)
 	} else if notify, ok := req["notify"]; ok {
 		// Edit notify

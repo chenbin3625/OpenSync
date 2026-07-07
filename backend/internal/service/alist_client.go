@@ -17,6 +17,7 @@ import (
 
 const maxResponseBytes = 10 << 20 // 10MB
 const maxAlistWaitBuckets = 1024
+const alistValidationTimeout = 30 * time.Second
 
 // AlistClient represents an AList HTTP client
 type AlistClient struct {
@@ -151,7 +152,9 @@ func (c *AlistClient) GetContext(ctx context.Context, apiPath string, params map
 }
 
 func (c *AlistClient) getUser() error {
-	data, err := c.GetContext(context.Background(), "/api/me", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), alistValidationTimeout)
+	defer cancel()
+	data, err := c.GetContext(ctx, "/api/me", nil)
 	if err != nil {
 		return err
 	}

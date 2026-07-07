@@ -104,6 +104,102 @@ func TestSetAuthCookieUsesHttpOnlyCookie(t *testing.T) {
 	}
 }
 
+func TestSetAuthCookieIgnoresForwardedProtoFromRemoteClient(t *testing.T) {
+	withAuthTestConfig(t)
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "http://example.test/", nil)
+	c.Request.RemoteAddr = "203.0.113.10:12345"
+	c.Request.Header.Set("X-Forwarded-Proto", "https")
+
+	SetAuthCookie(c, map[string]interface{}{
+		"id":       int64(7),
+		"userName": "admin",
+		"passwd":   "stored-password-hash",
+	})
+
+	if cookie := w.Result().Cookies()[0]; cookie.Secure {
+		t.Fatalf("cookie Secure = true for untrusted forwarded proto, want false")
+	}
+}
+
+func TestSetAuthCookieTrustsForwardedProtoFromLoopbackProxy(t *testing.T) {
+	withAuthTestConfig(t)
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "http://example.test/", nil)
+	c.Request.RemoteAddr = "127.0.0.1:12345"
+	c.Request.Header.Set("X-Forwarded-Proto", "https")
+
+	SetAuthCookie(c, map[string]interface{}{
+		"id":       int64(7),
+		"userName": "admin",
+		"passwd":   "stored-password-hash",
+	})
+
+	if cookie := w.Result().Cookies()[0]; !cookie.Secure {
+		t.Fatalf("cookie Secure = false for loopback forwarded proto, want true")
+	}
+}
+
+func TestAuthRequiredDoesNotExposeFullUserInContext(t *testing.T) {
+	withAuthTestConfig(t)
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(AuthRequired())
+	router.GET("/svr/user", func(c *gin.Context) {
+		if _, ok := c.Get("userFull"); ok {
+			t.Fatalf("userFull should not be stored in request context")
+		}
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	cookieCtx, _ := gin.CreateTestContext(w)
+	user := map[string]interface{}{
+		"id":         int64(7),
+		"userName":   "admin",
+		"passwd":     "stored-password-hash",
+		"createTime": int64(1),
+	}
+	cookieCtx.Request = httptest.NewRequest(http.MethodGet, "http://example.test/", nil)
+	SetAuthCookie(cookieCtx, user)
+	cookie := w.Result().Cookies()[0]
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE user_list(
+		id integer primary key,
+		userName text,
+		passwd text,
+		createTime integer
+	)`); err != nil {
+		t.Fatalf("create user_list: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO user_list(id, userName, passwd, createTime) VALUES (?, ?, ?, ?)",
+		user["id"], user["userName"], user["passwd"], user["createTime"]); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	restoreDB := mapper.SetDBForTest(db)
+	t.Cleanup(restoreDB)
+
+	req := httptest.NewRequest(http.MethodGet, "/svr/user", nil)
+	req.AddCookie(cookie)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusNoContent, resp.Body.String())
+	}
+}
+
 func TestInitSecureCookieUsesConfiguredMaxAge(t *testing.T) {
 	oldConfig := config.GetConfig()
 	config.SetConfigForTest(&config.Config{

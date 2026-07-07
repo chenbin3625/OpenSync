@@ -136,6 +136,7 @@ services:
       - ./data:/app/data
     environment:
       TZ: Asia/Shanghai
+      OPENSYNC_BIND: 0.0.0.0
       OPENSYNC_PORT: 8023
       GIN_MODE: release
 ```
@@ -143,7 +144,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.8.3
+image: chenbin3625/opensync:1.8.4
 ```
 
 ## Docker 命令部署
@@ -155,6 +156,7 @@ docker run -d \
   -p 8023:8023 \
   -v opensync-data:/app/data \
   -e TZ=Asia/Shanghai \
+  -e OPENSYNC_BIND=0.0.0.0 \
   -e OPENSYNC_PORT=8023 \
   -e GIN_MODE=release \
   chenbin3625/opensync:latest
@@ -176,6 +178,7 @@ docker run -d \
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `TZ` | `Asia/Shanghai` | 容器和定时任务使用的时区 |
+| `OPENSYNC_BIND` | `127.0.0.1` | HTTP 监听地址，Docker 部署默认设为 `0.0.0.0` |
 | `OPENSYNC_PORT` | `8023` | HTTP 服务端口 |
 | `OPENSYNC_EXPIRES` | `7` | 登录有效期，单位天 |
 | `OPENSYNC_LOG_LEVEL` | `1` | 文件日志等级 |
@@ -191,6 +194,7 @@ docker run -d \
 
 ```ini
 [opensync]
+bind=127.0.0.1
 port=8023
 expires=7
 log_level=1
@@ -282,7 +286,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.8.3`
+- `chenbin3625/opensync:1.8.4`
 - `chenbin3625/opensync:1.8`
 
 镜像支持以下平台：

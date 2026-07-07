@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
+	"opensync/internal/model"
 	"opensync/pkg/util"
 	"strings"
 	"syscall"
@@ -101,6 +102,10 @@ func maskNotifyURL(rawURL string) string {
 		return maskSecretValue(rawURL)
 	}
 	masked := false
+	if u.User != nil {
+		u.User = url.User(notifyRedactionMarker)
+		masked = true
+	}
 	q := u.Query()
 	for k, vals := range q {
 		lk := strings.ToLower(k)
@@ -283,7 +288,11 @@ func DeleteNotify(notifyID int64) {
 func TestNotify(notify map[string]interface{}) {
 	defer func() {
 		if r := recover(); r != nil {
-			panicPublic(fmt.Sprintf("%v", r))
+			if publicErr, ok := r.(model.PublicError); ok {
+				panic(publicErr)
+			}
+			log.Printf("notify test failed: %v", r)
+			panicPublic(i18n.G("notify_send_fail"))
 		}
 	}()
 	resolved, err := resolveNotifyParams(notify)
@@ -446,13 +455,7 @@ func buildNotifyRequest(method, urlStr string, body io.Reader, contentType strin
 }
 
 func sendNotifyRequest(client *http.Client, req *http.Request) {
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		panic(err.Error())
-	}
+	resp := doNotifyRequest(client, req)
 	defer resp.Body.Close()
 	bodyBytes, err := readAllWithLimit(resp.Body, maxNotifyResponseBytes)
 	if err != nil {
@@ -465,6 +468,33 @@ func sendNotifyRequest(client *http.Client, req *http.Request) {
 		}
 		panic(fmt.Sprintf("notify request failed: %s", resp.Status))
 	}
+}
+
+func doNotifyRequest(client *http.Client, req *http.Request) *http.Response {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("notify request failed: target=%s error=%s", notifyRequestTarget(req), notifyNetworkError(err))
+		panicPublic(i18n.G("notify_send_fail"))
+	}
+	return resp
+}
+
+func notifyRequestTarget(req *http.Request) string {
+	if req == nil || req.URL == nil {
+		return "<unknown>"
+	}
+	return req.URL.Scheme + "://" + req.URL.Host
+}
+
+func notifyNetworkError(err error) string {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Sprintf("%s: %v", urlErr.Op, urlErr.Err)
+	}
+	return fmt.Sprintf("%T", err)
 }
 
 func sendWebhook(client *http.Client, params map[string]interface{}, title, content string) {
@@ -627,10 +657,7 @@ func sendWeCom(client *http.Client, params map[string]interface{}, title, conten
 	if err != nil {
 		panic(err.Error())
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		panic(err.Error())
-	}
+	resp := doNotifyRequest(client, req)
 	defer resp.Body.Close()
 	tokenBody, err := readAllWithLimit(resp.Body, maxNotifyResponseBytes)
 	if err != nil {

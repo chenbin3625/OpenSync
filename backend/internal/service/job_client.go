@@ -197,6 +197,20 @@ func cloneTaskRows(rows []map[string]interface{}) []map[string]interface{} {
 	return cloned
 }
 
+func jobTaskHasStatus(taskID int64, statuses ...taskStatus) bool {
+	task, err := mapper.GetJobTaskByID(taskID)
+	if err != nil {
+		return false
+	}
+	current := taskStatusFromValue(task["status"])
+	for _, status := range statuses {
+		if current == status {
+			return true
+		}
+	}
+	return false
+}
+
 // NewJobClient creates a new job client
 func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 	jc := &JobClient{
@@ -234,9 +248,16 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 		jc.DoScheduled()
 	})
 	if err != nil {
-		if isInit || addJobID != 0 {
+		sched.Stop()
+		if addJobID != 0 {
 			log.Printf("Error during job setup, deleting job: %v", job)
 			mapper.DeleteJob(jc.JobID)
+		} else if isInit {
+			log.Printf("Error during job setup, disabling job %d: %v", jc.JobID, err)
+			if updateErr := mapper.UpdateJobEnable(jc.JobID, 0); updateErr != nil {
+				log.Printf("Failed to disable invalid job %d: %v", jc.JobID, updateErr)
+			}
+			jc.setEnable(0)
 		}
 		panicPublic(err.Error())
 	}
@@ -264,7 +285,7 @@ func (jc *JobClient) runMarkedJobWithRetryConfig(retryItems []map[string]interfa
 			jc.clearCurrentTask(nil)
 			errMsg := fmt.Sprintf("%v", r)
 			log.Printf("Job execution error: %s", errMsg)
-			if taskID > 0 {
+			if taskID > 0 && !jobTaskHasStatus(taskID, taskStatusStopped) {
 				if err := UpdateJobTaskStatusSimple(taskID, taskStatusSystemFailed, &errMsg); err != nil {
 					log.Printf("Failed to mark task %d as failed after execution error: %v", taskID, err)
 				}
@@ -272,13 +293,20 @@ func (jc *JobClient) runMarkedJobWithRetryConfig(retryItems []map[string]interfa
 		}
 	}()
 
+	if !jc.enabled() {
+		return
+	}
+
 	var err error
 	taskID, err = mapper.AddJobTask(jc.idSnapshot(), time.Now().Unix())
 	if err != nil {
 		panic(err.Error())
 	}
 	if !jc.enabled() {
-		panicPublic(i18n.G("disabled_job_cannot_run"))
+		if err := UpdateJobTaskStatusSimple(taskID, taskStatusStopped, nil); err != nil {
+			log.Printf("Failed to mark disabled task %d as stopped: %v", taskID, err)
+		}
+		return
 	}
 	task := newJobTask(taskID, jc)
 	if len(retryItems) > 0 {
@@ -352,13 +380,17 @@ func (jc *JobClient) ResumeJob() {
 		return
 	}
 
-	if err := mapper.UpdateJobEnable(jobID, 1); err != nil {
-		panic(err.Error())
+	if scheduler == nil {
+		panicPublic(i18n.G("cannot_resume_lost_job"))
 	}
 	err := scheduler.Resume(isCron, job, func() {
 		jc.DoScheduled()
 	})
 	if err != nil {
+		panicPublic(err.Error())
+	}
+	if err := mapper.UpdateJobEnable(jobID, 1); err != nil {
+		scheduler.Pause()
 		panic(err.Error())
 	}
 	jc.setEnable(1)

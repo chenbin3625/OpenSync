@@ -10,6 +10,8 @@ import (
 	"opensync/internal/config"
 	"opensync/internal/i18n"
 	"opensync/pkg/util"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +25,7 @@ var (
 )
 
 const maxPageSize = 500
+const defaultUnpagedLimit = 500
 const sqliteMaxOpenConns = 4
 
 // InitDB initializes the database connection
@@ -30,6 +33,7 @@ func InitDB() *sql.DB {
 	once.Do(func() {
 		cfg := config.GetConfig()
 		var err error
+		ensureSQLiteFileMode(cfg.DB.DBName)
 		db, err = sql.Open("sqlite", sqliteDSN(cfg.DB.DBName))
 		if err != nil {
 			log.Fatalf("Failed to open database: %v", err)
@@ -46,6 +50,45 @@ func InitDB() *sql.DB {
 		}
 	})
 	return db
+}
+
+func ensureSQLiteFileMode(dbName string) {
+	path, ok := sqliteDBPath(dbName)
+	if !ok {
+		return
+	}
+	if dir := filepath.Dir(path); dir != "." {
+		_ = os.MkdirAll(dir, 0755)
+	}
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		log.Printf("Failed to prepare sqlite database file permissions: %v", err)
+		return
+	}
+	_ = file.Close()
+	if err := os.Chmod(path, 0600); err != nil {
+		log.Printf("Failed to set sqlite database file permissions: %v", err)
+	}
+}
+
+func sqliteDBPath(dbName string) (string, bool) {
+	if dbName == "" || dbName == ":memory:" {
+		return "", false
+	}
+	if strings.HasPrefix(dbName, "file:") {
+		u, err := url.Parse(dbName)
+		if err != nil || strings.Contains(u.RawQuery, "mode=memory") {
+			return "", false
+		}
+		if u.Path != "" {
+			return u.Path, true
+		}
+		if u.Opaque != "" && !strings.HasPrefix(u.Opaque, ":memory:") {
+			return u.Opaque, true
+		}
+		return "", false
+	}
+	return dbName, true
 }
 
 func sqliteDSN(dbName string) string {
@@ -186,7 +229,7 @@ func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...in
 		return nil, err
 	}
 	if !paginated {
-		dataList, err := FetchAllToTable(baseSQL, sqlArgs...)
+		dataList, err := FetchAllToTable(withDefaultLimit(baseSQL), sqlArgs...)
 		if err != nil {
 			return nil, err
 		}
@@ -214,6 +257,10 @@ func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...in
 		"dataList": dataList,
 		"count":    util.ToInt64(count),
 	}, nil
+}
+
+func withDefaultLimit(baseSQL string) string {
+	return baseSQL + fmt.Sprintf(" LIMIT %d", defaultUnpagedLimit)
 }
 
 func parsePageParams(params map[string]interface{}) (pageSize, pageNum int, paginated bool, err error) {

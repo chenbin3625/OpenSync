@@ -96,6 +96,28 @@ func TestCleanJobInputNormalizesSrcPathToJSON(t *testing.T) {
 	}
 }
 
+func TestValidateJobInputRejectsMissingRequiredFields(t *testing.T) {
+	job := map[string]interface{}{
+		"isCron": 2,
+	}
+
+	requirePublicPanic(t, func() {
+		ValidateJobInput(job)
+	})
+}
+
+func TestValidateJobInputAcceptsManualJobWithRequiredFields(t *testing.T) {
+	job := map[string]interface{}{
+		"srcPath": []string{"/src"},
+		"dstPath": []string{"/dst"},
+		"alistId": int64(1),
+		"isCron":  2,
+		"method":  0,
+	}
+
+	ValidateJobInput(job)
+}
+
 func TestDstPathForSrcSelectionPreservesSourceDirWhenMultipleSelected(t *testing.T) {
 	got := dstPathForSrcSelection("/backup/", "/media/photos", true)
 	want := "/backup/photos/"

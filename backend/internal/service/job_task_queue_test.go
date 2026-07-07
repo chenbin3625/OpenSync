@@ -450,6 +450,58 @@ func TestCopyHookRecordsPersistenceError(t *testing.T) {
 	}
 }
 
+type panicCopyItemClient struct{}
+
+func (panicCopyItemClient) CopyFileContext(context.Context, string, string, string) (string, error) {
+	panic("copy exploded")
+}
+
+func (panicCopyItemClient) MoveFileContext(context.Context, string, string, string) (string, error) {
+	panic("move exploded")
+}
+
+func (panicCopyItemClient) TaskCancelContext(context.Context, string, taskItemType) error {
+	return nil
+}
+
+func (panicCopyItemClient) TaskDeleteContext(context.Context, string, taskItemType) error {
+	return nil
+}
+
+func (panicCopyItemClient) TaskInfoContext(context.Context, string, taskItemType) (map[string]interface{}, error) {
+	return nil, nil
+}
+
+func (panicCopyItemClient) DeleteFileContext(context.Context, string, []string, int) error {
+	return nil
+}
+
+func TestCopyWorkerPanicPersistsFailedItemAndClearsDoing(t *testing.T) {
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	jt := &JobTask{TaskID: 42}
+	jt.initRuntime()
+	item := newCopyItem(jt, panicCopyItemClient{}, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
+
+	jt.startCopyItem(item)
+	jt.copyWG.Wait()
+
+	if len(persisted) != 1 {
+		t.Fatalf("persisted len = %d, want 1", len(persisted))
+	}
+	if persisted[0]["status"] != taskStatusFailed.Int() {
+		t.Fatalf("persisted status = %v, want failed", persisted[0]["status"])
+	}
+	if jt.doingLen() != 0 {
+		t.Fatalf("doing len = %d, want 0", jt.doingLen())
+	}
+	if !jt.isBreak() {
+		t.Fatalf("copy worker panic did not request task break")
+	}
+}
+
 func TestTaskSubmitMarksTaskFailedWhenFinishedItemPersistenceFails(t *testing.T) {
 	writeErr := errors.New("write failed")
 

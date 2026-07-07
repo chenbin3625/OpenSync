@@ -16,8 +16,11 @@ export function jobGetJob(params: Record<string, unknown>, options?: RequestOpti
   return request.get('/job', withRequestOptions(params, options)) as Promise<ApiResponse<PageData<JobItem>>>;
 }
 
-export function jobPost(data: Record<string, unknown>) {
-  return request.post('/job', data) as Promise<ApiResponse<null>>;
+export function jobPost(data: Record<string, unknown>, options?: RequestOptions) {
+  return request.post('/job', data, {
+    ...(options?.signal ? { signal: options.signal } : {}),
+    ...(options?.silent ? { silent: true } : {}),
+  }) as Promise<ApiResponse<null>>;
 }
 
 export function jobPut(data: Record<string, unknown>) {

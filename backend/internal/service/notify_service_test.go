@@ -2,13 +2,27 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"opensync/internal/i18n"
+	"opensync/internal/model"
 	"opensync/pkg/util"
 	"strings"
 	"testing"
 )
+
+type notifyErrorTransport struct{}
+
+func (notifyErrorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return nil, &url.Error{
+		Op:  "Post",
+		URL: req.URL.String(),
+		Err: errors.New("dial tcp timeout"),
+	}
+}
 
 func TestParamStringSupportsLegacyAndRefactorKeys(t *testing.T) {
 	params := map[string]interface{}{
@@ -82,4 +96,38 @@ func TestSendWebhookCustomBodyEscapesPlaceholderValues(t *testing.T) {
 	if got["text"] != want {
 		t.Fatalf("text = %q, want %q", got["text"], want)
 	}
+}
+
+func TestMaskNotifyURLRedactsUserInfo(t *testing.T) {
+	got := maskNotifyURL("https://bot:secret@example.test/hook")
+	if strings.Contains(got, "bot") || strings.Contains(got, "secret") {
+		t.Fatalf("maskNotifyURL leaked userinfo: %s", got)
+	}
+}
+
+func TestSendNotifyRequestDoesNotPanicWithSecretURL(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://example.test/hook?access_token=very-secret-token", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	client := &http.Client{Transport: notifyErrorTransport{}}
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatalf("sendNotifyRequest() panic = nil, want public notify failure")
+		}
+		publicErr, ok := recovered.(model.PublicError)
+		if !ok {
+			t.Fatalf("panic type = %T, want model.PublicError", recovered)
+		}
+		if string(publicErr) != i18n.G("notify_send_fail") {
+			t.Fatalf("panic = %q, want generic notify failure", publicErr)
+		}
+		if strings.Contains(string(publicErr), "very-secret-token") || strings.Contains(string(publicErr), "access_token") {
+			t.Fatalf("panic leaked secret URL: %q", publicErr)
+		}
+	}()
+
+	sendNotifyRequest(client, req)
 }

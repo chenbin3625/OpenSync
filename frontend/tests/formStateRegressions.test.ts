@@ -15,6 +15,24 @@ test('editing an engine clears stale modal token state before applying current v
   assert.match(engineSource, /form\.setFieldsValue\(\{ url: item\.url, remark: item\.remark \|\| '', token: undefined \}\)/);
 });
 
+test('engine list ignores stale responses after overlapping refreshes', () => {
+  assert.match(engineSource, /const listReqRef = useRef\(0\)/);
+  assert.match(engineSource, /const reqID = \+\+listReqRef\.current/);
+  assert.match(engineSource, /if \(reqID !== listReqRef\.current\) return;/);
+});
+
+test('engine connection test uses silent request handling', () => {
+  assert.match(engineSource, /alistGetPath\(item\.id, '\/', \{ silent: true \}\)/);
+  assert.doesNotMatch(engineSource, /res\.code === 200/);
+});
+
+test('engine URL submission requires explicit HTTPS except local HTTP', () => {
+  assert.match(engineSource, /validateAlistURL/);
+  assert.match(engineSource, /new URL\(value\)/);
+  assert.match(engineSource, /非本机地址请使用 HTTPS/);
+  assert.doesNotMatch(engineSource, /url = 'http:\/\/' \+ url/);
+});
+
 test('notification params are built from method-specific allowlists instead of the whole form', () => {
   assert.match(notifySource, /getNotifyParamsFromValues/);
   assert.doesNotMatch(notifySource, /const params: NotifyParams = \{ \.\.\.values \}/);
@@ -51,9 +69,21 @@ test('job edit drawer binds file size inputs to InputNumber via inner noStyle it
   }
 });
 
+test('manual-only jobs keep enable true in the drawer and submit payload', () => {
+  assert.match(jobFormDrawerSource, /if \(isCronValue === 2 && form\.getFieldValue\('enable'\) !== true\)/);
+  assert.match(jobFormDrawerSource, /enable: values\.isCron === 2 \? 1 : \(values\.enable \? 1 : 0\)/);
+  assert.match(jobFormDrawerSource, /<Switch disabled=\{isCronValue === 2\} \/>/);
+});
+
 test('directory tree loading ignores stale engine responses', () => {
   assert.match(jobFormDrawerSource, /treeLoadRequestRef/);
   assert.match(jobFormDrawerSource, /if \(requestID !== treeLoadRequestRef\.current\) return;/);
+});
+
+test('job drawer aborts in-flight submit when closed', () => {
+  assert.match(jobFormDrawerSource, /submitAbortRef/);
+  assert.match(jobFormDrawerSource, /submitAbortRef\.current\?\.abort\(\)/);
+  assert.match(jobFormDrawerSource, /jobPost\(jobData, \{ signal: controller\.signal \}\)/);
 });
 
 test('job edit drawer seeds selected directory nodes before async tree data arrives', () => {

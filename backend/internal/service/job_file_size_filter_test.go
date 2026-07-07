@@ -1,6 +1,9 @@
 package service
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestJobAllowsFileSizeUsesDefaultUnlimitedRange(t *testing.T) {
 	job := map[string]interface{}{}
@@ -75,6 +78,20 @@ func TestCleanJobInputRejectsInvalidFileSizeRange(t *testing.T) {
 	defer func() {
 		if recover() == nil {
 			t.Fatalf("CleanJobInput() did not panic, want validation failure")
+		}
+	}()
+
+	CleanJobInput(job)
+}
+
+func TestCleanJobInputRejectsFloat64AboveInt64Range(t *testing.T) {
+	job := map[string]interface{}{
+		"maxFileSize": float64(math.MaxInt64),
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("CleanJobInput() did not panic for overflowing float64 file size")
 		}
 	}()
 

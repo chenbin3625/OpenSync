@@ -58,6 +58,12 @@ test('authenticated application shell is lazy loaded outside the login route', (
   assert.doesNotMatch(routerSource, /import Layout from '\.\.\/components\/Layout'/);
 });
 
+test('login route redirects already authenticated users', () => {
+  assert.match(routerSource, /function ReverseAuthGuard/);
+  assert.match(routerSource, /if \(userInfo\) \{\s+return <Navigate to="\/home" replace \/>;\s+\}/s);
+  assert.match(routerSource, /path="\/login" element=\{<ReverseAuthGuard><Login \/><\/ReverseAuthGuard>\}/);
+});
+
 test('resource page header and body use separated layout primitives', () => {
   const headerRule = cssSource.match(/\.ops-page-header\s*{[^}]+}/)?.[0] || '';
   assert.doesNotMatch(headerRule, /margin-bottom/);

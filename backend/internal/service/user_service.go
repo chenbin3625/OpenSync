@@ -24,6 +24,8 @@ const (
 	maxPwdErrorScopes          = 1024
 	cliGeneratedPasswordLength = 16
 	minPasswordLength          = 8
+	maxPasswordBytes           = 72
+	dummyPasswordHash          = "$2a$10$bxCodrDhN/EbuPfzKC5zmeZFtzgi1h1Yr.AOgTUKVCQEWuuLJUNaq"
 )
 
 // CheckPwdTime checks if too many password errors in 5 minutes
@@ -133,6 +135,13 @@ func validatePassword(passwd string) {
 	if len(strings.TrimSpace(passwd)) < minPasswordLength {
 		panicPublic(i18n.G("passwd_too_short"))
 	}
+	if len([]byte(passwd)) > maxPasswordBytes {
+		panicPublic(i18n.G("passwd_too_long"))
+	}
+}
+
+func checkDummyPassword(passwd string) {
+	_ = crypto.CheckPassword(passwd, dummyPasswordHash)
 }
 
 func passwordErrorScope(userID int64, userName string, clientScope string) string {
@@ -191,13 +200,9 @@ func InitializeUser(userName string, passwd string) (map[string]interface{}, str
 		panic(err.Error())
 	}
 	recoveryKey, recoveryHash := newRecoveryKeyHash()
-	userID, err := mapper.CreateUser(userName, hash, recoveryHash)
+	userID, err := mapper.CreateInitialUser(userName, hash, recoveryHash)
 	if err != nil {
-		// A concurrent InitializeUser request can race past the IsInitialized
-		// check above. The unique index on userName (see mapper init) rejects
-		// the duplicate; surface a friendly "already initialized" message
-		// instead of leaking the raw constraint error.
-		if IsInitialized() {
+		if errors.Is(err, mapper.ErrAlreadyInitialized) || IsInitialized() {
 			panicPublic(i18n.G("system_initialized"))
 		}
 		panic(err.Error())
@@ -226,6 +231,7 @@ func CheckPwdScoped(userID int64, passwd string, userName string, clientScope st
 	}
 	if err != nil {
 		if errors.Is(err, mapper.ErrUserNotFound) {
+			checkDummyPassword(passwd)
 			AddPwdErrorForScope(scope)
 			panicPublic(i18n.G("passwd_wrong"))
 		}
@@ -268,6 +274,7 @@ func ResetPasswd(userName string, recoveryKey string, passwd string) string {
 	user, err := getUserByName(userName)
 	if err != nil {
 		if errors.Is(err, mapper.ErrUserNotFound) {
+			checkDummyPassword(recoveryKey)
 			AddPwdErrorForScope(scope)
 			panicPublic(i18n.G("key_wrong"))
 		}

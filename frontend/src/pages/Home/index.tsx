@@ -18,7 +18,7 @@ export default function Home() {
   const initialRouteState = readHomeRouteState(searchParams);
   const [list, setList] = useState<JobItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => initialRouteState.page);
   const [pageSize] = useState(12);
   const [loading, setLoading] = useState(false);
   const [listLoaded, setListLoaded] = useState(false);
@@ -72,6 +72,7 @@ export default function Home() {
     const routeState = readHomeRouteState(searchParams);
     setActiveJobTab((current) => (current === routeState.tab ? current : routeState.tab));
     setSelectedJobId((current) => (current === routeState.jobId ? current : routeState.jobId));
+    setPage((current) => (current === routeState.page ? current : routeState.page));
   }, [searchParams]);
   useEffect(() => {
     if (!listLoaded) return;
@@ -87,8 +88,9 @@ export default function Home() {
     setSearchParams(buildHomeRouteSearch(searchParams, {
       tab: activeJobTab,
       jobId: nextJobId,
+      page,
     }), { replace: true });
-  }, [activeJobTab, list, listLoaded, searchParams, selectedJobId, setSearchParams]);
+  }, [activeJobTab, list, listLoaded, page, searchParams, selectedJobId, setSearchParams]);
 
   const handleAdd = () => {
     setEditingJob(null);
@@ -149,11 +151,17 @@ export default function Home() {
     const nextRouteState: HomeRouteState = {
       tab: state.tab ?? activeJobTab,
       jobId: state.jobId !== undefined ? state.jobId : selectedJobId,
+      page: state.page ?? page,
     };
     setActiveJobTab(nextRouteState.tab);
     setSelectedJobId(nextRouteState.jobId);
+    setPage(nextRouteState.page);
     setSearchParams(buildHomeRouteSearch(searchParams, nextRouteState), { replace: true });
-  }, [activeJobTab, searchParams, selectedJobId, setSearchParams]);
+  }, [activeJobTab, page, searchParams, selectedJobId, setSearchParams]);
+
+  const handlePageChange = useCallback((nextPage: number) => {
+    updateHomeRouteState({ page: nextPage, jobId: null });
+  }, [updateHomeRouteState]);
 
   const getAlistName = (alistId: number) => {
     const a = alistList.find((x) => x.id === alistId);
@@ -176,7 +184,7 @@ export default function Home() {
         onRunAll={handleRunAll}
         onSelectJob={(jobId) => updateHomeRouteState({ jobId })}
         onClearTaskDetail={() => setTaskDetailDrawerTaskId('')}
-        setPage={setPage}
+        setPage={handlePageChange}
       />
 
       <main className="sync-manager-content">

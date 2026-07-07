@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 )
 
 const currentVersion = 260614
@@ -116,12 +117,10 @@ func InitSQL() {
 		return
 	}
 
-	// Existing database - check version and migrate if needed
-	var sqlVersion int64
-	err = db.QueryRow("SELECT sqlVersion FROM user_list LIMIT 1").Scan(&sqlVersion)
-	if err != nil {
-		sqlVersion = 0
-	}
+	// Existing database - check version and migrate if needed. A fresh schema
+	// can exist without any user rows when the server was stopped before web
+	// setup completed; in that case the table definition is already current.
+	sqlVersion := schemaVersion(db)
 
 	if sqlVersion < int64(currentVersion) {
 		if err := migrateDB(sqlVersion); err != nil {
@@ -129,6 +128,22 @@ func InitSQL() {
 		}
 	}
 	ensureIndexes(db)
+}
+
+func schemaVersion(db *sql.DB) int64 {
+	if !tableHasColumnDB(db, "user_list", "sqlVersion") {
+		return 0
+	}
+
+	var sqlVersion int64
+	err := db.QueryRow("SELECT sqlVersion FROM user_list LIMIT 1").Scan(&sqlVersion)
+	if err == nil {
+		return sqlVersion
+	}
+	if err == sql.ErrNoRows {
+		return currentVersion
+	}
+	return 0
 }
 
 func ensureIndexes(db *sql.DB) {
@@ -327,15 +342,13 @@ func migrateDBTx(db *sql.DB, fromVersion int64) error {
 }
 
 func shouldSkipMigrationStatement(tx *sql.Tx, stmt string) bool {
+	if tableName, columnName, ok := parseAlterTableAddColumn(stmt); ok {
+		return txTableHasColumn(tx, tableName, columnName)
+	}
+
 	switch stmt {
 	case "ALTER TABLE job RENAME COLUMN speed TO useCacheT":
 		return !txTableHasColumn(tx, "job", "speed") && txTableHasColumn(tx, "job", "useCacheT")
-	case "ALTER TABLE job ADD COLUMN minFileSize integer DEFAULT 0":
-		return txTableHasColumn(tx, "job", "minFileSize")
-	case "ALTER TABLE job ADD COLUMN maxFileSize integer DEFAULT 0":
-		return txTableHasColumn(tx, "job", "maxFileSize")
-	case "ALTER TABLE user_list ADD COLUMN recoveryKey text":
-		return txTableHasColumn(tx, "user_list", "recoveryKey")
 	case "ALTER TABLE job DROP COLUMN cron":
 		return !txTableHasColumn(tx, "job", "cron")
 	case "ALTER TABLE job DROP COLUMN year":
@@ -379,6 +392,25 @@ func shouldSkipMigrationStatement(tx *sql.Tx, stmt string) bool {
 	}
 }
 
+func parseAlterTableAddColumn(stmt string) (string, string, bool) {
+	fields := strings.Fields(stmt)
+	if len(fields) < 6 {
+		return "", "", false
+	}
+	if !strings.EqualFold(fields[0], "ALTER") ||
+		!strings.EqualFold(fields[1], "TABLE") ||
+		!strings.EqualFold(fields[3], "ADD") ||
+		!strings.EqualFold(fields[4], "COLUMN") {
+		return "", "", false
+	}
+	tableName := strings.Trim(fields[2], "`\"[]")
+	columnName := strings.Trim(fields[5], "`\"[]")
+	if !isSafeSQLIdentifier(tableName) || !isSafeSQLIdentifier(columnName) {
+		return "", "", false
+	}
+	return tableName, columnName, true
+}
+
 func txTableExists(tx *sql.Tx, tableName string) bool {
 	var name string
 	err := tx.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", tableName).Scan(&name)
@@ -390,6 +422,32 @@ func txTableHasColumn(tx *sql.Tx, tableName, columnName string) bool {
 		return false
 	}
 	rows, err := tx.Query("PRAGMA table_info(" + tableName + ")")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false
+		}
+		if name == columnName {
+			return true
+		}
+	}
+	return false
+}
+
+func tableHasColumnDB(db *sql.DB, tableName, columnName string) bool {
+	if !isSafeSQLIdentifier(tableName) {
+		return false
+	}
+	rows, err := db.Query("PRAGMA table_info(" + tableName + ")")
 	if err != nil {
 		return false
 	}

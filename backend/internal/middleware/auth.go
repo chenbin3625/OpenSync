@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"opensync/internal/config"
 	"opensync/internal/i18n"
@@ -30,7 +31,6 @@ const authUserCacheTTL = 15 * time.Second
 
 type authUserCacheEntry struct {
 	user      map[string]interface{}
-	userFull  map[string]interface{}
 	expiresAt time.Time
 }
 
@@ -133,7 +133,7 @@ func publicAuthUser(user map[string]interface{}) map[string]interface{} {
 	}
 }
 
-func cachedAuthUser(cookieUser CookieUser) (map[string]interface{}, map[string]interface{}, bool) {
+func cachedAuthUser(cookieUser CookieUser) (map[string]interface{}, bool) {
 	key := authUserCacheKey(cookieUser)
 	now := time.Now()
 
@@ -141,7 +141,7 @@ func cachedAuthUser(cookieUser CookieUser) (map[string]interface{}, map[string]i
 	entry, ok := authUserCache[key]
 	authUserCacheMu.RUnlock()
 	if !ok {
-		return nil, nil, false
+		return nil, false
 	}
 	if now.After(entry.expiresAt) {
 		authUserCacheMu.Lock()
@@ -149,10 +149,10 @@ func cachedAuthUser(cookieUser CookieUser) (map[string]interface{}, map[string]i
 			delete(authUserCache, key)
 		}
 		authUserCacheMu.Unlock()
-		return nil, nil, false
+		return nil, false
 	}
 
-	return copyAuthUserMap(entry.user), copyAuthUserMap(entry.userFull), true
+	return copyAuthUserMap(entry.user), true
 }
 
 func cacheAuthUser(cookieUser CookieUser, trueUser map[string]interface{}) {
@@ -160,7 +160,6 @@ func cacheAuthUser(cookieUser CookieUser, trueUser map[string]interface{}) {
 	authUserCacheMu.Lock()
 	authUserCache[key] = authUserCacheEntry{
 		user:      publicAuthUser(trueUser),
-		userFull:  copyAuthUserMap(trueUser),
 		expiresAt: time.Now().Add(authUserCacheTTL),
 	}
 	authUserCacheMu.Unlock()
@@ -216,10 +215,22 @@ func isSecureRequest(c *gin.Context) bool {
 	if c.Request.TLS != nil {
 		return true
 	}
+	if !isLoopbackRemote(c.Request.RemoteAddr) {
+		return false
+	}
 	if strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https") {
 		return true
 	}
 	return strings.EqualFold(c.GetHeader("X-Forwarded-Ssl"), "on")
+}
+
+func isLoopbackRemote(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	return ip != nil && ip.IsLoopback()
 }
 
 // AuthRequired is the Gin middleware for authentication
@@ -260,9 +271,8 @@ func AuthRequired() gin.HandlerFunc {
 			return
 		}
 
-		if user, userFull, ok := cachedAuthUser(cUser); ok {
+		if user, ok := cachedAuthUser(cUser); ok {
 			c.Set("user", user)
-			c.Set("userFull", userFull)
 			c.Next()
 			return
 		}
@@ -286,7 +296,6 @@ func AuthRequired() gin.HandlerFunc {
 		cacheAuthUser(cUser, trueUser)
 		// Store user info in context (without passwd/sqlVersion)
 		c.Set("user", publicAuthUser(trueUser))
-		c.Set("userFull", trueUser)
 
 		c.Next()
 	}

@@ -411,7 +411,7 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 		return nil, err
 	}
 	if !paginated {
-		dataList, err := FetchAllToTable(baseSQL, args...)
+		dataList, err := FetchAllToTable(withDefaultLimit(baseSQL), args...)
 		if err != nil {
 			return nil, err
 		}

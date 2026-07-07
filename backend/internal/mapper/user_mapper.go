@@ -4,9 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"opensync/internal/i18n"
+	"sync"
 )
 
 var ErrUserNotFound = errors.New("user_not_found")
+var ErrAlreadyInitialized = errors.New("system_initialized")
+
+var createInitialUserMu sync.Mutex
 
 // HasUsers reports whether any local account exists.
 func HasUsers() (bool, error) {
@@ -20,6 +24,29 @@ func HasUsers() (bool, error) {
 // CreateUser inserts a local user and returns its ID.
 func CreateUser(userName string, passwd string, recoveryKey string) (int64, error) {
 	return ExecuteInsert("INSERT INTO user_list(userName, passwd, recoveryKey) VALUES (?, ?, ?)", userName, passwd, recoveryKey)
+}
+
+// CreateInitialUser atomically creates the first local user. It returns
+// ErrAlreadyInitialized when any user already exists.
+func CreateInitialUser(userName string, passwd string, recoveryKey string) (int64, error) {
+	createInitialUserMu.Lock()
+	defer createInitialUserMu.Unlock()
+
+	result, err := GetDB().Exec(
+		`INSERT INTO user_list(userName, passwd, recoveryKey)
+		 SELECT ?, ?, ?
+		 WHERE NOT EXISTS (SELECT 1 FROM user_list LIMIT 1)`,
+		userName,
+		passwd,
+		recoveryKey,
+	)
+	if err != nil {
+		return 0, err
+	}
+	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
+		return 0, ErrAlreadyInitialized
+	}
+	return result.LastInsertId()
 }
 
 // GetUserByName gets user by username
