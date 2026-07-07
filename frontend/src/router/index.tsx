@@ -22,12 +22,24 @@ function AuthGuard({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function ReverseAuthGuard({ children }: { children: ReactNode }) {
+  const userInfo = useStore((s) => s.userInfo);
+  const authChecked = useStore((s) => s.authChecked);
+  if (!authChecked) {
+    return null;
+  }
+  if (userInfo) {
+    return <Navigate to="/home" replace />;
+  }
+  return <>{children}</>;
+}
+
 export default function AppRouter() {
   return (
     <HashRouter>
       <Suspense fallback={null}>
         <Routes>
-          <Route path="/login" element={<Login />} />
+          <Route path="/login" element={<ReverseAuthGuard><Login /></ReverseAuthGuard>} />
           <Route path="/" element={<Navigate to="/home" replace />} />
           <Route path="/home" element={<AuthGuard><Layout><Home /></Layout></AuthGuard>} />
           <Route path="/home/task/detail" element={<AuthGuard><Layout><TaskDetail /></Layout></AuthGuard>} />

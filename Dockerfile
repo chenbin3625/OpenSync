@@ -36,6 +36,7 @@ RUN apk add --no-cache tzdata
 WORKDIR /app
 COPY --from=backend-builder /app/opensync .
 ENV TZ=Asia/Shanghai
+ENV OPENSYNC_BIND=0.0.0.0
 ENV OPENSYNC_PORT=8023
 ENV GIN_MODE=release
 EXPOSE 8023

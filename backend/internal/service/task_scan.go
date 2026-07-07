@@ -248,9 +248,9 @@ func (jt *JobTask) queueCopyFile(srcPath, dstPath, fileName string, fileSize int
 	}
 }
 
-func (jt *JobTask) delFile(path, fileName string, size interface{}) {
+func (jt *JobTask) delFile(path, fileName string, size interface{}) taskStatus {
 	if jt.isBreak() {
-		return
+		return taskStatusStopped
 	}
 	isPath := strings.HasSuffix(fileName, "/")
 	status := taskStatusSuccess
@@ -274,6 +274,7 @@ func (jt *JobTask) delFile(path, fileName string, size interface{}) {
 		delSize = size
 	}
 	jt.DelHook(path, fileName, delSize, status, errMsg, boolToTaskItemObject(isPath), createTime)
+	return status
 }
 
 func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, rootPath string, isSrc bool) (map[string]interface{}, error) {
@@ -436,12 +437,29 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 			if !jobAllowsFileSize(jt.Job, srcSize) {
 				continue
 			}
+			if util.ToInt(jt.Job["method"]) == 1 {
+				if dstDirVal, exists := dstFiles[key+"/"]; exists {
+					if jt.delFile(work.DstPath, key+"/", fileSize(dstDirVal)) != taskStatusSuccess {
+						continue
+					}
+					delete(dstFiles, key+"/")
+				}
+			}
 			dstVal, exists := dstFiles[key]
 			if !exists || fileChanged(srcVal, dstVal) {
 				jt.copyFile(work.SrcPath, work.DstPath, key, srcSize)
 			}
 		} else {
 			// Directory
+			if util.ToInt(jt.Job["method"]) == 1 {
+				fileKey := strings.TrimSuffix(key, "/")
+				if dstFileVal, exists := dstFiles[fileKey]; exists {
+					if jt.delFile(work.DstPath, fileKey, fileSize(dstFileVal)) != taskStatusSuccess {
+						continue
+					}
+					delete(dstFiles, fileKey)
+				}
+			}
 			if _, exists := dstFiles[key]; !exists {
 				jt.addChildScanWork(&children, scanWork{
 					SrcPath:     work.SrcPath + key,

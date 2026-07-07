@@ -1,12 +1,23 @@
 import request from './request';
 import type { AlistItem, ApiResponse, PathItem } from '../types';
 
+type RequestOptions = {
+  signal?: AbortSignal;
+  silent?: boolean;
+};
+
+const withRequestOptions = (params: Record<string, unknown>, options?: RequestOptions) => ({
+  params,
+  ...(options?.signal ? { signal: options.signal } : {}),
+  ...(options?.silent ? { silent: true } : {}),
+});
+
 export function alistGet() {
   return request.get('/alist') as Promise<ApiResponse<AlistItem[]>>;
 }
 
-export function alistGetPath(alistId: number | string, path: string) {
-  return request.get('/alist', { params: { alistId, path } }) as Promise<ApiResponse<PathItem[]>>;
+export function alistGetPath(alistId: number | string, path: string, options?: RequestOptions) {
+  return request.get('/alist', withRequestOptions({ alistId, path }, options)) as Promise<ApiResponse<PathItem[]>>;
 }
 
 export function alistPost(data: Record<string, unknown>) {

@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
 	"opensync/pkg/util"
@@ -21,9 +24,9 @@ var (
 )
 
 type alistClientLoad struct {
-	wg     sync.WaitGroup
 	client *AlistClient
 	err    error
+	done   chan struct{}
 }
 
 // GetClientList returns all alist entries without token
@@ -40,6 +43,13 @@ func GetClientList() []map[string]interface{} {
 
 // GetClientByID gets or creates an AList client by ID
 func GetClientByID(alistID int64) *AlistClient {
+	return GetClientByIDContext(context.Background(), alistID)
+}
+
+func GetClientByIDContext(ctx context.Context, alistID int64) *AlistClient {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	alistClientListMu.RLock()
 	client, ok := alistClientList[alistID]
 	alistClientListMu.RUnlock()
@@ -49,7 +59,11 @@ func GetClientByID(alistID int64) *AlistClient {
 
 	load, owner := beginAlistClientLoad(alistID)
 	if !owner {
-		load.wg.Wait()
+		select {
+		case <-load.done:
+		case <-ctx.Done():
+			panicAlistClientLoadError(ctx.Err())
+		}
 		if load.err != nil {
 			panicAlistClientLoadError(load.err)
 		}
@@ -81,17 +95,15 @@ func beginAlistClientLoad(alistID int64) (*alistClientLoad, bool) {
 	defer alistClientListMu.Unlock()
 
 	if client, ok := alistClientList[alistID]; ok {
-		load := &alistClientLoad{client: client}
-		load.wg.Add(1)
-		load.wg.Done()
+		load := &alistClientLoad{client: client, done: make(chan struct{})}
+		close(load.done)
 		return load, false
 	}
 	if load, ok := alistClientLoads[alistID]; ok {
 		return load, false
 	}
 
-	load := &alistClientLoad{}
-	load.wg.Add(1)
+	load := &alistClientLoad{done: make(chan struct{})}
 	alistClientLoads[alistID] = load
 	return load, true
 }
@@ -107,7 +119,7 @@ func finishAlistClientLoad(alistID int64, load *alistClientLoad, client *AlistCl
 	}
 	delete(alistClientLoads, alistID)
 	alistClientListMu.Unlock()
-	load.wg.Done()
+	close(load.done)
 	if previous != nil && previous != client {
 		previous.Close()
 	}
@@ -155,8 +167,35 @@ func normalizeAlistInput(alist map[string]interface{}) string {
 	}
 
 	urlStr := strings.TrimRight(fmt.Sprintf("%v", alist["url"]), "/")
+	if err := validateAlistURL(urlStr); err != nil {
+		panicPublic(err.Error())
+	}
 	alist["url"] = urlStr
 	return urlStr
+}
+
+func validateAlistURL(rawURL string) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return errors.New(i18n.G("alist_url_invalid"))
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme == "https" {
+		return nil
+	}
+	if scheme == "http" && isLocalAlistHost(u.Hostname()) {
+		return nil
+	}
+	return errors.New(i18n.G("alist_url_invalid"))
+}
+
+func isLocalAlistHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // UpdateClient updates an AList client
@@ -186,16 +225,16 @@ func UpdateClient(alist map[string]interface{}) {
 	}
 
 	oldURL := fmt.Sprintf("%v", alistOld["url"])
+	var client *AlistClient
 	if oldURL != urlStr || hasToken {
 		if !hasToken {
 			panicPublic(i18n.G("without_token"))
 		}
-		client, err := NewAlistClient(urlStr, fmt.Sprintf("%v", alist["token"]), alistID)
+		client, err = newAlistClient(urlStr, fmt.Sprintf("%v", alist["token"]), alistID)
 		if err != nil {
 			log.Printf("alist client update failed: %v", err)
 			panicPublic(i18n.G("alist_connect_fail"))
 		}
-		storeAlistClient(alistID, client)
 	}
 
 	var tokenPtr *string
@@ -209,7 +248,13 @@ func UpdateClient(alist map[string]interface{}) {
 		remarkStr = fmt.Sprintf("%v", remark)
 	}
 	if err := mapper.UpdateAlist(alistID, remarkStr, urlStr, tokenPtr); err != nil {
+		if client != nil {
+			client.Close()
+		}
 		panic(err.Error())
+	}
+	if client != nil {
+		storeAlistClient(alistID, client)
 	}
 }
 

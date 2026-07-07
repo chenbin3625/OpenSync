@@ -228,16 +228,12 @@ func (ci *CopyItem) checkAndGetStatus() {
 	runtime := ci.copyRuntime()
 	client := ci.copyClient()
 	for {
-		if runtime.isBreak() {
-			ci.setStatus(taskStatusStopped)
-			if taskID := ci.taskID(); taskID != "" {
-				ctx, cancel := runtime.cleanupContext()
-				if err := client.TaskCancelContext(ctx, taskID, ci.CopyType); err != nil {
-					ci.setFailure(err)
-				}
-				_ = client.TaskDeleteContext(ctx, taskID, ci.CopyType)
-				cancel()
+		ctxErr := runtime.context().Err()
+		if runtime.isBreak() || ctxErr != nil {
+			if runtime.isBreak() {
+				ctxErr = nil
 			}
+			ci.stopRemoteTask(client, ctxErr)
 			break
 		}
 
@@ -293,22 +289,24 @@ func (ci *CopyItem) checkAndGetStatus() {
 	}
 }
 
+func (ci *CopyItem) stopRemoteTask(client copyItemClient, cause error) {
+	ci.setStatus(taskStatusStopped)
+	if cause != nil {
+		errMsg := cause.Error()
+		ci.setProgress(taskStatusStopped, ci.progress(), &errMsg)
+	}
+	if taskID := ci.taskID(); taskID != "" {
+		ctx, cancel := ci.copyRuntime().cleanupContext()
+		if err := client.TaskCancelContext(ctx, taskID, ci.CopyType); err != nil {
+			errMsg := err.Error()
+			ci.setProgress(taskStatusStopped, ci.progress(), &errMsg)
+		}
+		_ = client.TaskDeleteContext(ctx, taskID, ci.CopyType)
+		cancel()
+	}
+}
+
 func (ci *CopyItem) endIt() {
 	runtime := ci.copyRuntime()
-	client := ci.copyClient()
-	if ci.CopyType == taskItemTypeMove && ci.status() == taskStatusSuccess {
-		scanIntervalS := util.ToInt(runtime.jobConfig()["scanIntervalS"])
-		ctx, cancel := runtime.cleanupContext()
-		err := client.DeleteFileContext(ctx, ci.SrcPath, []string{ci.FileName}, scanIntervalS)
-		cancel()
-		if err != nil {
-			// The file was already moved to the destination successfully; a
-			// failure to delete the source is a cleanup warning, not a sync
-			// failure. Keep taskStatusSuccess so the overall task status is
-			// accurate, and record the reason in ErrMsg for diagnosis.
-			errMsg := strings.Replace(i18n.G("copy_success_but_delete_fail"), "{}", err.Error(), 1)
-			ci.setProgress(taskStatusSuccess, ci.progress(), &errMsg)
-		}
-	}
 	runtime.finishCopyItem(ci)
 }

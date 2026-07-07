@@ -1,6 +1,7 @@
 package mapper
 
 import (
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -90,6 +91,24 @@ func TestInitDBAllowsConcurrentReadConnections(t *testing.T) {
 	testDB := InitDB()
 	if maxOpen := testDB.Stats().MaxOpenConnections; maxOpen <= 1 {
 		t.Fatalf("MaxOpenConnections = %d, want more than one read-capable connection", maxOpen)
+	}
+}
+
+func TestInitDBCreatesDatabaseFileWithOwnerOnlyPermissions(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "opensync.db")
+	resetGlobalDBForTest(t, &config.Config{
+		DB: config.DBConfig{DBName: dbPath},
+	})
+
+	if InitDB() == nil {
+		t.Fatalf("InitDB() returned nil")
+	}
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("Stat(db) error: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("db permissions = %v, want 0600", got)
 	}
 }
 

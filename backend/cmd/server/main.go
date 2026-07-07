@@ -60,6 +60,15 @@ func maxRequestBodySize(max int64) gin.HandlerFunc {
 	}
 }
 
+func securityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("Referrer-Policy", "no-referrer")
+		c.Next()
+	}
+}
+
 func serveWebFile(c *gin.Context, webDist fs.FS, filePath, contentType string) {
 	data, err := fs.ReadFile(webDist, filePath)
 	if err != nil {
@@ -144,10 +153,14 @@ func run(parent context.Context) error {
 	service.InitJobs()
 
 	r := gin.Default()
+	if err := r.SetTrustedProxies(nil); err != nil {
+		return err
+	}
 
 	// Error recovery + Auth middleware
 	r.Use(errorRecovery())
-	r.Use(maxRequestBodySize(1<<20)) // 1MB; config/alist/notify payloads are small JSON
+	r.Use(securityHeaders())
+	r.Use(maxRequestBodySize(1 << 20)) // 1MB; config/alist/notify payloads are small JSON
 	r.Use(middleware.AuthRequired())
 
 	// System routes (no auth needed)
@@ -208,10 +221,11 @@ func run(parent context.Context) error {
 	}
 
 	port := fmt.Sprintf("%d", cfg.Server.Port)
-	log.Printf("启动成功_/_Running at http://127.0.0.1:%s/", port)
+	addr := net.JoinHostPort(cfg.Server.Bind, port)
+	log.Printf("启动成功_/_Running at http://%s/", addr)
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%s", port),
+		Addr:    addr,
 		Handler: r,
 	}
 	listener, err := net.Listen("tcp", server.Addr)

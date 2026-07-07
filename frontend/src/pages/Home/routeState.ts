@@ -5,6 +5,7 @@ const homeTabKeys = new Set<HomeTabKey>(['overview', 'realtime', 'history']);
 export type HomeRouteState = {
   tab: HomeTabKey;
   jobId: number | null;
+  page: number;
 };
 
 export function isHomeTabKey(value: string | null): value is HomeTabKey {
@@ -14,10 +15,12 @@ export function isHomeTabKey(value: string | null): value is HomeTabKey {
 export function readHomeRouteState(searchParams: URLSearchParams): HomeRouteState {
   const rawTab = searchParams.get('tab');
   const rawJobId = Number(searchParams.get('jobId'));
+  const rawPage = Number(searchParams.get('page'));
 
   return {
     tab: isHomeTabKey(rawTab) ? rawTab : 'overview',
     jobId: Number.isInteger(rawJobId) && rawJobId > 0 ? rawJobId : null,
+    page: Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1,
   };
 }
 
@@ -32,6 +35,11 @@ export function buildHomeRouteSearch(
     nextSearchParams.set('jobId', String(state.jobId));
   } else {
     nextSearchParams.delete('jobId');
+  }
+  if (state.page > 1) {
+    nextSearchParams.set('page', String(state.page));
+  } else {
+    nextSearchParams.delete('page');
   }
 
   return nextSearchParams;

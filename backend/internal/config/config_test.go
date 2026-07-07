@@ -39,6 +39,9 @@ task_timeout=also-bad
 	}
 
 	cfg := GetConfig()
+	if cfg.Server.Bind != "127.0.0.1" {
+		t.Fatalf("Bind = %q, want default 127.0.0.1", cfg.Server.Bind)
+	}
 	if cfg.Server.Port != 8023 {
 		t.Fatalf("Port = %d, want default 8023 for invalid config value", cfg.Server.Port)
 	}
@@ -71,6 +74,7 @@ func TestEnvironmentInvalidNumbersKeepDefaultsAndLog(t *testing.T) {
 		t.Fatalf("MkdirAll(data) error: %v", err)
 	}
 	t.Setenv("OPENSYNC_PORT", "not-a-number")
+	t.Setenv("OPENSYNC_BIND", "0.0.0.0")
 	t.Setenv("OPENSYNC_EXPIRES", "6")
 	t.Setenv("OPENSYNC_TASK_TIMEOUT", "also-bad")
 
@@ -80,6 +84,9 @@ func TestEnvironmentInvalidNumbersKeepDefaultsAndLog(t *testing.T) {
 	defer log.SetOutput(oldWriter)
 
 	cfg := GetConfig()
+	if cfg.Server.Bind != "0.0.0.0" {
+		t.Fatalf("Bind = %q, want env override 0.0.0.0", cfg.Server.Bind)
+	}
 	if cfg.Server.Port != 8023 {
 		t.Fatalf("Port = %d, want default 8023 for invalid env value", cfg.Server.Port)
 	}

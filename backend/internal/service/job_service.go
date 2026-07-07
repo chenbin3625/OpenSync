@@ -170,6 +170,34 @@ func CleanJobInput(job map[string]interface{}) {
 	normalizeJobFileSizeRange(job)
 }
 
+func ValidateJobInput(job map[string]interface{}) {
+	if len(parsePathList(job["srcPath"])) == 0 ||
+		len(parsePathList(job["dstPath"])) == 0 ||
+		util.ToInt64(job["alistId"]) <= 0 {
+		panicPublic(i18n.G("lost_part"))
+	}
+
+	if enable, ok := job["enable"]; ok {
+		enableInt := util.ToInt(enable)
+		if enableInt != 0 && enableInt != 1 {
+			panicPublic(i18n.G("lost_part"))
+		}
+	}
+
+	method := util.ToInt(job["method"])
+	if method < 0 || method > 2 {
+		panicPublic(i18n.G("lost_part"))
+	}
+
+	isCron := util.ToInt(job["isCron"])
+	if isCron < 0 || isCron > 2 {
+		panicPublic(i18n.G("lost_part"))
+	}
+	if isCron == 0 && util.ToInt(job["interval"]) <= 0 {
+		panicPublic(i18n.G("interval_lost"))
+	}
+}
+
 func normalizeJobFileSizeRange(job map[string]interface{}) {
 	minSize, err := nonNegativeFileSize(job["minFileSize"])
 	if err != nil {
@@ -202,10 +230,14 @@ func nonNegativeFileSize(value interface{}) (int64, error) {
 		}
 		return v, nil
 	case float64:
-		if v < 0 || math.Trunc(v) != v || v > float64(math.MaxInt64) {
+		if v < 0 || math.Trunc(v) != v {
 			return 0, fmt.Errorf("invalid file size")
 		}
-		return int64(v), nil
+		parsed, err := strconv.ParseInt(strconv.FormatFloat(v, 'f', 0, 64), 10, 64)
+		if err != nil || parsed < 0 {
+			return 0, fmt.Errorf("invalid file size")
+		}
+		return parsed, nil
 	case string:
 		trimmed := strings.TrimSpace(v)
 		if trimmed == "" {
@@ -224,6 +256,7 @@ func nonNegativeFileSize(value interface{}) (int64, error) {
 // AddJobClient creates a new job client
 func AddJobClient(job map[string]interface{}, isInit bool) {
 	CleanJobInput(job)
+	ValidateJobInput(job)
 	client := NewJobClient(job, isInit)
 	jobClientListMu.Lock()
 	jobClientList[client.JobID] = client
@@ -234,6 +267,7 @@ func AddJobClient(job map[string]interface{}, isInit bool) {
 func EditJobClient(job map[string]interface{}) {
 	jobID := util.ToInt64(job["id"])
 	CleanJobInput(job)
+	ValidateJobInput(job)
 	client := GetJobClientByID(jobID)
 	oldJob := client.jobSnapshot()
 	nextScheduler := NewScheduler()

@@ -3,6 +3,8 @@ package service
 import (
 	"database/sql"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"opensync/internal/mapper"
@@ -109,6 +111,47 @@ func TestInitializeUserRejectsExistingUser(t *testing.T) {
 	}()
 
 	InitializeUser("other", "other-password")
+}
+
+func TestInitializeUserAllowsOnlyOneConcurrentFirstUser(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+	testDB.SetMaxOpenConns(1)
+
+	createUserTableForTest(t, testDB)
+	restoreDB := mapper.SetDBForTest(testDB)
+	defer restoreDB()
+
+	const workers = 8
+	var successes atomic.Int64
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			defer func() {
+				_ = recover()
+			}()
+			InitializeUser(fmt.Sprintf("admin-%d", i), "secret-password")
+			successes.Add(1)
+		}()
+	}
+	wg.Wait()
+
+	if got := successes.Load(); got != 1 {
+		t.Fatalf("successful initializations = %d, want 1", got)
+	}
+	var count int
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM user_list").Scan(&count); err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("user count = %d, want 1", count)
+	}
 }
 
 func TestResetPasswdWithRecoveryKeyRotatesRecoveryKey(t *testing.T) {

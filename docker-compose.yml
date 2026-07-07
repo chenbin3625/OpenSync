@@ -9,5 +9,6 @@ services:
       - ./data:/app/data
     environment:
       TZ: Asia/Shanghai
+      OPENSYNC_BIND: 0.0.0.0
       OPENSYNC_PORT: 8023
       GIN_MODE: release

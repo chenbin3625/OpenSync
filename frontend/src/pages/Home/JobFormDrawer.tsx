@@ -96,6 +96,7 @@ export default function JobFormDrawer({
   // Synchronous re-entry guard: set before the await so a rapid second click
   // cannot start a duplicate create before the submitting state re-renders.
   const submittingRef = useRef(false);
+  const submitAbortRef = useRef<AbortController | null>(null);
   const treeLoadRequestRef = useRef(0);
 
   const selectedAlistId = Form.useWatch('alistId', form) as number | undefined;
@@ -188,6 +189,8 @@ export default function JobFormDrawer({
   // Initialize form when opening
   useEffect(() => {
     if (!visible) return;
+    submittingRef.current = false;
+    setSubmitting(false);
     form.resetFields();
     if (editingJob) {
       const minFileSize = splitBytesToFileSize(editingJob.minFileSize);
@@ -236,6 +239,15 @@ export default function JobFormDrawer({
     }
   }, [visible, editingJob, form]);
 
+  useEffect(() => {
+    if (visible) return undefined;
+    submitAbortRef.current?.abort();
+    submitAbortRef.current = null;
+    submittingRef.current = false;
+    setSubmitting(false);
+    return undefined;
+  }, [visible]);
+
   const handleSubmit = async () => {
     if (submittingRef.current) return;
     let values: JobFormValues;
@@ -247,6 +259,8 @@ export default function JobFormDrawer({
     }
     submittingRef.current = true;
     setSubmitting(true);
+    const controller = new AbortController();
+    submitAbortRef.current = controller;
     try {
       const srcPaths = normalizeFormPaths(values.srcPath);
       const dstPaths = normalizeFormPaths(values.dstPath);
@@ -256,21 +270,26 @@ export default function JobFormDrawer({
         ...jobValues,
         srcPath: srcPaths,
         dstPath: dstPaths,
-        enable: values.enable ? 1 : 0,
+        enable: values.isCron === 2 ? 1 : (values.enable ? 1 : 0),
         useCacheS: values.useCacheS ? 1 : 0,
         useCacheT: values.useCacheT ? 1 : 0,
         minFileSize: fileSizeToBytes(values.minFileSize, minFileSizeUnit),
         maxFileSize: fileSizeToBytes(values.maxFileSize, maxFileSizeUnit),
       };
-      await jobPost(jobData);
+      await jobPost(jobData, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       onSubmit();
     } catch (err) {
+      if (controller.signal.aborted) return;
       // API errors are surfaced by the request interceptor; log unexpected
       // (non-API) failures so they are not silently swallowed.
       console.error('job submit failed', err);
     } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
+      if (submitAbortRef.current === controller) {
+        submitAbortRef.current = null;
+        submittingRef.current = false;
+        setSubmitting(false);
+      }
     }
   };
 
@@ -295,6 +314,12 @@ export default function JobFormDrawer({
     day_of_week: dayOfWeekValue,
   };
   const schedulePlan = formatSchedulePlan(scheduleValues);
+
+  useEffect(() => {
+    if (isCronValue === 2 && form.getFieldValue('enable') !== true) {
+      form.setFieldsValue({ enable: true });
+    }
+  }, [form, isCronValue]);
 
   return (
     <Drawer
@@ -410,6 +435,7 @@ export default function JobFormDrawer({
                 options={cronTypeNames.map((n, i) => ({ value: i, label: n }))}
                 onChange={(value) => {
                   if (value === 0) form.setFieldsValue({ interval: 1440 });
+                  if (value === 2) form.setFieldsValue({ enable: true });
                   if (value === 1) {
                     form.setFieldsValue({
                       second: form.getFieldValue('second') || defaultCronFields.second,
@@ -544,7 +570,7 @@ export default function JobFormDrawer({
 
         <Divider style={compactDividerStyle} />
         <Form.Item name="enable" label="启用" valuePropName="checked" style={compactItemStyle}>
-          <Switch />
+          <Switch disabled={isCronValue === 2} />
         </Form.Item>
       </Form>
     </Drawer>

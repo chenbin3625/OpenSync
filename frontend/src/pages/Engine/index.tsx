@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Card, Button, Modal, Form, Input, Space, Popconfirm, App, Empty, Typography, Descriptions, Tooltip,
 } from 'antd';
@@ -17,6 +17,24 @@ interface EngineFormValues {
   token?: string;
 }
 
+const isLocalAlistHost = (host: string) => {
+  const normalized = host.toLowerCase();
+  return normalized === 'localhost' || normalized === '127.0.0.1' ||
+    normalized === '::1' || normalized === '[::1]';
+};
+
+const validateAlistURL = (_: unknown, value?: string) => {
+  if (!value) return Promise.resolve();
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'https:') return Promise.resolve();
+    if (url.protocol === 'http:' && isLocalAlistHost(url.hostname)) return Promise.resolve();
+  } catch {
+    return Promise.reject(new Error('请输入合法 URL'));
+  }
+  return Promise.reject(new Error('非本机地址请使用 HTTPS'));
+};
+
 export default function Engine() {
   const { message } = App.useApp();
   const [list, setList] = useState<AlistItem[]>([]);
@@ -25,19 +43,23 @@ export default function Engine() {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<AlistItem | null>(null);
   const [form] = Form.useForm();
+  const listReqRef = useRef(0);
 
   const fetchList = useCallback(async () => {
+    const reqID = ++listReqRef.current;
     setLoading(true);
     setListError(false);
     try {
       const res = await alistGet();
+      if (reqID !== listReqRef.current) return;
       setList(res.data || []);
     } catch (err) {
+      if (reqID !== listReqRef.current) return;
       setList([]);
       setListError(true);
       console.error('alist fetchList failed', err);
     } finally {
-      setLoading(false);
+      if (reqID === listReqRef.current) setLoading(false);
     }
   }, []);
 
@@ -68,12 +90,8 @@ export default function Engine() {
 
   const handleTest = async (item: AlistItem) => {
     try {
-      const res = await alistGetPath(item.id, '/');
-      if (res.code === 200) {
-        message.success('连接测试成功');
-      } else {
-        message.error('连接失败: ' + (res.msg || '未知错误'));
-      }
+      await alistGetPath(item.id, '/', { silent: true });
+      message.success('连接测试成功');
     } catch (err) {
       console.error('alist test failed', err);
       message.error('连接测试失败');
@@ -83,10 +101,7 @@ export default function Engine() {
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields() as EngineFormValues;
-      let url = values.url;
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = 'http://' + url;
-      }
+      const url = values.url.trim().replace(/\/+$/, '');
       if (editingItem) {
         await alistPut({ id: editingItem.id, url, remark: values.remark || null, token: values.token || undefined });
       } else {
@@ -185,8 +200,16 @@ export default function Engine() {
         forceRender
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="url" label="地址" rules={[{ required: true, message: '请输入AList地址' }]}>
-            <Input placeholder="http://localhost:5244" />
+          <Form.Item
+            name="url"
+            label="地址"
+            rules={[
+              { required: true, message: '请输入AList地址' },
+              { type: 'url' as const, message: '请输入合法 URL' },
+              { validator: validateAlistURL },
+            ]}
+          >
+            <Input placeholder="https://alist.example.com" />
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input placeholder="可选备注" />

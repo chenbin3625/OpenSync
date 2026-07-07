@@ -29,6 +29,32 @@ func TestInitSQLCreatesSchemaWithoutInitialAdminUser(t *testing.T) {
 	}
 }
 
+func TestInitSQLCanRestartBeforeInitialAdminUserExists(t *testing.T) {
+	resetGlobalDBForTest(t, &config.Config{
+		DB:     config.DBConfig{DBName: filepath.Join(t.TempDir(), "opensync.db")},
+		Server: config.ServerConfig{PasswdStr: "test-secret"},
+	})
+
+	InitSQL()
+	if err := CloseDB(); err != nil {
+		t.Fatalf("CloseDB() error: %v", err)
+	}
+
+	InitSQL()
+
+	var count int
+	if err := GetDB().QueryRow("SELECT COUNT(*) FROM user_list").Scan(&count); err != nil {
+		t.Fatalf("count users after restart: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("initial users after restart = %d, want 0", count)
+	}
+	var version int64
+	if err := GetDB().QueryRow("SELECT sqlVersion FROM user_list LIMIT 1").Scan(&version); err != sql.ErrNoRows {
+		t.Fatalf("read empty sqlVersion error = %v, want sql.ErrNoRows", err)
+	}
+}
+
 func TestMigrateDBTxSkipsLegacyRenameWhenSpeedColumnMissing(t *testing.T) {
 	testDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 
 // ServerConfig holds server configuration
 type ServerConfig struct {
+	Bind            string
 	Port            int
 	Expires         int
 	LogLevel        int
@@ -44,6 +45,7 @@ var (
 )
 
 const (
+	defaultBind         = "127.0.0.1"
 	defaultPort         = 8023
 	defaultExpires      = 7
 	defaultLogLevel     = 1
@@ -107,6 +109,7 @@ func GetConfig() *Config {
 	dbname := "data/openSync.db"
 
 	sCfg := ServerConfig{
+		Bind:            defaultBind,
 		Port:            defaultPort,
 		Expires:         defaultExpires,
 		LogLevel:        defaultLogLevel,
@@ -124,6 +127,9 @@ func GetConfig() *Config {
 		// Read config.ini
 		iniMap := readINI("data/config.ini")
 		if opensync, ok := iniMap["opensync"]; ok {
+			if v, ok := opensync["bind"]; ok {
+				sCfg.Bind = stringConfigValue(v, sCfg.Bind)
+			}
 			if v, ok := opensync["port"]; ok {
 				sCfg.Port = intConfigValue(v, sCfg.Port, "port")
 			}
@@ -157,6 +163,7 @@ func GetConfig() *Config {
 		}
 	} else {
 		// Read from environment variables
+		sCfg.Bind = envStringConfigValue("OPENSYNC_BIND", sCfg.Bind)
 		sCfg.Port = envIntConfigValue("OPENSYNC_PORT", sCfg.Port)
 		sCfg.Expires = envIntConfigValue("OPENSYNC_EXPIRES", sCfg.Expires)
 		sCfg.LogLevel = envIntConfigValue("OPENSYNC_LOG_LEVEL", sCfg.LogLevel)
@@ -184,6 +191,7 @@ func GetConfig() *Config {
 // unbounded number of goroutines, or task_timeout=-1 producing a negative
 // timeout).
 func clampServerConfig(sCfg *ServerConfig) {
+	sCfg.Bind = stringConfigValue(sCfg.Bind, defaultBind)
 	sCfg.Expires = clampInt(sCfg.Expires, minExpires, maxExpires, defaultExpires)
 	sCfg.Timeout = clampInt(sCfg.Timeout, minTaskTimeout, maxTaskTimeout, defaultTaskTimeout)
 	sCfg.TaskSave = clampInt(sCfg.TaskSave, minTaskSave, maxTaskSave, defaultTaskSave)
@@ -277,11 +285,16 @@ func envIntConfigValue(envName string, fallback int) int {
 	return intConfigValue(value, fallback, envName)
 }
 
+func envStringConfigValue(envName string, fallback string) string {
+	return stringConfigValue(os.Getenv(envName), fallback)
+}
+
 func writeConfigFile(sCfg ServerConfig) error {
 	if err := os.MkdirAll("data", 0755); err != nil {
 		return err
 	}
 	content := fmt.Sprintf(`[opensync]
+bind=%s
 port=%d
 expires=%d
 log_level=%d
@@ -292,7 +305,8 @@ task_timeout=%d
 copy_concurrency=%d
 scan_concurrency=%d
 max_retries=%d
-`,
+	`,
+		sCfg.Bind,
 		sCfg.Port,
 		sCfg.Expires,
 		sCfg.LogLevel,
@@ -341,6 +355,14 @@ func intConfigValue(value string, fallback int, key string) int {
 		return fallback
 	}
 	return i
+}
+
+func stringConfigValue(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 // readINI parses a simple INI file

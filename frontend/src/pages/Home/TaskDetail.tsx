@@ -10,6 +10,7 @@ import {
   displayText, formatSize, taskItemStatusColors, taskItemStatusNames,
   taskItemStatusOptions, taskTypeNames,
 } from './homeUtils';
+import { canPollCurrentDocument } from './pollingVisibility';
 
 const { Text } = Typography;
 
@@ -86,14 +87,17 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
 
   const fetchData = useCallback(async (options?: { silent?: boolean }) => {
     if (!taskId) return;
+    const showLoading = !options?.silent;
     // Cancel any in-flight request before starting a new one so a slow earlier
     // request (different filter/page) cannot overwrite fresh state.
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     const requestID = ++requestRef.current;
-    setLoading(true);
-    setError(false);
+    if (showLoading) {
+      setLoading(true);
+      setError(false);
+    }
     try {
       const params: Record<string, unknown> = {
         taskId,
@@ -131,7 +135,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       setTotal(0);
       console.error('task detail fetch failed', err);
     } finally {
-      if (requestID === requestRef.current && !controller.signal.aborted) {
+      if (showLoading && requestID === requestRef.current && !controller.signal.aborted) {
         setLoading(false);
       }
     }
@@ -146,7 +150,9 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
     if (!taskId) return undefined;
     const hasRunning = list.some((item) => item.status === 1);
     if (!hasRunning) return undefined;
-    const pollID = setInterval(() => { fetchData({ silent: true }); }, 3000);
+    const pollID = setInterval(() => {
+      if (canPollCurrentDocument()) fetchData({ silent: true });
+    }, 3000);
     return () => { clearInterval(pollID); };
   }, [list, taskId, fetchData]);
 

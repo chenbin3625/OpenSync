@@ -24,3 +24,14 @@ test('task detail uses shared explicit task item status metadata', () => {
   assert.match(homeUtilsSource, /export const taskItemStatusNames/);
   assert.match(homeUtilsSource, /9:\s*'等待重试前'/);
 });
+
+test('task detail polling follows document visibility', () => {
+  assert.match(taskDetailSource, /canPollCurrentDocument/);
+  assert.match(taskDetailSource, /if \(canPollCurrentDocument\(\)\) fetchData\(\{ silent: true \}\)/);
+});
+
+test('task detail silent polling does not toggle table loading state', () => {
+  assert.match(taskDetailSource, /const showLoading = !options\?\.silent/);
+  assert.match(taskDetailSource, /if \(showLoading\) \{\s+setLoading\(true\);\s+setError\(false\);\s+\}/s);
+  assert.match(taskDetailSource, /showLoading && requestID === requestRef\.current/);
+});

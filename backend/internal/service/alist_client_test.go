@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"opensync/internal/mapper"
 )
 
 func TestFileListEntryMetadataUsesHashInfoMD5(t *testing.T) {
@@ -229,5 +232,85 @@ func TestStoreAlistClientClosesReplacedClient(t *testing.T) {
 	}
 	if got := GetClientByID(42); got != newClient {
 		t.Fatalf("cached client = %#v, want new client", got)
+	}
+}
+
+func TestUpdateClientKeepsCachedClientWhenDatabaseUpdateFails(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+	if _, err := testDB.Exec(`CREATE TABLE alist_list(
+		id integer primary key autoincrement,
+		remark text,
+		url text UNIQUE,
+		userName text,
+		token text
+	)`); err != nil {
+		t.Fatalf("create alist_list: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO alist_list(id, remark, url, userName, token) VALUES (1, '', 'https://old.test', 'old', 'old-token')"); err != nil {
+		t.Fatalf("insert old alist: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO alist_list(id, remark, url, userName, token) VALUES (2, '', 'https://dupe.test', 'dupe', 'dupe-token')"); err != nil {
+		t.Fatalf("insert duplicate alist: %v", err)
+	}
+	restoreDB := mapper.SetDBForTest(testDB)
+	defer restoreDB()
+
+	oldNew := newAlistClient
+	newTransport := &closeTrackingTransport{}
+	newClient := &AlistClient{AlistID: 1, URL: "https://dupe.test", client: &http.Client{Transport: newTransport}}
+	newAlistClient = func(alistURL string, token string, alistID int64) (*AlistClient, error) {
+		return newClient, nil
+	}
+	defer func() {
+		newAlistClient = oldNew
+	}()
+
+	oldClient := &AlistClient{AlistID: 1, URL: "https://old.test"}
+	alistClientListMu.Lock()
+	previousList := alistClientList
+	alistClientList = map[int64]*AlistClient{1: oldClient}
+	alistClientListMu.Unlock()
+	defer func() {
+		alistClientListMu.Lock()
+		alistClientList = previousList
+		alistClientListMu.Unlock()
+	}()
+
+	defer func() {
+		if recovered := recover(); recovered == nil {
+			t.Fatalf("UpdateClient() did not panic on database constraint failure")
+		}
+		if got := GetClientByID(1); got != oldClient {
+			t.Fatalf("cached client changed after failed update")
+		}
+		if !newTransport.closed.Load() {
+			t.Fatalf("new client was not closed after failed update")
+		}
+	}()
+
+	UpdateClient(map[string]interface{}{
+		"id":     int64(1),
+		"url":    "https://dupe.test",
+		"token":  "new-token",
+		"remark": "new",
+	})
+}
+
+func TestValidateAlistURLRequiresExplicitHTTPSForRemoteHosts(t *testing.T) {
+	if err := validateAlistURL("alist.example.com"); err == nil {
+		t.Fatalf("validateAlistURL() accepted URL without scheme")
+	}
+	if err := validateAlistURL("http://alist.example.com"); err == nil {
+		t.Fatalf("validateAlistURL() accepted remote HTTP URL")
+	}
+	if err := validateAlistURL("http://localhost:5244"); err != nil {
+		t.Fatalf("validateAlistURL(localhost) error: %v", err)
+	}
+	if err := validateAlistURL("https://alist.example.com"); err != nil {
+		t.Fatalf("validateAlistURL(https) error: %v", err)
 	}
 }

@@ -103,9 +103,33 @@ func (jt *JobTask) startCopyItem(item *CopyItem) {
 	jt.copyWG.Add(1)
 	go func() {
 		defer jt.copyWG.Done()
-		defer jt.recoverWorkerPanic("copy", nil)
-		item.DoIt()
+		jt.runCopyItem(item)
 	}()
+}
+
+func (jt *JobTask) runCopyItem(item *CopyItem) {
+	defer func() {
+		if r := recover(); r != nil {
+			errMsg := workerPanicMessage("copy", r)
+			jt.failCopyItemIfStillDoing(item, errMsg)
+			jt.handleWorkerPanic("copy", r)
+		}
+	}()
+	item.DoIt()
+}
+
+func (jt *JobTask) failCopyItemIfStillDoing(item *CopyItem, errMsg string) {
+	if !jt.copyItemStillDoing(item) {
+		return
+	}
+	item.setProgress(taskStatusFailed, item.progress(), &errMsg)
+	jt.finishCopyItem(item)
+}
+
+func (jt *JobTask) copyItemStillDoing(item *CopyItem) bool {
+	jt.DoingMu.Lock()
+	defer jt.DoingMu.Unlock()
+	return item != nil && jt.Doing[item.DoingKey] == item
 }
 
 func (jt *JobTask) markWaitingAsAborted() {

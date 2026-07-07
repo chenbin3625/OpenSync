@@ -67,7 +67,6 @@ func newJobTask(taskID int64, jc *JobClient) *JobTask {
 		TaskID:         taskID,
 		JobClient:      jc,
 		Job:            job,
-		AlistClient:    GetClientByID(util.ToInt64(job["alistId"])),
 		CreateTime:     float64(time.Now().Unix()),
 		FinishedCounts: make(map[taskStatus]int),
 		FinishedSizes:  make(map[taskStatus]int64),
@@ -79,6 +78,7 @@ func newJobTask(taskID int64, jc *JobClient) *JobTask {
 		CurrentTasks:   make(map[int][]map[string]interface{}),
 	}
 	jt.ctx, jt.cancel = newTaskContext(config.GetConfig().Server.Timeout)
+	jt.AlistClient = GetClientByIDContext(jt.ctx, util.ToInt64(job["alistId"]))
 	return jt
 }
 

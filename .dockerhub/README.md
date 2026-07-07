@@ -49,6 +49,7 @@ services:
     volumes:
       - ./data:/app/data
     environment:
+      OPENSYNC_BIND: 0.0.0.0
       OPENSYNC_PORT: 8023
       GIN_MODE: release
 ```
@@ -56,7 +57,7 @@ services:
 ## 镜像标签
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.8.3`
+- `chenbin3625/opensync:1.8.4`
 - `chenbin3625/opensync:1.8`
 
 镜像支持以下平台：

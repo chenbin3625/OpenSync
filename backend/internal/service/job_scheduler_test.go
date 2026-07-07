@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildCronSpecFromSeparateFields(t *testing.T) {
-	spec := buildCronSpec(map[string]interface{}{
+	spec, err := buildCronSpec(map[string]interface{}{
 		"second":      "0",
 		"minute":      "*/5",
 		"hour":        "*",
@@ -14,6 +14,9 @@ func TestBuildCronSpecFromSeparateFields(t *testing.T) {
 		"month":       "*",
 		"day_of_week": "*",
 	})
+	if err != nil {
+		t.Fatalf("buildCronSpec() error: %v", err)
+	}
 
 	if spec != "0 */5 * * * *" {
 		t.Fatalf("buildCronSpec() = %q, want %q", spec, "0 */5 * * * *")
@@ -21,8 +24,21 @@ func TestBuildCronSpecFromSeparateFields(t *testing.T) {
 }
 
 func TestBuildCronSpecRejectsEmptySchedule(t *testing.T) {
-	if spec := buildCronSpec(map[string]interface{}{}); spec != "" {
+	spec, err := buildCronSpec(map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("buildCronSpec(empty) error: %v", err)
+	}
+	if spec != "" {
 		t.Fatalf("buildCronSpec(empty) = %q, want empty string", spec)
+	}
+}
+
+func TestBuildCronSpecRejectsLogInjectionCharacters(t *testing.T) {
+	_, err := buildCronSpec(map[string]interface{}{
+		"second": "0\nmalicious",
+	})
+	if err == nil {
+		t.Fatalf("buildCronSpec() error = nil, want invalid cron field error")
 	}
 }
 
@@ -72,6 +88,15 @@ func TestSchedulerResumeReAddsInitiallyDisabledJob(t *testing.T) {
 	}
 	if got := len(s.cron.Entries()); got != 1 {
 		t.Fatalf("entries after Resume = %d, want 1", got)
+	}
+}
+
+func TestSchedulerResumeAfterStopReturnsError(t *testing.T) {
+	s := NewScheduler()
+	s.Stop()
+
+	if err := s.Resume(0, map[string]interface{}{"interval": 1}, func() {}); err == nil {
+		t.Fatalf("Resume() error = nil after Stop, want error")
 	}
 }
 
