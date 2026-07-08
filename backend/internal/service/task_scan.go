@@ -427,6 +427,9 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 	}
 
 	children := make([]scanWork, 0)
+	dstIndex := newDstNameMatchIndex(dstFiles)
+	srcIndex := newSrcNameMatchIndex(srcFiles)
+	matchedDstKeys := make(map[string]struct{})
 	for key, srcVal := range srcFiles {
 		if jt.isBreak() {
 			break
@@ -438,14 +441,17 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 				continue
 			}
 			if util.ToInt(jt.Job["method"]) == 1 {
-				if dstDirVal, exists := dstFiles[key+"/"]; exists {
-					if jt.delFile(work.DstPath, key+"/", fileSize(dstDirVal)) != taskStatusSuccess {
+				if dstDirKey, dstDirVal, exists := dstIndex.find(key+"/", srcIndex); exists {
+					if jt.delFile(work.DstPath, dstDirKey, fileSize(dstDirVal)) != taskStatusSuccess {
 						continue
 					}
-					delete(dstFiles, key+"/")
+					delete(dstFiles, dstDirKey)
 				}
 			}
-			dstVal, exists := dstFiles[key]
+			dstKey, dstVal, exists := dstIndex.find(key, srcIndex)
+			if exists {
+				matchedDstKeys[dstKey] = struct{}{}
+			}
 			if !exists || fileChanged(srcVal, dstVal) {
 				jt.copyFile(work.SrcPath, work.DstPath, key, srcSize)
 			}
@@ -453,14 +459,15 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 			// Directory
 			if util.ToInt(jt.Job["method"]) == 1 {
 				fileKey := strings.TrimSuffix(key, "/")
-				if dstFileVal, exists := dstFiles[fileKey]; exists {
-					if jt.delFile(work.DstPath, fileKey, fileSize(dstFileVal)) != taskStatusSuccess {
+				if dstFileKey, dstFileVal, exists := dstIndex.find(fileKey, srcIndex); exists {
+					if jt.delFile(work.DstPath, dstFileKey, fileSize(dstFileVal)) != taskStatusSuccess {
 						continue
 					}
-					delete(dstFiles, fileKey)
+					delete(dstFiles, dstFileKey)
 				}
 			}
-			if _, exists := dstFiles[key]; !exists {
+			dstKey, _, exists := dstIndex.find(key, srcIndex)
+			if !exists {
 				jt.addChildScanWork(&children, scanWork{
 					SrcPath:     work.SrcPath + key,
 					DstPath:     work.DstPath + key,
@@ -470,9 +477,10 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 					Mode:        scanWorkMissingDst,
 				})
 			} else {
+				matchedDstKeys[dstKey] = struct{}{}
 				jt.addChildScanWork(&children, scanWork{
 					SrcPath:     work.SrcPath + key,
-					DstPath:     work.DstPath + key,
+					DstPath:     work.DstPath + dstKey,
 					SrcRootPath: work.SrcRootPath,
 					DstRootPath: work.DstRootPath,
 					FirstDst:    work.FirstDst,
@@ -490,9 +498,10 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 
 	if util.ToInt(jt.Job["method"]) == 1 {
 		for dstKey, dstVal := range dstFiles {
-			if _, exists := srcFiles[dstKey]; !exists {
-				jt.delFile(work.DstPath, dstKey, fileSize(dstVal))
+			if _, matched := matchedDstKeys[dstKey]; matched {
+				continue
 			}
+			jt.delFile(work.DstPath, dstKey, fileSize(dstVal))
 		}
 	}
 	jt.finishScanWork()
