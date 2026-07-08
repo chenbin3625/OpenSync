@@ -87,3 +87,194 @@ func TestFullSyncDeletesConflictingDestinationDirectoryBeforeQueueingFile(t *tes
 		t.Fatalf("queued file = %q, want foo", waiting[0].FileName)
 	}
 }
+
+func TestFullSyncSkipsEquivalentEscapedDestinationFileNameWithSameSize(t *testing.T) {
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	var removeCalls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/fs/list":
+			var req struct {
+				Path string `json:"path"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode list request: %v", err)
+			}
+			switch req.Path {
+			case "/src/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"Q&A.mp4","is_dir":false,"size":10}]}}`))
+			case "/dst/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"Q&amp;A.mp4","is_dir":false,"size":10}]}}`))
+			default:
+				t.Fatalf("unexpected list path %q", req.Path)
+			}
+		case "/api/fs/remove":
+			var req struct {
+				Dir   string   `json:"dir"`
+				Names []string `json:"names"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode remove request: %v", err)
+			}
+			removeCalls = append(removeCalls, req.Dir+req.Names[0])
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{"method": 1})
+	jt.syncWithHave(scanWork{
+		SrcPath:     "/src/",
+		DstPath:     "/dst/",
+		SrcRootPath: "/src/",
+		DstRootPath: "/dst/",
+		FirstDst:    true,
+		Mode:        scanWorkCompare,
+	}, nil)
+
+	if len(removeCalls) != 0 {
+		t.Fatalf("removeCalls = %#v, want none", removeCalls)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("persisted len = %d, want no delete records", len(persisted))
+	}
+	if waiting := jt.Waiting.snapshot(); len(waiting) != 0 {
+		t.Fatalf("waiting len = %d, want no queued copy", len(waiting))
+	}
+}
+
+func TestFullSyncRecopiesEquivalentEscapedDestinationFileNameWhenSizeDiffers(t *testing.T) {
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	var removeCalls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/fs/list":
+			var req struct {
+				Path string `json:"path"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode list request: %v", err)
+			}
+			switch req.Path {
+			case "/src/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"Q&A.mp4","is_dir":false,"size":11}]}}`))
+			case "/dst/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"Q&amp;A.mp4","is_dir":false,"size":10}]}}`))
+			default:
+				t.Fatalf("unexpected list path %q", req.Path)
+			}
+		case "/api/fs/remove":
+			var req struct {
+				Dir   string   `json:"dir"`
+				Names []string `json:"names"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode remove request: %v", err)
+			}
+			removeCalls = append(removeCalls, req.Dir+req.Names[0])
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{"method": 1})
+	jt.syncWithHave(scanWork{
+		SrcPath:     "/src/",
+		DstPath:     "/dst/",
+		SrcRootPath: "/src/",
+		DstRootPath: "/dst/",
+		FirstDst:    true,
+		Mode:        scanWorkCompare,
+	}, nil)
+
+	if len(removeCalls) != 0 {
+		t.Fatalf("removeCalls = %#v, want none", removeCalls)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("persisted len = %d, want no delete records", len(persisted))
+	}
+	waiting := jt.Waiting.snapshot()
+	if len(waiting) != 1 {
+		t.Fatalf("waiting len = %d, want one queued copy", len(waiting))
+	}
+	if waiting[0].FileName != "Q&A.mp4" {
+		t.Fatalf("queued file = %q, want Q&A.mp4", waiting[0].FileName)
+	}
+}
+
+func TestFullSyncDoesNotFuzzyMatchWhenSourceHasCanonicalNameCollision(t *testing.T) {
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/fs/list":
+			var req struct {
+				Path string `json:"path"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode list request: %v", err)
+			}
+			switch req.Path {
+			case "/src/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"Q&A.mp4","is_dir":false,"size":10},{"name":"Q&amp;A.mp4","is_dir":false,"size":10}]}}`))
+			case "/dst/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"Q&amp;A.mp4","is_dir":false,"size":10}]}}`))
+			default:
+				t.Fatalf("unexpected list path %q", req.Path)
+			}
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{"method": 1})
+	jt.syncWithHave(scanWork{
+		SrcPath:     "/src/",
+		DstPath:     "/dst/",
+		SrcRootPath: "/src/",
+		DstRootPath: "/dst/",
+		FirstDst:    true,
+		Mode:        scanWorkCompare,
+	}, nil)
+
+	if len(persisted) != 0 {
+		t.Fatalf("persisted len = %d, want no delete records", len(persisted))
+	}
+	waiting := jt.Waiting.snapshot()
+	if len(waiting) != 1 {
+		t.Fatalf("waiting len = %d, want one queued copy", len(waiting))
+	}
+	if waiting[0].FileName != "Q&A.mp4" {
+		t.Fatalf("queued file = %q, want Q&A.mp4", waiting[0].FileName)
+	}
+}
+
+func scanTestTask(serverURL string, client *http.Client, job map[string]interface{}) *JobTask {
+	jt := &JobTask{
+		TaskID:  42,
+		Job:     job,
+		Waiting: newCopyQueue(),
+		AlistClient: &AlistClient{
+			URL:    serverURL,
+			client: client,
+		},
+	}
+	jt.initRuntime()
+	return jt
+}

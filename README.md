@@ -149,7 +149,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.8.7
+image: chenbin3625/opensync:1.8.8
 ```
 
 ## Docker 命令部署
@@ -291,7 +291,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.8.7`
+- `chenbin3625/opensync:1.8.8`
 - `chenbin3625/opensync:1.8`
 
 镜像支持以下平台：
