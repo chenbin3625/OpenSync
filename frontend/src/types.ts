@@ -108,6 +108,7 @@ export interface TreeNode {
 export interface TaskRecord {
   id: number;
   status: number;
+  errMsg?: string | null;
   runTime?: number;
   successNum?: number;
   failNum?: number;

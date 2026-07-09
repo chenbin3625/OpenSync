@@ -41,6 +41,11 @@ func taskStatusUpdateErrorMessage(err error) string {
 }
 
 func (jt *JobTask) finishFailedTask(errMsg string) {
+	jobID := int64(0)
+	if jt.JobClient != nil {
+		jobID = jt.JobClient.JobID
+	}
+	log.Printf("Task %d failed (job %d): %s", jt.TaskID, jobID, errMsg)
 	if err := UpdateJobTaskStatusSimple(jt.TaskID, taskStatusSystemFailed, &errMsg); err != nil {
 		log.Printf("Failed to mark task %d as failed: %v", jt.TaskID, err)
 	}

@@ -17,6 +17,14 @@ test('task detail shows error reasons beside status instead of a separate error 
   assert.match(taskDetailSource, /Tooltip\s+title=\{record\.errMsg\}/);
 });
 
+test('task history list shows task-level error reasons beside status like file-level failures', () => {
+  const taskListSource = readFileSync(new URL('../src/pages/Home/TaskList.tsx', import.meta.url), 'utf8');
+  assert.match(taskListSource, /InfoCircleOutlined/);
+  assert.match(taskListSource, /className="task-status-with-error"/);
+  assert.match(taskListSource, /Tooltip\s+title=\{record\.errMsg\}/);
+  assert.match(taskListSource, /taskStatusColors\[s\] !== 'error'/);
+});
+
 test('task detail uses shared explicit task item status metadata', () => {
   assert.doesNotMatch(taskDetailSource, /const taskItemStatusList/);
   assert.match(taskDetailSource, /taskItemStatusNames/);

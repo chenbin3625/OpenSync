@@ -17,22 +17,15 @@ interface EngineFormValues {
   token?: string;
 }
 
-const isLocalAlistHost = (host: string) => {
-  const normalized = host.toLowerCase();
-  return normalized === 'localhost' || normalized === '127.0.0.1' ||
-    normalized === '::1' || normalized === '[::1]';
-};
-
 const validateAlistURL = (_: unknown, value?: string) => {
   if (!value) return Promise.resolve();
   try {
     const url = new URL(value);
-    if (url.protocol === 'https:') return Promise.resolve();
-    if (url.protocol === 'http:' && isLocalAlistHost(url.hostname)) return Promise.resolve();
+    if (url.protocol === 'http:' || url.protocol === 'https:') return Promise.resolve();
   } catch {
     return Promise.reject(new Error('请输入合法 URL'));
   }
-  return Promise.reject(new Error('非本机地址请使用 HTTPS'));
+  return Promise.reject(new Error('请输入 http 或 https 地址'));
 };
 
 export default function Engine() {
@@ -209,7 +202,7 @@ export default function Engine() {
               { validator: validateAlistURL },
             ]}
           >
-            <Input placeholder="https://alist.example.com" />
+            <Input placeholder="http://alist.example.com:5244" />
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input placeholder="可选备注" />

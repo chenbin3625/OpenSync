@@ -18,6 +18,7 @@ const runningHistoryStatuses = new Set([0, 1]);
 function sameTaskRecord(a: TaskRecord, b: TaskRecord): boolean {
   return a.id === b.id &&
     a.status === b.status &&
+    a.errMsg === b.errMsg &&
     a.runTime === b.runTime &&
     a.successNum === b.successNum &&
     a.failNum === b.failNum &&

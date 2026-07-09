@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/url"
 	"opensync/internal/i18n"
 	"opensync/internal/mapper"
@@ -180,22 +179,10 @@ func validateAlistURL(rawURL string) error {
 		return errors.New(i18n.G("alist_url_invalid"))
 	}
 	scheme := strings.ToLower(u.Scheme)
-	if scheme == "https" {
-		return nil
-	}
-	if scheme == "http" && isLocalAlistHost(u.Hostname()) {
+	if scheme == "http" || scheme == "https" {
 		return nil
 	}
 	return errors.New(i18n.G("alist_url_invalid"))
-}
-
-func isLocalAlistHost(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // UpdateClient updates an AList client
