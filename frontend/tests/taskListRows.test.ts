@@ -33,6 +33,20 @@ test('mergeTaskRecords keeps unchanged task row references during refresh', () =
   assert.equal(merged[1], existing[1]);
 });
 
+test('mergeTaskRecords replaces rows when task-level errMsg changes', () => {
+  const existing: TaskRecord[] = [
+    { id: 1, status: 6, errMsg: 'old failure', successNum: 0, failNum: 0, allNum: 0, runTime: 100 },
+  ];
+  const refreshed: TaskRecord[] = [
+    { id: 1, status: 6, errMsg: 'new failure', successNum: 0, failNum: 0, allNum: 0, runTime: 100 },
+  ];
+
+  const merged = mergeTaskRecords(existing, refreshed);
+
+  assert.notEqual(merged[0], existing[0]);
+  assert.equal(merged[0].errMsg, 'new failure');
+});
+
 test('mergeTaskRecords reuses the previous array when refreshed rows are unchanged', () => {
   const existing: TaskRecord[] = [
     { id: 1, status: 2, successNum: 10, failNum: 0, allNum: 10, runTime: 100 },

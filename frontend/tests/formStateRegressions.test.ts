@@ -26,11 +26,11 @@ test('engine connection test uses silent request handling', () => {
   assert.doesNotMatch(engineSource, /res\.code === 200/);
 });
 
-test('engine URL submission requires explicit HTTPS except local HTTP', () => {
+test('engine URL submission accepts http and https addresses', () => {
   assert.match(engineSource, /validateAlistURL/);
   assert.match(engineSource, /new URL\(value\)/);
-  assert.match(engineSource, /非本机地址请使用 HTTPS/);
-  assert.doesNotMatch(engineSource, /url = 'http:\/\/' \+ url/);
+  assert.match(engineSource, /url\.protocol === 'http:' \|\| url\.protocol === 'https:'/);
+  assert.doesNotMatch(engineSource, /非本机地址请使用 HTTPS/);
 });
 
 test('notification params are built from method-specific allowlists instead of the whole form', () => {

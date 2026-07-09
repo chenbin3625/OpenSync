@@ -300,17 +300,20 @@ func TestUpdateClientKeepsCachedClientWhenDatabaseUpdateFails(t *testing.T) {
 	})
 }
 
-func TestValidateAlistURLRequiresExplicitHTTPSForRemoteHosts(t *testing.T) {
+func TestValidateAlistURLAcceptsHTTPAndHTTPS(t *testing.T) {
 	if err := validateAlistURL("alist.example.com"); err == nil {
 		t.Fatalf("validateAlistURL() accepted URL without scheme")
 	}
-	if err := validateAlistURL("http://alist.example.com"); err == nil {
-		t.Fatalf("validateAlistURL() accepted remote HTTP URL")
+	if err := validateAlistURL("http://alist.example.com"); err != nil {
+		t.Fatalf("validateAlistURL(http) error: %v", err)
 	}
 	if err := validateAlistURL("http://localhost:5244"); err != nil {
 		t.Fatalf("validateAlistURL(localhost) error: %v", err)
 	}
 	if err := validateAlistURL("https://alist.example.com"); err != nil {
 		t.Fatalf("validateAlistURL(https) error: %v", err)
+	}
+	if err := validateAlistURL("ftp://alist.example.com"); err == nil {
+		t.Fatalf("validateAlistURL() accepted unsupported scheme")
 	}
 }

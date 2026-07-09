@@ -295,6 +295,7 @@ func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatu
 	var err error
 	taskID, err = mapper.AddJobTask(jc.idSnapshot(), time.Now().Unix())
 	if err != nil {
+		log.Printf("Failed to create task for job %d: %v", jc.JobID, err)
 		panic(err.Error())
 	}
 	if !jc.enabled() {

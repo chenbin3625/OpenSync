@@ -3,7 +3,7 @@ import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typo
 import {
   DeleteOutlined, EyeOutlined, StopOutlined, RedoOutlined,
   ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined,
-  ReloadOutlined,
+  ReloadOutlined, InfoCircleOutlined,
 } from '@ant-design/icons';
 import { jobGetTask, jobDeleteTask, jobTaskAction } from '../../api/job';
 import dayjs from 'dayjs';
@@ -518,8 +518,24 @@ export default function TaskList({
 
   const columns = useMemo(() => [
     {
-      title: '状态', dataIndex: 'status', key: 'status', width: 100,
-      render: (s: number) => <Tag color={taskStatusColors[s]}>{statusNames[s] || s}</Tag>,
+      title: '状态', dataIndex: 'status', key: 'status', width: 120,
+      render: (s: number, record: TaskRecord) => {
+        const errorReason = typeof record.errMsg === 'string' ? record.errMsg.trim() : '';
+        const statusTag = (
+          <Tag color={taskStatusColors[s]}>{statusNames[s] || s}</Tag>
+        );
+        if (taskStatusColors[s] !== 'error' || !errorReason) {
+          return statusTag;
+        }
+        return (
+          <span className="task-status-with-error">
+            {statusTag}
+            <Tooltip title={record.errMsg}>
+              <InfoCircleOutlined className="task-status-error-tip" aria-label="查看错误原因" />
+            </Tooltip>
+          </span>
+        );
+      },
     },
     {
       title: '开始时间', dataIndex: 'runTime', key: 'runTime',

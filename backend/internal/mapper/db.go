@@ -216,10 +216,15 @@ func ExecuteMany(query string, argsList [][]interface{}) error {
 		_, err := stmt.Exec(args...)
 		if err != nil {
 			tx.Rollback()
+			log.Printf("Database batch execute failed (size %d): %v", len(argsList), err)
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		log.Printf("Database batch commit failed (size %d): %v", len(argsList), err)
+		return err
+	}
+	return nil
 }
 
 // FetchAllToPage executes a paginated query
