@@ -44,6 +44,22 @@ func taskStatusValues(statuses ...taskStatus) []int {
 	return values
 }
 
+// retryableTaskStatuses are the item statuses "retry failed" should re-run:
+// everything that is not success. Covers failed, stopped, and any interrupted
+// in-flight items so a task stopped mid-run can also be recovered this way.
+var retryableTaskStatuses = []taskStatus{
+	taskStatusWaiting,
+	taskStatusRunning,
+	taskStatusStopped,
+	taskStatusFailed,
+	taskStatusRetrying,
+	taskStatusRetryDelay,
+}
+
+func retryableStatusValues() []int {
+	return taskStatusValues(retryableTaskStatuses...)
+}
+
 func (itemType taskItemType) Int() int {
 	return int(itemType)
 }

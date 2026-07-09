@@ -476,6 +476,10 @@ func (panicCopyItemClient) DeleteFileContext(context.Context, string, []string, 
 	return nil
 }
 
+func (panicCopyItemClient) FileExistsContext(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func TestCopyWorkerPanicPersistsFailedItemAndClearsDoing(t *testing.T) {
 	var persisted []map[string]interface{}
 	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)

@@ -43,7 +43,7 @@ export function jobDeleteTask(taskId: number | string) {
   return request.delete('/job', { params: { taskId } }) as Promise<ApiResponse<null>>;
 }
 
-export function jobTaskAction(taskId: number | string, action: 'pause' | 'resume' | 'restart') {
+export function jobTaskAction(taskId: number | string, action: 'stop' | 'retry') {
   return request.put('/job', { taskId: String(taskId), action }) as Promise<ApiResponse<null>>;
 }
 

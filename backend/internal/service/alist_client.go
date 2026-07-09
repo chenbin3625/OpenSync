@@ -369,6 +369,18 @@ func (c *AlistClient) FilePathList(ctx context.Context, path string) ([]map[stri
 	return result, nil
 }
 
+// FileExistsContext reports whether a direct child named `name` exists in `dir`.
+// It forces a fresh listing (no cache, no per-path throttle) so the result reflects
+// the storage's current state; intended for one-off verification, not polling.
+func (c *AlistClient) FileExistsContext(ctx context.Context, dir, name string) (bool, error) {
+	files, err := c.FileListApiContext(ctx, dir, 0, 0)
+	if err != nil {
+		return false, err
+	}
+	_, exists := files[name]
+	return exists, nil
+}
+
 func (c *AlistClient) MkdirContext(ctx context.Context, path string, scanInterval int) error {
 	if err := c.CheckWaitContext(ctx, path, scanInterval); err != nil {
 		return err

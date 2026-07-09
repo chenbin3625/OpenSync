@@ -266,18 +266,13 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 }
 
 func (jc *JobClient) runMarkedJob() {
-	jc.runMarkedJobWithRetryItems(nil)
+	jc.runMarkedJobConfig(0, nil)
 }
 
-func (jc *JobClient) runMarkedJobWithRetryItems(retryItems []map[string]interface{}) {
-	jc.runMarkedJobWithRetryConfig(retryItems, 0, nil)
-}
-
-func (jc *JobClient) runMarkedJobWithRetrySource(sourceTaskID int64, statuses []taskStatus) {
-	jc.runMarkedJobWithRetryConfig(nil, sourceTaskID, statuses)
-}
-
-func (jc *JobClient) runMarkedJobWithRetryConfig(retryItems []map[string]interface{}, sourceTaskID int64, statuses []taskStatus) {
+// runMarkedJobConfig starts a task. With sourceTaskID > 0 it replays the source
+// task's items whose status is in statuses (retry-failed); otherwise it runs a
+// fresh full scan.
+func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatus) {
 	taskID := int64(0)
 	defer func() {
 		if r := recover(); r != nil {
@@ -309,9 +304,6 @@ func (jc *JobClient) runMarkedJobWithRetryConfig(retryItems []map[string]interfa
 		return
 	}
 	task := newJobTask(taskID, jc)
-	if len(retryItems) > 0 {
-		task.RetryItems = cloneTaskRows(retryItems)
-	}
 	if sourceTaskID > 0 {
 		task.RetrySourceTaskID = sourceTaskID
 		task.RetryStatuses = append([]taskStatus(nil), statuses...)
@@ -349,22 +341,13 @@ func (jc *JobClient) DoManual() {
 	go jc.runMarkedJob()
 }
 
-// DoResumeItems triggers a manual execution for interrupted items from a stopped task.
-func (jc *JobClient) DoResumeItems(items []map[string]interface{}) {
-	if len(items) == 0 {
-		panicPublic(i18n.G("no_resumable_task_items"))
-	}
+// DoRetryFailedTaskItems triggers a manual execution that replays the non-success
+// items of a historical task.
+func (jc *JobClient) DoRetryFailedTaskItems(sourceTaskID int64) {
 	if !jc.tryMarkDoing() {
 		panicPublic(i18n.G("job_running"))
 	}
-	go jc.runMarkedJobWithRetryItems(items)
-}
-
-func (jc *JobClient) DoResumeTaskItems(sourceTaskID int64) {
-	if !jc.tryMarkDoing() {
-		panicPublic(i18n.G("job_running"))
-	}
-	go jc.runMarkedJobWithRetrySource(sourceTaskID, []taskStatus{taskStatusWaiting, taskStatusRunning, taskStatusStopped})
+	go jc.runMarkedJobConfig(sourceTaskID, retryableTaskStatuses)
 }
 
 // ResumeJob enables and resumes the job

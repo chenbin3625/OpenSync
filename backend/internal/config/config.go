@@ -65,7 +65,7 @@ const (
 const (
 	DefaultCopyConcurrency = 5
 	DefaultScanConcurrency = 8
-	DefaultMaxRetries      = 0
+	DefaultMaxRetries      = 2
 
 	MinCopyConcurrency = 1
 	MaxCopyConcurrency = 100

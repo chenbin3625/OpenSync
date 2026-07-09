@@ -29,7 +29,13 @@ type copyItemClient interface {
 	TaskDeleteContext(context.Context, string, taskItemType) error
 	TaskInfoContext(context.Context, string, taskItemType) (map[string]interface{}, error)
 	DeleteFileContext(context.Context, string, []string, int) error
+	FileExistsContext(context.Context, string, string) (bool, error)
 }
+
+// maxTransientPollErrors is the number of consecutive transient TaskInfo polling
+// errors (network blips, 5xx, connection limits) tolerated before a copy item is
+// declared failed. Each retry rides the loop's existing poll-interval backoff.
+const maxTransientPollErrors = 3
 
 type CopyItem struct {
 	mu          sync.RWMutex
@@ -227,6 +233,7 @@ func (ci *CopyItem) errorMessage() string {
 func (ci *CopyItem) checkAndGetStatus() {
 	runtime := ci.copyRuntime()
 	client := ci.copyClient()
+	transientErrs := 0
 	for {
 		ctxErr := runtime.context().Err()
 		if runtime.isBreak() || ctxErr != nil {
@@ -255,11 +262,29 @@ func (ci *CopyItem) checkAndGetStatus() {
 			}
 			eMsg := err.Error()
 			if strings.Contains(eMsg, "404") {
+				// Task record is gone. For move/copy this usually means AList
+				// finished and removed the record (source already deleted by the
+				// move). Verify the destination: if the file is there, the transfer
+				// succeeded and we must not falsely mark it failed.
+				if exists, verr := ci.verifyDstExists(runtime, client); verr == nil && exists {
+					ci.setProgress(taskStatusSuccess, 100, nil)
+					break
+				}
 				eMsg = i18n.G("task_may_delete")
+				ci.setProgress(taskStatusFailed, 0, &eMsg)
+				break
+			}
+			// Transient error (connection limit / timeout / 5xx): keep polling a
+			// few more times before giving up, so a momentary blip does not turn
+			// a completed transfer into a false failure.
+			transientErrs++
+			if transientErrs < maxTransientPollErrors {
+				continue
 			}
 			ci.setProgress(taskStatusFailed, 0, &eMsg)
 			break
 		}
+		transientErrs = 0
 
 		state := taskStatusFromValue(taskInfo["state"])
 		progress := util.ToFloat64(taskInfo["progress"])
@@ -287,6 +312,16 @@ func (ci *CopyItem) checkAndGetStatus() {
 			break
 		}
 	}
+}
+
+// verifyDstExists checks whether the destination file is present. Used when the
+// AList task record has vanished (404) to decide whether a move/copy actually
+// completed. Runs on an independent cleanup context so it is not cut short by a
+// cancelling task context.
+func (ci *CopyItem) verifyDstExists(runtime copyItemRuntime, client copyItemClient) (bool, error) {
+	ctx, cancel := runtime.cleanupContext()
+	defer cancel()
+	return client.FileExistsContext(ctx, ci.DstPath, ci.FileName)
 }
 
 func (ci *CopyItem) stopRemoteTask(client copyItemClient, cause error) {

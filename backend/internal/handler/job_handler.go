@@ -127,12 +127,10 @@ func UpdateJob(c *gin.Context) {
 			return
 		}
 		switch req.Action {
-		case "pause":
-			service.PauseTask(taskID)
-		case "resume":
-			service.ResumeTask(taskID)
-		case "restart":
-			service.RestartTask(taskID)
+		case "stop":
+			service.StopTask(taskID)
+		case "retry":
+			service.RetryFailedTask(taskID)
 		default:
 			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
 			return
