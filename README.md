@@ -15,7 +15,7 @@ OpenSync is an AList / OpenList automation tool for fnOS, NAS, and Docker enviro
 - 支持手动执行、按分钟间隔执行、Cron 定时执行和一键执行全部启用任务。
 - 支持 Gitignore 风格排除规则，以及最小/最大文件大小过滤。
 - 实时展示扫描进度、传输速度、剩余时间、已完成、失败、等待和运行中明细。
-- 实时任务支持暂停；历史任务支持查看详情、继续执行中断项和删除记录。
+- 实时任务支持停止；历史任务支持查看详情、重试未完成项和删除记录。
 - 支持多个 AList / OpenList 引擎，添加或更新时会验证连接，令牌不会在列表中展示。
 - 支持自定义 Webhook、Server 酱、钉钉、企业微信、飞书 / Lark 通知。
 - 自定义 Webhook 支持 GET / POST / PUT、请求体模板和请求头 JSON。
@@ -193,7 +193,7 @@ docker run -d \
 | `OPENSYNC_TASK_TIMEOUT` | `48` | 单次任务超时时间，单位小时，`0` 表示不限制 |
 | `OPENSYNC_COPY_CONCURRENCY` | `5` | 单个任务的复制并发数，范围 `1` 到 `100` |
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | 单个任务的扫描并发数，范围 `1` 到 `20` |
-| `OPENSYNC_MAX_RETRIES` | `0` | 单个复制项失败后的最大自动重试次数，`0` 表示不自动重试 |
+| `OPENSYNC_MAX_RETRIES` | `2` | 单个复制项失败后的最大自动重试次数，`0` 表示不自动重试 |
 
 如果需要使用配置文件，可以创建或通过系统设置页生成 `data/config.ini`：
 
