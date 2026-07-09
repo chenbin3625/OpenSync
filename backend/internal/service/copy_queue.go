@@ -30,19 +30,6 @@ func newCopyQueueWithCapacity(capacity int) *copyQueue {
 	}
 }
 
-func (q *copyQueue) push(item *CopyItem) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	if q.closed || !q.hasCapacityLocked() {
-		return false
-	}
-	q.items = append(q.items, item)
-	q.addWaitStatsLocked(item)
-	q.signal()
-	return true
-}
-
 func (q *copyQueue) pushWait(ctx context.Context, item *CopyItem) bool {
 	for {
 		q.mu.Lock()

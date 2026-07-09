@@ -56,6 +56,7 @@ type JobTask struct {
 	persistFlushMu    sync.Mutex
 	persistFlushScheduled bool
 	copyMonitor       *copyTaskMonitor
+	copyMonitorClientOverride copyItemClient
 }
 
 // NewJobTask creates and starts a new task
@@ -152,6 +153,13 @@ func (jt *JobTask) fatalError() *string {
 	}
 	msg := *jt.FatalErr
 	return &msg
+}
+
+func (jt *JobTask) copyMonitorClient() copyItemClient {
+	if jt.copyMonitorClientOverride != nil {
+		return jt.copyMonitorClientOverride
+	}
+	return jt.AlistClient
 }
 
 func scanConcurrencyLimit() int {

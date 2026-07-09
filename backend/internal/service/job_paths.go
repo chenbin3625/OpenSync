@@ -44,11 +44,7 @@ func encodePathList(paths []string) string {
 	return string(data)
 }
 
-func normalizeSrcPathForStorage(value interface{}) string {
-	return encodePathList(parsePathList(value))
-}
-
-func normalizeDstPathForStorage(value interface{}) string {
+func normalizePathListForStorage(value interface{}) string {
 	return encodePathList(parsePathList(value))
 }
 

@@ -1,16 +1,5 @@
-import request from './request';
+import request, { type RequestOptions, withRequestOptions } from './request';
 import type { AlistItem, ApiResponse, PathItem } from '../types';
-
-type RequestOptions = {
-  signal?: AbortSignal;
-  silent?: boolean;
-};
-
-const withRequestOptions = (params: Record<string, unknown>, options?: RequestOptions) => ({
-  params,
-  ...(options?.signal ? { signal: options.signal } : {}),
-  ...(options?.silent ? { silent: true } : {}),
-});
 
 export function alistGet() {
   return request.get('/alist') as Promise<ApiResponse<AlistItem[]>>;

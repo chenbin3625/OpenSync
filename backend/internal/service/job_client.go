@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"opensync/internal/msg"
@@ -74,6 +75,16 @@ func (jc *JobClient) clearCurrentTask(task *JobTask) {
 }
 
 func (jc *JobClient) waitUntilIdle(timeout time.Duration) bool {
+	if timeout <= 0 {
+		jc.mu.Lock()
+		idle := jc.isIdleLocked()
+		jc.mu.Unlock()
+		return idle
+	}
+	return jc.waitUntilIdleContext(context.Background(), timeout)
+}
+
+func (jc *JobClient) waitUntilIdleContext(ctx context.Context, timeout time.Duration) bool {
 	var deadline <-chan time.Time
 	var timer *time.Timer
 	if timeout > 0 {
@@ -88,14 +99,15 @@ func (jc *JobClient) waitUntilIdle(timeout time.Duration) bool {
 			jc.mu.Unlock()
 			return true
 		}
-		if timeout <= 0 {
-			jc.mu.Unlock()
-			return false
-		}
 		stateCh := jc.stateChangeChLocked()
 		jc.mu.Unlock()
 
 		select {
+		case <-ctx.Done():
+			jc.mu.Lock()
+			idle := jc.isIdleLocked()
+			jc.mu.Unlock()
+			return idle
 		case <-deadline:
 			jc.mu.Lock()
 			idle := jc.isIdleLocked()

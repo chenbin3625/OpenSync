@@ -19,8 +19,8 @@ import (
 
 func TestCopyQueueStatsTracksWaitTotals(t *testing.T) {
 	queue := newCopyQueueWithCapacity(10)
-	queue.push(&CopyItem{FileName: "a.txt", FileSize: int64(10), CopyType: taskItemTypeCopy})
-	queue.push(&CopyItem{FileName: "b.txt", FileSize: int64(20), CopyType: taskItemTypeCopy})
+	queue.pushWait(context.Background(), &CopyItem{FileName: "a.txt", FileSize: int64(10), CopyType: taskItemTypeCopy})
+	queue.pushWait(context.Background(), &CopyItem{FileName: "b.txt", FileSize: int64(20), CopyType: taskItemTypeCopy})
 
 	count, size := queue.stats()
 	if count != 2 || size != 30 {
@@ -40,7 +40,7 @@ func TestCopyQueueKeepsFIFOAndCompacts(t *testing.T) {
 	queue := newCopyQueue()
 
 	for i := 0; i < 128; i++ {
-		queue.push(&CopyItem{FileName: string(rune('a' + i%26))})
+		queue.pushWait(context.Background(), &CopyItem{FileName: string(rune('a' + i%26))})
 	}
 
 	for i := 0; i < 96; i++ {
@@ -61,7 +61,7 @@ func TestCopyQueueKeepsFIFOAndCompacts(t *testing.T) {
 	}
 
 	for i := 128; i < 160; i++ {
-		queue.push(&CopyItem{FileName: string(rune('a' + i%26))})
+		queue.pushWait(context.Background(), &CopyItem{FileName: string(rune('a' + i%26))})
 	}
 
 	for i := 96; i < 160; i++ {
@@ -81,10 +81,12 @@ func TestCopyQueueKeepsFIFOAndCompacts(t *testing.T) {
 func TestCopyQueueRejectsPushWhenCapacityIsFull(t *testing.T) {
 	queue := newCopyQueueWithCapacity(1)
 
-	if ok := queue.push(&CopyItem{FileName: "one.txt"}); !ok {
+	if ok := queue.pushWait(context.Background(), &CopyItem{FileName: "one.txt"}); !ok {
 		t.Fatalf("first push returned false, want true")
 	}
-	if ok := queue.push(&CopyItem{FileName: "two.txt"}); ok {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if ok := queue.pushWait(ctx, &CopyItem{FileName: "two.txt"}); ok {
 		t.Fatalf("second push returned true for full bounded queue, want false")
 	}
 
@@ -95,7 +97,7 @@ func TestCopyQueueRejectsPushWhenCapacityIsFull(t *testing.T) {
 	if item.FileName != "one.txt" {
 		t.Fatalf("pop() = %q, want one.txt", item.FileName)
 	}
-	if ok := queue.push(&CopyItem{FileName: "two.txt"}); !ok {
+	if ok := queue.pushWait(context.Background(), &CopyItem{FileName: "two.txt"}); !ok {
 		t.Fatalf("push after pop returned false, want true")
 	}
 }
@@ -380,7 +382,7 @@ func TestMarkWaitingAsAbortedMovesQueuedItemsToFinish(t *testing.T) {
 	}
 	jt.initRuntime()
 
-	jt.Waiting.push(&CopyItem{
+	jt.Waiting.pushWait(context.Background(), &CopyItem{
 		SrcPath:    "/src/",
 		DstPath:    "/dst/",
 		FileName:   "one.txt",
@@ -389,7 +391,7 @@ func TestMarkWaitingAsAbortedMovesQueuedItemsToFinish(t *testing.T) {
 		Status:     0,
 		CreateTime: 100,
 	})
-	jt.Waiting.push(&CopyItem{
+	jt.Waiting.pushWait(context.Background(), &CopyItem{
 		SrcPath:    "/src/",
 		DstPath:    "/dst/",
 		FileName:   "two.txt",

@@ -237,17 +237,6 @@ func taskListSize(tasks []map[string]interface{}) int64 {
 	return totalSize
 }
 
-func (jt *JobTask) currentTasksSnapshot() map[int][]map[string]interface{} {
-	jt.CurrentMu.RLock()
-	defer jt.CurrentMu.RUnlock()
-
-	snapshot := make(map[int][]map[string]interface{}, len(jt.CurrentTasks))
-	for status, tasks := range jt.CurrentTasks {
-		snapshot[status] = append([]map[string]interface{}(nil), tasks...)
-	}
-	return snapshot
-}
-
 func (jt *JobTask) copyItemToMap(item *CopyItem) map[string]interface{} {
 	return item.ToMap(jt.TaskID)
 }

@@ -105,3 +105,16 @@ service.interceptors.response.use(
 );
 
 export default service;
+
+export type RequestOptions = {
+  signal?: AbortSignal;
+  silent?: boolean;
+};
+
+export const withRequestOptions = (params: Record<string, unknown>, options?: RequestOptions) => ({
+  params,
+  ...(options?.signal ? { signal: options.signal } : {}),
+  ...(options?.silent ? { silent: true } : {}),
+});
+
+export const POLL_INTERVAL_MS = 3000;

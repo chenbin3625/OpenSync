@@ -84,48 +84,6 @@ func finalTaskStatus(isBreak bool, ctxErr error, allNum, failOrOtherNum int) tas
 	return taskStatusSuccess
 }
 
-// UpdateJobTaskStatusFinal updates task status after completion with notification
-func UpdateJobTaskStatusFinal(taskID int64, status taskStatus, currentTasks map[int][]map[string]interface{}, createTime float64) {
-	duration := taskDuration(createTime)
-
-	var taskNum map[string]interface{}
-	var errMsg *string
-
-	if currentTasks != nil {
-		successNum := len(currentTasks[taskStatusSuccess.Int()])
-		failNum := len(currentTasks[taskStatusFailed.Int()])
-		otherNum := len(currentTasks[taskStatusOther.Int()])
-		allNum := successNum + failNum + otherNum
-
-		var sumSize int64
-		if tasks, ok := currentTasks[taskStatusSuccess.Int()]; ok {
-			for _, t := range tasks {
-				if t["fileSize"] != nil && taskItemTypeFromValue(t["type"]) != taskItemTypeDelete {
-					sumSize += util.ToInt64(t["fileSize"])
-				}
-			}
-		}
-
-		taskNum = map[string]interface{}{
-			"waitNum":    0,
-			"runningNum": 0,
-			"successNum": successNum,
-			"failNum":    failNum,
-			"otherNum":   otherNum,
-			"allNum":     allNum,
-			"duration":   duration,
-			"sumSize":    sumSize,
-		}
-	} else {
-		taskNum = GetCuTaskNum(taskID)
-		taskNum["duration"] = duration
-	}
-
-	if err := finishJobTaskStatus(taskID, status, errMsg, taskNum, duration, createTime); err != nil {
-		log.Printf("Failed to finish task %d status update: %v", taskID, err)
-	}
-}
-
 func finishJobTaskStatus(taskID int64, status taskStatus, errMsg *string, taskNum map[string]interface{}, duration int, createTime float64) error {
 	taskNumJSON, _ := json.Marshal(taskNum)
 	if err := mapper.UpdateJobTaskStatusAndNum(taskID, status.Int(), errMsg, string(taskNumJSON)); err != nil {

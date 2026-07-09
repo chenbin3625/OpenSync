@@ -6,6 +6,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { jobGetTaskItem } from '../../api/job';
 import dayjs from 'dayjs';
 import type { TaskItem } from '../../types';
+import { POLL_INTERVAL_MS } from '../../api/request';
+import EllipsisText from './components/EllipsisText';
 import {
   displayText, formatSize, taskItemStatusColors, taskItemStatusNames,
   taskItemStatusOptions, taskTypeNames,
@@ -43,19 +45,7 @@ function LongText({
   maxWidth?: number;
   type?: 'secondary' | 'danger';
 }) {
-  const text = displayText(value);
-  if (text === '--') return <Text type="secondary">--</Text>;
-  return (
-    <Tooltip title={text}>
-      <Text
-        type={type}
-        ellipsis
-        style={{ display: 'inline-block', maxWidth, verticalAlign: 'bottom' }}
-      >
-        {text}
-      </Text>
-    </Tooltip>
-  );
+  return <EllipsisText value={value} maxWidth={maxWidth} type={type} />;
 }
 
 type TaskDetailProps = {
@@ -152,7 +142,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
     if (!hasRunning) return undefined;
     const pollID = setInterval(() => {
       if (canPollCurrentDocument()) fetchData({ silent: true });
-    }, 3000);
+    }, POLL_INTERVAL_MS);
     return () => { clearInterval(pollID); };
   }, [list, taskId, fetchData]);
 

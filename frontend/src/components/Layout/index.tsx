@@ -1,5 +1,4 @@
 import type React from 'react';
-import { useEffect } from 'react';
 import { Layout as AntLayout, Menu, Button, Typography, Popconfirm, Space, theme } from 'antd';
 import {
   HomeOutlined,
@@ -27,14 +26,10 @@ const menuItems = [
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { theme: themeMode, setTheme, setUserInfo, leftIndex, setLeftIndex } = useStore();
+  const { theme: themeMode, setTheme, setUserInfo } = useStore();
   const { token } = theme.useToken();
 
   const selectedKey = '/' + location.pathname.split('/')[1];
-
-  useEffect(() => {
-    setLeftIndex(selectedKey);
-  }, [selectedKey, setLeftIndex]);
 
   const handleMenuClick = (e: { key: string }) => {
     navigate(e.key);
@@ -97,7 +92,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           className="app-top-nav"
           mode="horizontal"
           theme={themeMode}
-          selectedKeys={[leftIndex || selectedKey]}
+          selectedKeys={[selectedKey]}
           items={menuItems}
           onClick={handleMenuClick}
           style={{

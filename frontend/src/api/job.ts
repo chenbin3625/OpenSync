@@ -1,16 +1,5 @@
-import request from './request';
+import request, { type RequestOptions, withRequestOptions } from './request';
 import type { ApiResponse, CurrentTaskData, JobItem, PageData, TaskItem, TaskRecord } from '../types';
-
-type RequestOptions = {
-  signal?: AbortSignal;
-  silent?: boolean;
-};
-
-const withRequestOptions = (params: Record<string, unknown>, options?: RequestOptions) => ({
-  params,
-  ...(options?.signal ? { signal: options.signal } : {}),
-  ...(options?.silent ? { silent: true } : {}),
-});
 
 export function jobGetJob(params: Record<string, unknown>, options?: RequestOptions) {
   return request.get('/job', withRequestOptions(params, options)) as Promise<ApiResponse<PageData<JobItem>>>;

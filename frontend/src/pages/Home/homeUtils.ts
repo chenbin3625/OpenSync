@@ -1,4 +1,4 @@
-import type { JobItem, TreeNode } from '../../types';
+import type { AlistItem, JobItem, TreeNode } from '../../types';
 
 export type ScheduleValues = {
   isCron?: number;
@@ -22,6 +22,10 @@ export const statusLabels: Record<number, string> = {
 export const taskStatusColors: Record<number, string> = {
   0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
   4: 'default', 5: 'warning', 6: 'error', 7: 'error', 8: 'default',
+};
+export const taskRecordStatusNames: Record<number, string> = {
+  0: '等待中', 1: '运行中', 2: '成功', 3: '部分失败',
+  4: '已中止', 5: '超时', 6: '失败', 7: '已停止', 8: '无需同步',
 };
 export const taskItemStatusColors: Record<number, string> = {
   0: 'default', 1: 'processing', 2: 'success', 3: 'warning',
@@ -228,8 +232,10 @@ export const normalizeFormPaths = (value: string | string[] | undefined): string
   return paths.map((item) => String(item ?? '').trim()).filter(Boolean);
 };
 
-export const parseJobSrcPaths = parseJobPathList;
-export const parseJobDstPaths = parseJobPathList;
+export const formatAlistLabel = (alist: AlistItem, options?: { includeUrl?: boolean }) => {
+  const base = options?.includeUrl ? `${alist.userName} - ${alist.url}` : alist.userName;
+  return alist.remark ? `${base} (${alist.remark})` : base;
+};
 
 export const normalizeTreePath = (value: unknown): string => {
   const raw = String(value ?? '').trim();

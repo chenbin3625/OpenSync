@@ -1,6 +1,6 @@
 import type { CurrentTaskData, PageData, TaskItem, TaskRecord } from '../../types';
 
-export type TaskListView = 'all' | 'realtime' | 'history';
+export type TaskListView = 'realtime' | 'history';
 
 type CurrentTaskIdentity = {
   createTime?: number | string | null;
@@ -15,6 +15,25 @@ export type RealtimeTaskLoadKey = {
 
 const runningHistoryStatuses = new Set([0, 1]);
 
+function mergeByKey<T>(
+  previous: T[],
+  next: T[],
+  getKey: (item: T, index: number) => string,
+  isSame: (a: T, b: T) => boolean,
+): T[] {
+  if (previous.length === 0) return next;
+
+  const previousByKey = new Map(previous.map((item, index) => [getKey(item, index), item]));
+  let changed = previous.length !== next.length;
+  const merged = next.map((item, index) => {
+    const existing = previousByKey.get(getKey(item, index));
+    const row = existing && isSame(existing, item) ? existing : item;
+    if (row !== previous[index]) changed = true;
+    return row;
+  });
+  return changed ? merged : previous;
+}
+
 function sameTaskRecord(a: TaskRecord, b: TaskRecord): boolean {
   return a.id === b.id &&
     a.status === b.status &&
@@ -27,17 +46,7 @@ function sameTaskRecord(a: TaskRecord, b: TaskRecord): boolean {
 }
 
 export function mergeTaskRecords(previous: TaskRecord[], next: TaskRecord[]): TaskRecord[] {
-  if (previous.length === 0) return next;
-
-  const previousByID = new Map(previous.map((task) => [task.id, task]));
-  let changed = previous.length !== next.length;
-  const merged = next.map((task, index) => {
-    const existing = previousByID.get(task.id);
-    const row = existing && sameTaskRecord(existing, task) ? existing : task;
-    if (row !== previous[index]) changed = true;
-    return row;
-  });
-  return changed ? merged : previous;
+  return mergeByKey(previous, next, (task) => String(task.id), sameTaskRecord);
 }
 
 export function getTaskItemKey(task: TaskItem, fallback = 0): string {
@@ -69,17 +78,7 @@ function sameTaskItem(a: TaskItem, b: TaskItem): boolean {
 }
 
 export function mergeTaskItems(previous: TaskItem[], next: TaskItem[]): TaskItem[] {
-  if (previous.length === 0) return next;
-
-  const previousByKey = new Map(previous.map((task, index) => [getTaskItemKey(task, index), task]));
-  let changed = previous.length !== next.length;
-  const merged = next.map((task, index) => {
-    const existing = previousByKey.get(getTaskItemKey(task, index));
-    const row = existing && sameTaskItem(existing, task) ? existing : task;
-    if (row !== previous[index]) changed = true;
-    return row;
-  });
-  return changed ? merged : previous;
+  return mergeByKey(previous, next, getTaskItemKey, sameTaskItem);
 }
 
 export function normalizeTaskItemPage(
@@ -112,16 +111,7 @@ export function shouldReplaceRealtimeRows(
     previous.page !== next.page;
 }
 
-export function shouldResetRealtimeTotal(
-  previous: RealtimeTaskLoadKey | null,
-  next: RealtimeTaskLoadKey,
-): boolean {
-  return !previous ||
-    previous.status !== next.status ||
-    previous.taskIdentity !== next.taskIdentity;
-}
-
-export function shouldClearRealtimeRows(
+export function shouldResetRealtimeSnapshot(
   previous: RealtimeTaskLoadKey | null,
   next: RealtimeTaskLoadKey,
 ): boolean {
@@ -148,5 +138,5 @@ export function filterRunningTaskRows(history: TaskRecord[]): TaskRecord[] {
 }
 
 export function shouldPollRealtime(view: TaskListView): boolean {
-  return view === 'all' || view === 'realtime';
+  return view === 'realtime';
 }

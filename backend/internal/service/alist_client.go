@@ -337,27 +337,15 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 
 // FilePathList gets subdirectory list for path selector
 func (c *AlistClient) FilePathList(ctx context.Context, path string) ([]map[string]string, error) {
-	data, err := c.PostContext(ctx, "/api/fs/list", map[string]interface{}{
-		"path":    path,
-		"refresh": true,
-	}, nil)
+	files, err := c.FileListApiContext(ctx, path, 0, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	var content struct {
-		Content []FileListEntry `json:"content"`
-	}
-	if err := json.Unmarshal(data, &content); err != nil {
-		return nil, err
-	}
-
 	var result []map[string]string
-	if content.Content != nil {
-		for _, item := range content.Content {
-			if item.IsDir {
-				result = append(result, map[string]string{"path": item.Name})
-			}
+	for name := range files {
+		if strings.HasSuffix(name, "/") {
+			result = append(result, map[string]string{"path": strings.TrimSuffix(name, "/")})
 		}
 	}
 	if result == nil {

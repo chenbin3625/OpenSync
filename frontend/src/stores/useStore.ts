@@ -5,11 +5,9 @@ interface AppState {
   userInfo: UserInfo | null;
   authChecked: boolean;
   theme: 'dark' | 'light';
-  leftIndex: string;
   setUserInfo: (user: UserInfo | null) => void;
   setAuthChecked: (checked: boolean) => void;
   setTheme: (theme: 'dark' | 'light') => void;
-  setLeftIndex: (index: string) => void;
 }
 
 const getInitialTheme = (): 'dark' | 'light' => {
@@ -54,7 +52,6 @@ export const useStore = create<AppState>((set) => ({
   userInfo: getInitialUser(),
   authChecked: false,
   theme: getInitialTheme(),
-  leftIndex: '/home',
   setUserInfo: (user) => {
     saveLifeData('vuex_userInfo', user);
     set({ userInfo: user });
@@ -64,5 +61,4 @@ export const useStore = create<AppState>((set) => ({
     saveLifeData('vuex_theme', theme);
     set({ theme });
   },
-  setLeftIndex: (index) => set({ leftIndex: index }),
 }));

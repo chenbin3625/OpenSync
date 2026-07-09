@@ -1,20 +1,19 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Key } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Button, Space, Drawer, Select, Input, Form, Switch, InputNumber,
   Row, Col, Divider, TreeSelect, Spin, Tooltip,
 } from 'antd';
 import { QuestionCircleOutlined } from '@ant-design/icons';
 import { jobPost } from '../../api/job';
-import { alistGetPath } from '../../api/alist';
-import type { AlistItem, JobFormValues, JobItem, PathItem, TreeNode } from '../../types';
+import type { AlistItem, JobFormValues, JobItem, TreeNode } from '../../types';
 import { fileSizeToBytes, fileSizeUnitOptions, splitBytesToFileSize } from './fileSizeUnits';
 import {
   methodOptions, methodNames, cronTypeNames, cronFields, defaultCronFields,
   compactItemStyle, compactDividerStyle, defaultExclude,
-  parseJobSrcPaths, parseJobDstPaths, normalizeFormPaths,
-  formatSchedulePlan, buildPathTreeData, mergeTreeData, type ScheduleValues,
+  parseJobPathList, normalizeFormPaths,
+  formatSchedulePlan, formatAlistLabel, type ScheduleValues,
 } from './homeUtils';
+import { usePathTree } from './usePathTree';
 
 export interface JobFormDrawerProps {
   visible: boolean;
@@ -87,14 +86,8 @@ export default function JobFormDrawer({
   visible, editingJob, alistList, onClose, onSubmit,
 }: JobFormDrawerProps) {
   const [form] = Form.useForm();
-  const [srcTreeData, setSrcTreeData] = useState<TreeNode[]>([]);
-  const [dstTreeData, setDstTreeData] = useState<TreeNode[]>([]);
-  const [srcLoadedKeys, setSrcLoadedKeys] = useState<Key[]>([]);
-  const [dstLoadedKeys, setDstLoadedKeys] = useState<Key[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  // Synchronous re-entry guard: set before the await so a rapid second click
-  // cannot start a duplicate create before the submitting state re-renders.
   const submittingRef = useRef(false);
   const submitAbortRef = useRef<AbortController | null>(null);
   const treeLoadRequestRef = useRef(0);
@@ -103,88 +96,38 @@ export default function JobFormDrawer({
   const editingJobId = editingJob?.id;
   const editingJobSrcPath = editingJob?.srcPath;
   const editingJobDstPath = editingJob?.dstPath;
+  const {
+    treeData: srcTreeData,
+    loadRoot: loadSrcRoot,
+    clearTree: clearSrcTree,
+    onLoadData: onLoadSrcData,
+    setLoadedKeys: setSrcLoadedKeys,
+  } = usePathTree(selectedAlistId, treeLoadRequestRef);
+  const {
+    treeData: dstTreeData,
+    loadRoot: loadDstRoot,
+    clearTree: clearDstTree,
+    onLoadData: onLoadDstData,
+    setLoadedKeys: setDstLoadedKeys,
+  } = usePathTree(selectedAlistId, treeLoadRequestRef);
 
-  // Tree data helpers
-  const fetchDirChildren = useCallback(async (alistId: number, parentPath: string): Promise<TreeNode[]> => {
-    if (!alistId) return [];
-    try {
-      const res = await alistGetPath(alistId, parentPath);
-      const items = res.data || [];
-      return (Array.isArray(items) ? items : []).map((item: PathItem) => {
-        const name = item.path || item.name || '';
-        const fullPath = parentPath === '/' ? `/${name}` : `${parentPath}/${name}`;
-        return {
-          title: name,
-          value: fullPath,
-          key: fullPath,
-          isLeaf: false,
-        };
-      });
-    } catch {
-      return [];
-    }
-  }, []);
-
-  const updateTreeChildren = (tree: TreeNode[], parentValue: string, children: TreeNode[]): TreeNode[] => {
-    return tree.map((node) => {
-      if (node.value === parentValue) {
-        return { ...node, children };
-      }
-      if (node.children) {
-        return { ...node, children: updateTreeChildren(node.children, parentValue, children) };
-      }
-      return node;
-    });
-  };
-
-  // Load root when engine changes
   useEffect(() => {
     if (selectedAlistId) {
       const requestID = ++treeLoadRequestRef.current;
       setTreeLoading(true);
-      setSrcLoadedKeys([]);
-      setDstLoadedKeys([]);
-      const editingSrcPaths = parseJobSrcPaths(editingJobSrcPath);
-      const editingDstPaths = parseJobDstPaths(editingJobDstPath);
-      const srcPathTreeData = buildPathTreeData(editingSrcPaths);
-      const dstPathTreeData = buildPathTreeData(editingDstPaths);
-      setSrcTreeData(srcPathTreeData);
-      setDstTreeData(dstPathTreeData);
-      fetchDirChildren(selectedAlistId, '/').then((nodes) => {
-        if (requestID !== treeLoadRequestRef.current) return;
-        const root = [{ title: '/', value: '/', key: '/', children: nodes }];
-        setSrcTreeData(mergeTreeData(root, srcPathTreeData));
-        setDstTreeData(mergeTreeData(structuredClone(root), dstPathTreeData));
-      }).finally(() => {
+      Promise.all([
+        loadSrcRoot(editingJobSrcPath),
+        loadDstRoot(editingJobDstPath),
+      ]).finally(() => {
         if (requestID === treeLoadRequestRef.current) setTreeLoading(false);
       });
     } else {
       treeLoadRequestRef.current += 1;
-      setSrcTreeData([]);
-      setDstTreeData([]);
+      clearSrcTree();
+      clearDstTree();
       setTreeLoading(false);
     }
-  }, [selectedAlistId, fetchDirChildren, editingJobId, editingJobSrcPath, editingJobDstPath]);
-
-  const onLoadSrcData = async (node: TreeNode) => {
-    if (!selectedAlistId || srcLoadedKeys.includes(node.value)) return;
-    const alistId = selectedAlistId;
-    const requestID = treeLoadRequestRef.current;
-    const children = await fetchDirChildren(alistId, node.value);
-    if (requestID !== treeLoadRequestRef.current || selectedAlistId !== alistId) return;
-    setSrcTreeData((prev) => updateTreeChildren(prev, node.value, children));
-    setSrcLoadedKeys((prev) => [...prev, node.value]);
-  };
-
-  const onLoadDstData = async (node: TreeNode) => {
-    if (!selectedAlistId || dstLoadedKeys.includes(node.value)) return;
-    const alistId = selectedAlistId;
-    const requestID = treeLoadRequestRef.current;
-    const children = await fetchDirChildren(alistId, node.value);
-    if (requestID !== treeLoadRequestRef.current || selectedAlistId !== alistId) return;
-    setDstTreeData((prev) => updateTreeChildren(prev, node.value, children));
-    setDstLoadedKeys((prev) => [...prev, node.value]);
-  };
+  }, [selectedAlistId, editingJobId, editingJobDstPath, editingJobSrcPath, loadSrcRoot, loadDstRoot, clearSrcTree, clearDstTree]);
 
   // Initialize form when opening
   useEffect(() => {
@@ -200,8 +143,8 @@ export default function JobFormDrawer({
         enable: editingJob.enable === 1,
         useCacheS: editingJob.useCacheS === 1 || editingJob.useCacheS === true,
         useCacheT: editingJob.useCacheT === 1 || editingJob.useCacheT === true,
-        srcPath: parseJobSrcPaths(editingJob.srcPath),
-        dstPath: parseJobDstPaths(editingJob.dstPath),
+        srcPath: parseJobPathList(editingJob.srcPath),
+        dstPath: parseJobPathList(editingJob.dstPath),
         second: editingJob.second || defaultCronFields.second,
         minute: editingJob.minute || defaultCronFields.minute,
         hour: editingJob.hour || defaultCronFields.hour,
@@ -232,12 +175,12 @@ export default function JobFormDrawer({
         ...defaultCronFields,
         exclude: defaultExclude,
       });
-      setSrcTreeData([]);
-      setDstTreeData([]);
+      clearSrcTree();
+      clearDstTree();
       setSrcLoadedKeys([]);
       setDstLoadedKeys([]);
     }
-  }, [visible, editingJob, form]);
+  }, [visible, editingJob, form, clearSrcTree, clearDstTree, setSrcLoadedKeys, setDstLoadedKeys]);
 
   useEffect(() => {
     if (visible) return undefined;
@@ -342,7 +285,7 @@ export default function JobFormDrawer({
             placeholder="选择引擎"
             options={alistList.map((a) => ({
               value: a.id,
-              label: `${a.userName} - ${a.url}${a.remark ? ` (${a.remark})` : ''}`,
+              label: formatAlistLabel(a, { includeUrl: true }),
             }))}
           />
         </Form.Item>

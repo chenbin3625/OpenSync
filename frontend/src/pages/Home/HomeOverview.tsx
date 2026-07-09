@@ -1,4 +1,4 @@
-import { Card, Button, Tag, Space, Popconfirm, Switch, Empty, Typography, Descriptions, Tooltip } from 'antd';
+import { Card, Button, Tag, Space, Popconfirm, Switch, Typography, Descriptions, Tooltip } from 'antd';
 import {
   CaretRightOutlined, EditOutlined, DeleteOutlined,
   CheckOutlined, PauseOutlined,
@@ -32,7 +32,7 @@ function JobExcludeText({ value }: { value?: string | null }) {
 }
 
 export interface HomeOverviewProps {
-  selectedJob: JobItem | null;
+  selectedJob: JobItem;
   onRun: (id: number) => void;
   onEdit: (job: JobItem) => void;
   onDelete: (id: number) => void;
@@ -43,15 +43,6 @@ export interface HomeOverviewProps {
 export default function HomeOverview({
   selectedJob, onRun, onEdit, onDelete, onToggle, getAlistName,
 }: HomeOverviewProps) {
-  if (!selectedJob) {
-    return (
-      <Empty
-        image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description={<Text type="secondary">请先在左侧选择同步任务</Text>}
-      />
-    );
-  }
-
   const fileSizeRange = formatFileSizeRange(selectedJob.minFileSize, selectedJob.maxFileSize);
 
   return (
