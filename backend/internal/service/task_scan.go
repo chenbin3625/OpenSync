@@ -128,7 +128,7 @@ func (jt *JobTask) sync() {
 }
 
 func (jt *JobTask) hasRetrySource() bool {
-	return len(jt.RetryItems) > 0 || jt.RetrySourceTaskID > 0
+	return jt.RetrySourceTaskID > 0
 }
 
 func (jt *JobTask) syncRetryItems() {
@@ -150,12 +150,6 @@ func (jt *JobTask) syncRetryItems() {
 		return
 	}
 
-	for _, item := range jt.RetryItems {
-		if jt.isBreak() {
-			break
-		}
-		jt.retryTaskItem(item)
-	}
 	jt.ScanFinish.Store(true)
 }
 

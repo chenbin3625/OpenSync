@@ -36,11 +36,16 @@ func (copyItemTestRuntime) lastWatchingUnix() int64 {
 func (copyItemTestRuntime) finishCopyItem(*CopyItem) {}
 
 type copyItemTestClient struct {
-	copyCalls   int
-	moveCalls   int
-	deleteCalls int
-	cancelCalls int
-	cancelErr   error
+	copyCalls     int
+	moveCalls     int
+	deleteCalls   int
+	cancelCalls   int
+	cancelErr     error
+	fileExists    bool
+	fileExistsErr error
+	existsCalls   int
+	taskInfoCalls int
+	taskInfoFn    func(call int) (map[string]interface{}, error)
 }
 
 func (c *copyItemTestClient) CopyFileContext(context.Context, string, string, string) (string, error) {
@@ -64,12 +69,21 @@ func (c *copyItemTestClient) TaskDeleteContext(context.Context, string, taskItem
 }
 
 func (c *copyItemTestClient) TaskInfoContext(context.Context, string, taskItemType) (map[string]interface{}, error) {
+	c.taskInfoCalls++
+	if c.taskInfoFn != nil {
+		return c.taskInfoFn(c.taskInfoCalls)
+	}
 	return map[string]interface{}{"state": taskStatusSuccess.Int(), "progress": 100}, nil
 }
 
 func (c *copyItemTestClient) DeleteFileContext(context.Context, string, []string, int) error {
 	c.deleteCalls++
 	return nil
+}
+
+func (c *copyItemTestClient) FileExistsContext(context.Context, string, string) (bool, error) {
+	c.existsCalls++
+	return c.fileExists, c.fileExistsErr
 }
 
 func TestCopyItemUsesMoveAPIForMoveItems(t *testing.T) {
@@ -149,5 +163,84 @@ func TestCopyItemStopsPollingWhenContextTimesOutWithoutBreakFlag(t *testing.T) {
 	}
 	if client.cancelCalls != 1 || client.deleteCalls != 1 {
 		t.Fatalf("cancel/delete calls = %d/%d, want 1/1", client.cancelCalls, client.deleteCalls)
+	}
+}
+
+func TestCopyItem404MarksSuccessWhenDstExists(t *testing.T) {
+	client := &copyItemTestClient{
+		fileExists: true,
+		taskInfoFn: func(int) (map[string]interface{}, error) {
+			return nil, errors.New("404 not found")
+		},
+	}
+	item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
+	item.setTaskID("task-1")
+
+	item.checkAndGetStatus()
+
+	if status := item.status(); status != taskStatusSuccess {
+		t.Fatalf("status = %d, want success after 404 with dst present", status)
+	}
+	if client.existsCalls != 1 {
+		t.Fatalf("existsCalls = %d, want 1", client.existsCalls)
+	}
+}
+
+func TestCopyItem404MarksFailedWhenDstMissing(t *testing.T) {
+	client := &copyItemTestClient{
+		fileExists: false,
+		taskInfoFn: func(int) (map[string]interface{}, error) {
+			return nil, errors.New("404 not found")
+		},
+	}
+	item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
+	item.setTaskID("task-1")
+
+	item.checkAndGetStatus()
+
+	if status := item.status(); status != taskStatusFailed {
+		t.Fatalf("status = %d, want failed after 404 with dst missing", status)
+	}
+}
+
+func TestCopyItemTransientErrorsRetryThenSucceed(t *testing.T) {
+	client := &copyItemTestClient{
+		fileExists: true,
+		taskInfoFn: func(call int) (map[string]interface{}, error) {
+			if call < maxTransientPollErrors {
+				return nil, errors.New("connection refused")
+			}
+			return map[string]interface{}{"state": taskStatusSuccess.Int(), "progress": 100}, nil
+		},
+	}
+	item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
+	item.setTaskID("task-1")
+
+	item.checkAndGetStatus()
+
+	if status := item.status(); status != taskStatusSuccess {
+		t.Fatalf("status = %d, want success after transient blips recovered", status)
+	}
+	if client.taskInfoCalls != maxTransientPollErrors {
+		t.Fatalf("taskInfoCalls = %d, want %d", client.taskInfoCalls, maxTransientPollErrors)
+	}
+}
+
+func TestCopyItemTransientErrorsExhaustedMarksFailed(t *testing.T) {
+	client := &copyItemTestClient{
+		taskInfoFn: func(int) (map[string]interface{}, error) {
+			return nil, errors.New("connection refused")
+		},
+	}
+	item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
+	item.setTaskID("task-1")
+
+	item.checkAndGetStatus()
+
+	if status := item.status(); status != taskStatusFailed {
+		t.Fatalf("status = %d, want failed after transient errors exhausted", status)
+	}
+	if client.taskInfoCalls != maxTransientPollErrors {
+		t.Fatalf("taskInfoCalls = %d, want %d (exhausted threshold)", client.taskInfoCalls, maxTransientPollErrors)
 	}
 }
