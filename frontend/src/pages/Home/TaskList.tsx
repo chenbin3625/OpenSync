@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typography, Tooltip, Spin, Pagination, Tabs, DatePicker, Input, Select } from 'antd';
 import {
-  DeleteOutlined, EyeOutlined, PauseCircleOutlined, PlayCircleOutlined,
+  DeleteOutlined, EyeOutlined, StopOutlined, RedoOutlined,
   ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
@@ -202,7 +202,7 @@ function RealtimeTaskCard({
   rows,
   total,
   visibleRows,
-  onPause,
+  onStop,
   onPageChange,
   onTabChange,
 }: {
@@ -214,7 +214,7 @@ function RealtimeTaskCard({
   rows: TaskItem[];
   total: number;
   visibleRows: TaskItem[];
-  onPause: () => void;
+  onStop: () => void;
   onPageChange: (page: number) => void;
   onTabChange: (status: number) => void;
 }) {
@@ -313,8 +313,8 @@ function RealtimeTaskCard({
             <span>失败: {currentTask.num?.fail || 0} 条</span>
           </div>
         </div>
-        <Button icon={<PauseCircleOutlined />} onClick={onPause}>
-          暂停
+        <Button icon={<StopOutlined />} onClick={onStop}>
+          停止
         </Button>
       </div>
 
@@ -485,7 +485,7 @@ export default function TaskList({
 
   const handleTaskAction = useCallback(async (
     taskId: number,
-    action: 'pause' | 'resume' | 'restart',
+    action: 'stop' | 'retry',
     successText: string,
   ) => {
     try {
@@ -547,14 +547,14 @@ export default function TaskList({
               onClick={() => onTaskDetail?.(record.id)}
             />
           </Tooltip>
-          {record.status === 7 && (
-            <Tooltip title="继续">
+          {(record.allNum || 0) > (record.successNum || 0) && (
+            <Tooltip title="重试未完成项">
               <Button
                 size="small"
                 type="text"
-                icon={<PlayCircleOutlined />}
-                aria-label="继续"
-                onClick={() => handleTaskAction(record.id, 'resume', '已提交继续执行')}
+                icon={<RedoOutlined />}
+                aria-label="重试未完成项"
+                onClick={() => handleTaskAction(record.id, 'retry', '已提交重试')}
               />
             </Tooltip>
           )}
@@ -591,7 +591,7 @@ export default function TaskList({
       rows={tabTaskList}
       total={tabTaskTotal}
       visibleRows={pagedTabTaskList}
-      onPause={() => handleTaskAction(currentTask.taskId, 'pause', '已暂停')}
+      onStop={() => handleTaskAction(currentTask.taskId, 'stop', '已停止')}
       onPageChange={setTabTaskPage}
       onTabChange={setActiveTab}
     />
