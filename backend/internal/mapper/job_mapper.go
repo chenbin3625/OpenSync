@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strings"
 	"time"
@@ -39,7 +39,7 @@ func GetJobByID(jobID int64) (map[string]interface{}, error) {
 		return nil, err
 	}
 	if len(rst) == 0 {
-		return nil, errors.New(i18n.G("job_not_found"))
+		return nil, errors.New(msg.JobNotFound)
 	}
 	return rst[0], nil
 }
@@ -56,7 +56,7 @@ func GetJobByTaskID(taskID int64) (map[string]interface{}, error) {
 		return nil, err
 	}
 	if len(rst) == 0 {
-		return nil, errors.New(i18n.G("job_not_found"))
+		return nil, errors.New(msg.JobNotFound)
 	}
 	return rst[0], nil
 }
@@ -199,7 +199,7 @@ func GetJobTaskByID(taskID int64) (map[string]interface{}, error) {
 		return nil, err
 	}
 	if len(rst) == 0 {
-		return nil, errors.New(i18n.G("task_not_found"))
+		return nil, errors.New(msg.TaskNotFound)
 	}
 	return rst[0], nil
 }

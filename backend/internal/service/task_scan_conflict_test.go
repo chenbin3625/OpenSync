@@ -73,6 +73,9 @@ func TestFullSyncDeletesConflictingDestinationDirectoryBeforeQueueingFile(t *tes
 	if len(removeCalls) != 1 || removeCalls[0] != "/dst/foo/" {
 		t.Fatalf("removeCalls = %#v, want /dst/foo/", removeCalls)
 	}
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
 	if len(persisted) != 1 {
 		t.Fatalf("persisted len = %d, want one delete record", len(persisted))
 	}

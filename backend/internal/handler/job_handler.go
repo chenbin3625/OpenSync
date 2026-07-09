@@ -2,7 +2,7 @@ package handler
 
 import (
 	"net/http"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/model"
 	"opensync/internal/service"
 	"strconv"
@@ -18,7 +18,7 @@ func GetJob(c *gin.Context) {
 	if idStr != "" {
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
-			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return
 		}
 		// Check for current (real-time progress)
@@ -94,7 +94,7 @@ func removeEmptyStringValues(req map[string]interface{}) {
 func AddJob(c *gin.Context) {
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	// Check if it's an edit (has 'id') or add
@@ -116,7 +116,7 @@ func UpdateJob(c *gin.Context) {
 		Abort  *bool   `json:"abort"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 
@@ -132,7 +132,7 @@ func UpdateJob(c *gin.Context) {
 		case "retry":
 			service.RetryFailedTask(taskID)
 		default:
-			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return
 		}
 		c.JSON(http.StatusOK, model.Success(nil))
@@ -154,7 +154,7 @@ func UpdateJob(c *gin.Context) {
 	} else if *req.Pause {
 		// Disable or abort
 		if req.ID == nil {
-			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return
 		}
 		id, err := parseRequiredID(*req.ID, "id")
@@ -170,7 +170,7 @@ func UpdateJob(c *gin.Context) {
 	} else {
 		// Enable
 		if req.ID == nil {
-			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return
 		}
 		id, err := parseRequiredID(*req.ID, "id")
@@ -203,7 +203,7 @@ func DeleteJob(c *gin.Context) {
 		}
 		service.RemoveTask(taskID)
 	} else {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	c.JSON(http.StatusOK, model.Success(nil))

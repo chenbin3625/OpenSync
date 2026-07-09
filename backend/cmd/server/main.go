@@ -151,6 +151,8 @@ func run(parent context.Context) error {
 
 	// Initialize jobs
 	service.InitJobs()
+	stopTaskRetention := service.StartTaskRetentionScheduler()
+	defer stopTaskRetention()
 
 	r := gin.Default()
 	if err := r.SetTrustedProxies(nil); err != nil {
@@ -181,10 +183,6 @@ func run(parent context.Context) error {
 	r.GET("/svr/system/config", handler.GetSystemConfig)
 	r.PUT("/svr/system/config", handler.UpdateSystemConfig)
 
-	// Language routes
-	r.GET("/svr/language", handler.GetLanguage)
-	r.POST("/svr/language", handler.SetLanguage)
-
 	// AList routes
 	r.GET("/svr/alist", handler.GetAlist)
 	r.POST("/svr/alist", handler.AddAlist)
@@ -193,6 +191,7 @@ func run(parent context.Context) error {
 
 	// Job routes
 	r.GET("/svr/job", handler.GetJob)
+	r.GET("/svr/job/stream", handler.StreamJobCurrent)
 	r.POST("/svr/job", handler.AddJob)
 	r.PUT("/svr/job", handler.UpdateJob)
 	r.DELETE("/svr/job", handler.DeleteJob)

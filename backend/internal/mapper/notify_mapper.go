@@ -2,7 +2,7 @@ package mapper
 
 import (
 	"errors"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 )
 
 // GetNotifyList gets notify list, optionally only enabled ones
@@ -61,7 +61,7 @@ func executeNotifyUpdate(query string, args ...interface{}) error {
 		return err
 	}
 	if affected == 0 {
-		return errors.New(i18n.G("lost_part"))
+		return errors.New(msg.LostPart)
 	}
 	return nil
 }

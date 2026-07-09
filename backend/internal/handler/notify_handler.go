@@ -2,7 +2,7 @@ package handler
 
 import (
 	"net/http"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/model"
 	"opensync/internal/service"
 	"opensync/pkg/util"
@@ -22,7 +22,7 @@ func AddNotify(c *gin.Context) {
 		Notify *map[string]interface{} `json:"notify"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Notify == nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 
@@ -39,7 +39,7 @@ func AddNotify(c *gin.Context) {
 func UpdateNotify(c *gin.Context) {
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 
@@ -52,7 +52,7 @@ func UpdateNotify(c *gin.Context) {
 		}
 		enableRaw, ok := req["enable"]
 		if !ok {
-			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return
 		}
 		enable, err := parseEnableValue(enableRaw)
@@ -74,7 +74,7 @@ func UpdateNotify(c *gin.Context) {
 func DeleteNotify(c *gin.Context) {
 	notifyIDStr := c.Query("notifyId")
 	if notifyIDStr == "" {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	notifyID, err := parseRequiredID(notifyIDStr, "notifyId")

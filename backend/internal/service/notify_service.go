@@ -11,7 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/mapper"
 	"opensync/internal/model"
 	"opensync/pkg/util"
@@ -221,10 +221,10 @@ func validateNotifyParams(method int, params map[string]interface{}) error {
 func validateNotifyHTTPSURL(rawURL string) error {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return errors.New(i18n.G("notify_url_invalid"))
+		return errors.New(msg.NotifyURLInvalid)
 	}
 	if strings.ToLower(u.Scheme) != "https" {
-		return errors.New(i18n.G("notify_url_invalid"))
+		return errors.New(msg.NotifyURLInvalid)
 	}
 	return nil
 }
@@ -292,7 +292,7 @@ func TestNotify(notify map[string]interface{}) {
 				panic(publicErr)
 			}
 			log.Printf("notify test failed: %v", r)
-			panicPublic(i18n.G("notify_send_fail"))
+			panicPublic(msg.NotifySendFail)
 		}
 	}()
 	resolved, err := resolveNotifyParams(notify)
@@ -307,8 +307,8 @@ func TestNotify(notify map[string]interface{}) {
 		panic(err.Error())
 	}
 	notify["params"] = string(out)
-	msg := i18n.G("notify_test_msg")
-	sendNotify(notify, "OpenSync Test", msg, false)
+	testMsg := msg.NotifyTestMsg
+	sendNotify(notify, "OpenSync Test", testMsg, false)
 }
 
 // SendTaskNotification sends notification after task completion
@@ -377,9 +377,7 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					msg := i18n.G("notify_error")
-					msg = strings.Replace(msg, "{}", fmt.Sprintf("%v", r), 1)
-					log.Printf("%s", msg)
+					log.Printf("%s", msg.NotifyError(fmt.Sprintf("%v", r)))
 				}
 			}()
 			sendNotify(notify, title, content, needNotSync)
@@ -477,7 +475,7 @@ func doNotifyRequest(client *http.Client, req *http.Request) *http.Response {
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("notify request failed: target=%s error=%s", notifyRequestTarget(req), notifyNetworkError(err))
-		panicPublic(i18n.G("notify_send_fail"))
+		panicPublic(msg.NotifySendFail)
 	}
 	return resp
 }

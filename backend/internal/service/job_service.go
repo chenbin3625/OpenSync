@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"opensync/internal/config"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/mapper"
 	"opensync/pkg/util"
 	"strconv"
@@ -30,7 +29,7 @@ func InitJobs() {
 	if err := mapper.UpdateJobTaskStatusByStatus(); err != nil {
 		logger.Printf("Failed to mark unfinished task history as aborted: %v", err)
 	}
-	CleanupExpiredTasks(logger, config.GetConfig().Server.TaskSave, time.Now())
+	RunTaskRetentionCleanup()
 	jobList, err := mapper.GetJobListAll()
 	if err != nil {
 		logger.Printf("Failed to get job list: %v", err)
@@ -174,41 +173,41 @@ func ValidateJobInput(job map[string]interface{}) {
 	if len(parsePathList(job["srcPath"])) == 0 ||
 		len(parsePathList(job["dstPath"])) == 0 ||
 		util.ToInt64(job["alistId"]) <= 0 {
-		panicPublic(i18n.G("lost_part"))
+		panicPublic(msg.LostPart)
 	}
 
 	if enable, ok := job["enable"]; ok {
 		enableInt := util.ToInt(enable)
 		if enableInt != 0 && enableInt != 1 {
-			panicPublic(i18n.G("lost_part"))
+			panicPublic(msg.LostPart)
 		}
 	}
 
 	method := util.ToInt(job["method"])
 	if method < 0 || method > 2 {
-		panicPublic(i18n.G("lost_part"))
+		panicPublic(msg.LostPart)
 	}
 
 	isCron := util.ToInt(job["isCron"])
 	if isCron < 0 || isCron > 2 {
-		panicPublic(i18n.G("lost_part"))
+		panicPublic(msg.LostPart)
 	}
 	if isCron == 0 && util.ToInt(job["interval"]) <= 0 {
-		panicPublic(i18n.G("interval_lost"))
+		panicPublic(msg.IntervalLost)
 	}
 }
 
 func normalizeJobFileSizeRange(job map[string]interface{}) {
 	minSize, err := nonNegativeFileSize(job["minFileSize"])
 	if err != nil {
-		panicPublic(i18n.G("min_file_size_invalid"))
+		panicPublic(msg.MinFileSizeInvalid)
 	}
 	maxSize, err := nonNegativeFileSize(job["maxFileSize"])
 	if err != nil {
-		panicPublic(i18n.G("max_file_size_invalid"))
+		panicPublic(msg.MaxFileSizeInvalid)
 	}
 	if maxSize > 0 && minSize > maxSize {
-		panicPublic(i18n.G("min_file_size_gt_max"))
+		panicPublic(msg.MinFileSizeGtMax)
 	}
 	job["minFileSize"] = minSize
 	job["maxFileSize"] = maxSize
@@ -307,7 +306,7 @@ func DoAllJobManual() {
 		panic(err.Error())
 	}
 	if len(jobList) == 0 {
-		panicPublic(i18n.G("no_job_for_run"))
+		panicPublic(msg.NoJobForRun)
 	}
 	for _, jobItem := range jobList {
 		client := GetJobClientByID(util.ToInt64(jobItem["id"]))
@@ -321,7 +320,7 @@ func DoAllJobManual() {
 func DoJobManual(jobID int64) {
 	client := GetJobClientByID(jobID)
 	if !client.enabled() {
-		panicPublic(i18n.G("disabled_job_cannot_run"))
+		panicPublic(msg.DisabledJobCannotRun)
 	}
 	client.DoManual()
 }
@@ -330,11 +329,11 @@ func DoJobManual(jobID int64) {
 func RemoveJobClient(jobID int64) {
 	client := GetJobClientByID(jobID)
 	if client.isBusy() {
-		panicPublic(i18n.G("job_running_cannot_delete"))
+		panicPublic(msg.JobRunningCannotDelete)
 	}
 	client.StopJob(true)
 	if !client.waitUntilIdle(2 * time.Minute) {
-		panicPublic(i18n.G("job_delete_wait_timeout"))
+		panicPublic(msg.JobDeleteWaitTimeout)
 	}
 	if err := mapper.DeleteJob(jobID); err != nil {
 		panic(err.Error())
@@ -354,7 +353,7 @@ func ContinueJob(jobID int64) {
 func PauseJob(jobID int64) {
 	client := GetJobClientByID(jobID)
 	if util.ToInt(client.jobSnapshot()["isCron"]) == 2 {
-		panicPublic(i18n.G("cannot_disable_manual_job"))
+		panicPublic(msg.CannotDisableManualJob)
 	}
 	client.StopJob(false)
 }
@@ -374,7 +373,7 @@ func StopTask(taskID int64) {
 	client := GetJobClientByID(util.ToInt64(job["id"]))
 	task := client.currentTask()
 	if task == nil || task.TaskID != taskID {
-		panicPublic(i18n.G("task_not_running_stop"))
+		panicPublic(msg.TaskNotRunningStop)
 	}
 	task.requestBreak()
 }
@@ -387,17 +386,17 @@ func RetryFailedTask(taskID int64) {
 	}
 	client := GetJobClientByID(util.ToInt64(job["id"]))
 	if !client.enabled() {
-		panicPublic(i18n.G("disabled_job_cannot_run"))
+		panicPublic(msg.DisabledJobCannotRun)
 	}
 	if client.isBusy() {
-		panicPublic(i18n.G("job_running"))
+		panicPublic(msg.JobRunning)
 	}
 	count, err := countJobTaskItemsByStatuses(taskID, retryableStatusValues())
 	if err != nil {
 		panic(err.Error())
 	}
 	if count == 0 {
-		panicPublic(i18n.G("no_failed_task_items"))
+		panicPublic(msg.NoFailedTaskItems)
 	}
 	client.DoRetryFailedTaskItems(taskID)
 }

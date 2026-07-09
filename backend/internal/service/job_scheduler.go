@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"os"
 	"strings"
@@ -104,7 +104,7 @@ func (s *Scheduler) Resume(isCron int, jobData map[string]interface{}, fn func()
 		return nil
 	}
 	if s.cron == nil {
-		return errors.New(i18n.G("cannot_resume_lost_job"))
+		return errors.New(msg.CannotResumeLostJob)
 	}
 	if s.entryID != 0 {
 		return nil
@@ -120,12 +120,12 @@ func (s *Scheduler) Resume(isCron int, jobData map[string]interface{}, fn func()
 
 func (s *Scheduler) addJobLocked(isCron int, jobData map[string]interface{}, fn func()) (cron.EntryID, error) {
 	if s.cron == nil {
-		return 0, errors.New(i18n.G("cannot_resume_lost_job"))
+		return 0, errors.New(msg.CannotResumeLostJob)
 	}
 	if isCron == 0 {
 		interval := util.ToInt(jobData["interval"])
 		if interval <= 0 {
-			return 0, errors.New(i18n.G("interval_lost"))
+			return 0, errors.New(msg.IntervalLost)
 		}
 		spec := fmt.Sprintf("@every %dm", interval)
 		return s.cron.AddFunc(spec, fn)
@@ -135,7 +135,7 @@ func (s *Scheduler) addJobLocked(isCron int, jobData map[string]interface{}, fn 
 		return 0, err
 	}
 	if spec == "" {
-		return 0, errors.New(i18n.G("cron_lost"))
+		return 0, errors.New(msg.CronLost)
 	}
 	entryID, err := s.cron.AddFunc(spec, fn)
 	if err != nil {
@@ -180,7 +180,7 @@ func buildCronSpec(jobData map[string]interface{}) (string, error) {
 			parts[i] = "*"
 		} else {
 			if !isSafeCronField(val) {
-				return "", errors.New(i18n.G("cron_lost"))
+				return "", errors.New(msg.CronLost)
 			}
 			parts[i] = val
 			hasValue = true

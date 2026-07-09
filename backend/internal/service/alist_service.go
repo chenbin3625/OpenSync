@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/mapper"
 	"opensync/pkg/util"
 	"strings"
@@ -154,7 +154,7 @@ func panicAlistClientLoadError(err error) {
 	// return only a generic message to the client so network topology is not
 	// leaked through the API response.
 	log.Printf("alist client load failed: %v", err)
-	panicPublic(i18n.G("alist_connect_fail"))
+	panicPublic(msg.AlistConnectFail)
 }
 
 func normalizeAlistInput(alist map[string]interface{}) string {
@@ -176,13 +176,13 @@ func normalizeAlistInput(alist map[string]interface{}) string {
 func validateAlistURL(rawURL string) error {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return errors.New(i18n.G("alist_url_invalid"))
+		return errors.New(msg.AlistURLInvalid)
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme == "http" || scheme == "https" {
 		return nil
 	}
-	return errors.New(i18n.G("alist_url_invalid"))
+	return errors.New(msg.AlistURLInvalid)
 }
 
 // UpdateClient updates an AList client
@@ -215,12 +215,12 @@ func UpdateClient(alist map[string]interface{}) {
 	var client *AlistClient
 	if oldURL != urlStr || hasToken {
 		if !hasToken {
-			panicPublic(i18n.G("without_token"))
+			panicPublic(msg.WithoutToken)
 		}
 		client, err = newAlistClient(urlStr, fmt.Sprintf("%v", alist["token"]), alistID)
 		if err != nil {
 			log.Printf("alist client update failed: %v", err)
-			panicPublic(i18n.G("alist_connect_fail"))
+			panicPublic(msg.AlistConnectFail)
 		}
 	}
 
@@ -253,7 +253,7 @@ func AddClient(alist map[string]interface{}) {
 	client, err := NewAlistClient(urlStr, token, 0)
 	if err != nil {
 		log.Printf("Failed to add alist client: %v", err)
-		panicPublic(i18n.G("alist_connect_fail"))
+		panicPublic(msg.AlistConnectFail)
 	}
 
 	remarkStr := ""
@@ -277,7 +277,7 @@ func RemoveClient(alistID int64) {
 		panic(err.Error())
 	}
 	if count > 0 {
-		panicPublic(i18n.G("alist_in_use"))
+		panicPublic(msg.AlistInUse)
 	}
 
 	removeCachedAlistClient(alistID)
@@ -292,7 +292,7 @@ func GetChildPath(ctx context.Context, alistID int64, path string) []map[string]
 	result, err := client.FilePathList(ctx, path)
 	if err != nil {
 		log.Printf("alist path list failed: alistID=%d path=%q: %v", alistID, path, err)
-		panicPublic(i18n.G("alist_connect_fail"))
+		panicPublic(msg.AlistConnectFail)
 	}
 	return result
 }

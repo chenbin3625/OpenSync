@@ -8,7 +8,7 @@ import (
 	"math"
 	"net/url"
 	"opensync/internal/config"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"os"
 	"path/filepath"
@@ -26,7 +26,7 @@ var (
 
 const maxPageSize = 500
 const defaultUnpagedLimit = 500
-const sqliteMaxOpenConns = 4
+const sqliteMaxOpenConns = 12
 
 // InitDB initializes the database connection
 func InitDB() *sql.DB {
@@ -275,16 +275,16 @@ func parsePageParams(params map[string]interface{}) (pageSize, pageNum int, pagi
 		return 0, 0, false, nil
 	}
 	if !hasPageSize || !hasPageNum {
-		return 0, 0, false, errors.New(i18n.G("lost_part"))
+		return 0, 0, false, errors.New(msg.LostPart)
 	}
 
 	pageSize, err = positiveInt(pageSizeVal)
 	if err != nil {
-		return 0, 0, false, errors.New(i18n.G("lost_part"))
+		return 0, 0, false, errors.New(msg.LostPart)
 	}
 	pageNum, err = positiveInt(pageNumVal)
 	if err != nil {
-		return 0, 0, false, errors.New(i18n.G("lost_part"))
+		return 0, 0, false, errors.New(msg.LostPart)
 	}
 	if pageSize > maxPageSize {
 		pageSize = maxPageSize
@@ -301,7 +301,7 @@ func positiveInt(v interface{}) (int, error) {
 		n = val
 	case float64:
 		if math.Trunc(val) != val {
-			return 0, errors.New(i18n.G("lost_part"))
+			return 0, errors.New(msg.LostPart)
 		}
 		n = int64(val)
 	case string:
@@ -311,10 +311,10 @@ func positiveInt(v interface{}) (int, error) {
 		}
 		n = parsed
 	default:
-		return 0, errors.New(i18n.G("lost_part"))
+		return 0, errors.New(msg.LostPart)
 	}
 	if n <= 0 || n > int64(math.MaxInt) {
-		return 0, errors.New(i18n.G("lost_part"))
+		return 0, errors.New(msg.LostPart)
 	}
 	return int(n), nil
 }
@@ -326,7 +326,7 @@ func CheckAndAddSQL(baseSQL string, params []string, data map[string]interface{}
 	flag := 0
 	for _, item := range params {
 		if !isSafeSQLIdentifier(item) {
-			return "", nil, errors.New(i18n.G("lost_part"))
+			return "", nil, errors.New(msg.LostPart)
 		}
 		if v, ok := data[item]; ok {
 			setClauses = append(setClauses, fmt.Sprintf("%s=?", item))
@@ -335,10 +335,10 @@ func CheckAndAddSQL(baseSQL string, params []string, data map[string]interface{}
 		}
 	}
 	if flag == 0 {
-		return "", nil, errors.New(i18n.G("lost_part"))
+		return "", nil, errors.New(msg.LostPart)
 	}
 	if _, ok := data["id"]; !ok {
-		return "", nil, errors.New(i18n.G("lost_part"))
+		return "", nil, errors.New(msg.LostPart)
 	}
 	sql := baseSQL + " " + strings.Join(setClauses, ", ") + " WHERE id=?"
 	args = append(args, data["id"])

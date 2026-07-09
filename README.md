@@ -149,7 +149,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.9.1
+image: chenbin3625/opensync:1.10.0
 ```
 
 ## Docker 命令部署
@@ -189,7 +189,7 @@ docker run -d \
 | `OPENSYNC_LOG_LEVEL` | `1` | 文件日志等级 |
 | `OPENSYNC_CONSOLE_LEVEL` | `2` | 控制台日志等级 |
 | `OPENSYNC_LOG_SAVE` | `7` | 日志保留天数 |
-| `OPENSYNC_TASK_SAVE` | `30` | 历史任务保留天数，`0` 表示保留全部 |
+| `OPENSYNC_TASK_SAVE` | `30` | 历史任务保留天数，`0` 表示保留全部；过期记录会在保存配置、服务启动和每日凌晨 3:00 自动清理 |
 | `OPENSYNC_TASK_TIMEOUT` | `48` | 单次任务超时时间，单位小时，`0` 表示不限制 |
 | `OPENSYNC_COPY_CONCURRENCY` | `5` | 单个任务的复制并发数，范围 `1` 到 `100` |
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | 单个任务的扫描并发数，范围 `1` 到 `20` |
@@ -212,7 +212,7 @@ scan_concurrency=8
 max_retries=0
 ```
 
-系统设置页可在线调整历史任务保留、任务超时、复制并发、扫描并发和自动重试次数。端口、日志等级等启动期配置仍建议通过环境变量或配置文件维护。
+系统设置页可在线调整历史任务保留、任务超时、复制并发、扫描并发和自动重试次数。历史任务会在保存配置时立即清理过期记录，并在每日凌晨 3:00 按保留天数再次清理。端口、日志等级等启动期配置仍建议通过环境变量或配置文件维护。
 
 ## 本地构建镜像
 
@@ -291,8 +291,8 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.9.1`
-- `chenbin3625/opensync:1.9`
+- `chenbin3625/opensync:1.10.0`
+- `chenbin3625/opensync:1.10`
 
 镜像支持以下平台：
 

@@ -28,11 +28,3 @@ export function getUser() {
 export function editPwd(data: { passwd: string; oldPasswd: string }) {
   return request.put('/user', data) as Promise<ApiResponse<null>>;
 }
-
-export function getLanguage() {
-  return request.get('/language') as Promise<ApiResponse<string>>;
-}
-
-export function setLanguage(data: { language: string }) {
-  return request.post('/language', data) as Promise<ApiResponse<null>>;
-}

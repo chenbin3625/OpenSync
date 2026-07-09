@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strings"
 	"sync"
@@ -20,6 +20,8 @@ type copyItemRuntime interface {
 	jobConfig() map[string]interface{}
 	lastWatchingUnix() int64
 	finishCopyItem(*CopyItem)
+	waitForRemoteCopyCompletion(*CopyItem)
+	notifyProgressChange()
 }
 
 type copyItemClient interface {
@@ -28,6 +30,7 @@ type copyItemClient interface {
 	TaskCancelContext(context.Context, string, taskItemType) error
 	TaskDeleteContext(context.Context, string, taskItemType) error
 	TaskInfoContext(context.Context, string, taskItemType) (map[string]interface{}, error)
+	TaskUndoneListContext(context.Context, taskItemType) ([]map[string]interface{}, error)
 	DeleteFileContext(context.Context, string, []string, int) error
 	FileExistsContext(context.Context, string, string) (bool, error)
 }
@@ -124,6 +127,9 @@ func (ci *CopyItem) setProgress(status taskStatus, progress float64, errMsg *str
 	ci.Progress = progress
 	ci.ErrMsg = errMsg
 	ci.mu.Unlock()
+	if runtime := ci.copyRuntime(); runtime != nil {
+		runtime.notifyProgressChange()
+	}
 }
 
 func (ci *CopyItem) status() taskStatus {
@@ -142,6 +148,13 @@ func (ci *CopyItem) progress() float64 {
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
 	return ci.Progress
+}
+
+func (ci *CopyItem) countableWaitSize() int64 {
+	if ci.CopyType == taskItemTypeDelete || ci.FileSize == nil {
+		return 0
+	}
+	return util.ToInt64(ci.FileSize)
 }
 
 func (ci *CopyItem) ToMap(taskID int64) map[string]interface{} {
@@ -188,7 +201,7 @@ func (ci *CopyItem) DoIt() {
 		if taskID == "" {
 			ci.setProgress(taskStatusSuccess, 100, nil)
 		} else if ci.status() != taskStatusStopped {
-			ci.checkAndGetStatus()
+			runtime.waitForRemoteCopyCompletion(ci)
 		}
 		if ci.status() == taskStatusFailed && attempt < maxRetries {
 			ci.setRetrying(errors.New(ci.errorMessage()))
@@ -230,7 +243,7 @@ func (ci *CopyItem) errorMessage() string {
 	return *ci.ErrMsg
 }
 
-func (ci *CopyItem) checkAndGetStatus() {
+func (ci *CopyItem) pollStatusDirectly() {
 	runtime := ci.copyRuntime()
 	client := ci.copyClient()
 	transientErrs := 0
@@ -270,7 +283,7 @@ func (ci *CopyItem) checkAndGetStatus() {
 					ci.setProgress(taskStatusSuccess, 100, nil)
 					break
 				}
-				eMsg = i18n.G("task_may_delete")
+				eMsg = msg.TaskMayDelete
 				ci.setProgress(taskStatusFailed, 0, &eMsg)
 				break
 			}

@@ -17,6 +17,25 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestCopyQueueStatsTracksWaitTotals(t *testing.T) {
+	queue := newCopyQueueWithCapacity(10)
+	queue.push(&CopyItem{FileName: "a.txt", FileSize: int64(10), CopyType: taskItemTypeCopy})
+	queue.push(&CopyItem{FileName: "b.txt", FileSize: int64(20), CopyType: taskItemTypeCopy})
+
+	count, size := queue.stats()
+	if count != 2 || size != 30 {
+		t.Fatalf("stats = count %d size %d, want 2/30", count, size)
+	}
+
+	if _, ok := queue.pop(); !ok {
+		t.Fatal("pop() returned false")
+	}
+	count, size = queue.stats()
+	if count != 1 || size != 20 {
+		t.Fatalf("stats after pop = count %d size %d, want 1/20", count, size)
+	}
+}
+
 func TestCopyQueueKeepsFIFOAndCompacts(t *testing.T) {
 	queue := newCopyQueue()
 
@@ -228,6 +247,9 @@ func TestCopyItemRetriesFailedCopyBeforeSuccess(t *testing.T) {
 	item.CreateTime = 100
 
 	item.DoIt()
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
 
 	if got := attempts.Load(); got != 3 {
 		t.Fatalf("copy attempts = %d, want 3", got)
@@ -378,6 +400,9 @@ func TestMarkWaitingAsAbortedMovesQueuedItemsToFinish(t *testing.T) {
 	})
 
 	jt.markWaitingAsAborted()
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
 
 	if jt.Waiting.len() != 0 {
 		t.Fatalf("waiting queue len = %d, want 0", jt.Waiting.len())
@@ -411,12 +436,15 @@ func TestCopyHookPersistsFinishedItemsImmediately(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		jt.CopyHook("/src/", "/dst/", "file.txt", int64(10), "", taskStatusSuccess, nil, taskItemFile, taskItemTypeCopy, int64(100+i))
 	}
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
 
 	if len(persisted) != 3 {
 		t.Fatalf("persisted len = %d, want 3", len(persisted))
 	}
-	if len(batchSizes) != 3 || batchSizes[0] != 1 || batchSizes[1] != 1 || batchSizes[2] != 1 {
-		t.Fatalf("persist batch sizes = %v, want three one-item writes", batchSizes)
+	if len(batchSizes) != 1 || batchSizes[0] != 3 {
+		t.Fatalf("persist batch sizes = %v, want [3]", batchSizes)
 	}
 	if persisted[0]["createTime"] != int64(100) {
 		t.Fatalf("first persisted createTime = %v, want 100", persisted[0]["createTime"])
@@ -448,6 +476,48 @@ func TestCopyHookRecordsPersistenceError(t *testing.T) {
 	if !jt.isBreak() {
 		t.Fatalf("CopyHook did not request break after persistence error")
 	}
+	jt.persistBufMu.Lock()
+	buffered := len(jt.persistBuffer)
+	jt.persistBufMu.Unlock()
+	if buffered != 1 {
+		t.Fatalf("persistBuffer len = %d after failed flush, want 1 (items requeued)", buffered)
+	}
+}
+
+func TestEnsureCopyMonitorIsConcurrentSafe(t *testing.T) {
+	jt := &JobTask{TaskID: 1}
+	const workers = 32
+	monitors := make([]*copyTaskMonitor, workers)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			monitors[idx] = jt.ensureCopyMonitor()
+		}(i)
+	}
+	wg.Wait()
+
+	first := monitors[0]
+	if first == nil {
+		t.Fatal("ensureCopyMonitor returned nil")
+	}
+	for i, monitor := range monitors {
+		if monitor != first {
+			t.Fatalf("monitor[%d] = %p, want %p", i, monitor, first)
+		}
+	}
+}
+
+func TestCopyTaskWatchCloseDoneIsIdempotent(t *testing.T) {
+	watch := &copyTaskWatch{done: make(chan struct{})}
+	watch.closeDone()
+	watch.closeDone()
+	select {
+	case <-watch.done:
+	default:
+		t.Fatal("done channel was not closed")
+	}
 }
 
 type panicCopyItemClient struct{}
@@ -472,6 +542,10 @@ func (panicCopyItemClient) TaskInfoContext(context.Context, string, taskItemType
 	return nil, nil
 }
 
+func (panicCopyItemClient) TaskUndoneListContext(context.Context, taskItemType) ([]map[string]interface{}, error) {
+	return nil, nil
+}
+
 func (panicCopyItemClient) DeleteFileContext(context.Context, string, []string, int) error {
 	return nil
 }
@@ -491,6 +565,9 @@ func TestCopyWorkerPanicPersistsFailedItemAndClearsDoing(t *testing.T) {
 
 	jt.startCopyItem(item)
 	jt.copyWG.Wait()
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
 
 	if len(persisted) != 1 {
 		t.Fatalf("persisted len = %d, want 1", len(persisted))
@@ -772,14 +849,14 @@ func TestGetCurrentDoesNotCacheFinishedTaskLists(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		jt.CopyHook("/src/", "/dst/", "done.txt", int64(10), "", taskStatusSuccess, nil, taskItemFile, taskItemTypeCopy, int64(100+i))
 	}
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
 
 	current := jt.GetCurrent()
 
 	if current["doingTask"] == nil {
 		t.Fatalf("doingTask missing from current payload")
-	}
-	if len(persisted) != 3 {
-		t.Fatalf("persisted len = %d, want 3", len(persisted))
 	}
 	if tasks := jt.CurrentTasks[taskStatusSuccess.Int()]; len(tasks) != 0 {
 		t.Fatalf("cached success task list len = %d, want 0 so polling avoids finished-list snapshots", len(tasks))
@@ -800,6 +877,9 @@ func TestGetCurrentByStatusPagePaginatesRecentFinishedItems(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		jt.CopyHook("/src/", "/dst/", "done.txt", int64(10), "", taskStatusSuccess, nil, taskItemFile, taskItemTypeCopy, int64(100+i))
+	}
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
 	}
 
 	page := jt.GetCurrentByStatusPage(taskStatusSuccess.Int(), 2, 2)

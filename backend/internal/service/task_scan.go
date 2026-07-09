@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"path"
 	"strings"
@@ -87,6 +87,7 @@ func (jt *JobTask) addChildScanWork(children *[]scanWork, work scanWork) {
 
 func (jt *JobTask) finishScanWork() {
 	jt.ScanDoneDirs.Add(1)
+	jt.notifyProgressChange()
 }
 
 func (jt *JobTask) sync() {
@@ -124,11 +125,16 @@ func (jt *JobTask) sync() {
 			}, spec)
 		}
 	}
-	jt.ScanFinish.Store(true)
+	jt.markScanFinished()
 }
 
 func (jt *JobTask) hasRetrySource() bool {
 	return jt.RetrySourceTaskID > 0
+}
+
+func (jt *JobTask) markScanFinished() {
+	jt.ScanFinish.Store(true)
+	jt.notifyProgressChange()
 }
 
 func (jt *JobTask) syncRetryItems() {
@@ -146,11 +152,11 @@ func (jt *JobTask) syncRetryItems() {
 			errMsg := err.Error()
 			jt.CopyHook("", "", "", nil, "", taskStatusFailed, &errMsg, taskItemPath, taskItemTypeCopy, time.Now().Unix())
 		}
-		jt.ScanFinish.Store(true)
+		jt.markScanFinished()
 		return
 	}
 
-	jt.ScanFinish.Store(true)
+	jt.markScanFinished()
 }
 
 func (jt *JobTask) retryTaskItem(item map[string]interface{}) {
@@ -300,12 +306,11 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 		if jt.isBreak() && errors.Is(err, context.Canceled) {
 			return nil, err
 		}
-		srcOrDst := i18n.G("src")
+		srcOrDst := msg.Src
 		if !isSrc {
-			srcOrDst = i18n.G("dst")
+			srcOrDst = msg.Dst
 		}
-		errMsg := strings.Replace(i18n.G("scan_error"), "{}", srcOrDst, 1)
-		errMsg = strings.Replace(errMsg, "{}", err.Error(), 1)
+		errMsg := msg.ScanError(srcOrDst, err.Error())
 		log.Printf("%s", errMsg)
 
 		jt.CopyHook(pathIfTrue(isSrc, path), pathIfTrue(!isSrc, path), "", nil, "", taskStatusFailed, &errMsg, taskItemPath, taskItemTypeCopy, time.Now().Unix())

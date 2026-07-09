@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -126,6 +127,32 @@ func TestGetContextDoesNotSendContentTypeWithoutBody(t *testing.T) {
 
 	if _, err := client.GetContext(context.Background(), "/api/me", nil); err != nil {
 		t.Fatalf("GetContext() error: %v", err)
+	}
+}
+
+func TestTaskUndoneListContextUsesOperationSpecificTaskEndpoint(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":[{"id":"task-1","state":1,"progress":50}]}`))
+	}))
+	defer server.Close()
+
+	client := &AlistClient{
+		URL:    server.URL,
+		client: server.Client(),
+	}
+
+	tasks, err := client.TaskUndoneListContext(context.Background(), taskItemTypeCopy)
+	if err != nil {
+		t.Fatalf("TaskUndoneListContext() error: %v", err)
+	}
+	if len(tasks) != 1 || fmt.Sprintf("%v", tasks[0]["id"]) != "task-1" {
+		t.Fatalf("tasks = %#v, want one undone task", tasks)
+	}
+	if len(paths) != 1 || paths[0] != "/api/admin/task/copy/undone" {
+		t.Fatalf("paths = %v, want [/api/admin/task/copy/undone]", paths)
 	}
 }
 

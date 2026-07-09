@@ -6,13 +6,15 @@ import (
 )
 
 type copyQueue struct {
-	mu       sync.Mutex
-	items    []*CopyItem
-	head     int
-	closed   bool
-	capacity int
-	notify   chan struct{}
-	space    chan struct{}
+	mu        sync.Mutex
+	items     []*CopyItem
+	head      int
+	closed    bool
+	capacity  int
+	notify    chan struct{}
+	space     chan struct{}
+	waitCount int
+	waitSize  int64
 }
 
 func newCopyQueue() *copyQueue {
@@ -36,6 +38,7 @@ func (q *copyQueue) push(item *CopyItem) bool {
 		return false
 	}
 	q.items = append(q.items, item)
+	q.addWaitStatsLocked(item)
 	q.signal()
 	return true
 }
@@ -49,6 +52,7 @@ func (q *copyQueue) pushWait(ctx context.Context, item *CopyItem) bool {
 		}
 		if q.hasCapacityLocked() {
 			q.items = append(q.items, item)
+			q.addWaitStatsLocked(item)
 			q.signal()
 			q.mu.Unlock()
 			return true
@@ -76,9 +80,35 @@ func (q *copyQueue) pop() (*CopyItem, bool) {
 	item := q.items[q.head]
 	q.items[q.head] = nil
 	q.head++
+	q.subWaitStatsLocked(item)
 	q.compactLocked()
 	q.signalSpace()
 	return item, true
+}
+
+func (q *copyQueue) stats() (count int, totalSize int64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.waitCount, q.waitSize
+}
+
+func (q *copyQueue) snapshotPage(pageSize, pageNum int) ([]*CopyItem, int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	active := q.items[q.head:]
+	count := len(active)
+	if pageSize <= 0 || pageNum <= 0 {
+		return append([]*CopyItem(nil), active...), count
+	}
+	start := (pageNum - 1) * pageSize
+	if start >= count {
+		return []*CopyItem{}, count
+	}
+	end := start + pageSize
+	if end > count {
+		end = count
+	}
+	return append([]*CopyItem(nil), active[start:end]...), count
 }
 
 func (q *copyQueue) len() int {
@@ -104,6 +134,8 @@ func (q *copyQueue) closeAndDrain() []*CopyItem {
 	}
 	q.items = q.items[:0]
 	q.head = 0
+	q.waitCount = 0
+	q.waitSize = 0
 	q.signal()
 	q.signalSpace()
 	return items
@@ -111,6 +143,22 @@ func (q *copyQueue) closeAndDrain() []*CopyItem {
 
 func (q *copyQueue) waitCh() <-chan struct{} {
 	return q.notify
+}
+
+func (q *copyQueue) addWaitStatsLocked(item *CopyItem) {
+	if item == nil {
+		return
+	}
+	q.waitCount++
+	q.waitSize += item.countableWaitSize()
+}
+
+func (q *copyQueue) subWaitStatsLocked(item *CopyItem) {
+	if item == nil {
+		return
+	}
+	q.waitCount--
+	q.waitSize -= item.countableWaitSize()
 }
 
 func (q *copyQueue) compactLocked() {

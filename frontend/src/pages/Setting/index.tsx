@@ -151,7 +151,7 @@ export default function Setting() {
               </Col>
               <Col xs={24} md={12}>
                 <Form.Item
-                  label={labelWithTip('历史任务保留', '任务历史保留天数，0 表示全部保留；保存后会立即清理过期历史。')}
+                  label={labelWithTip('历史任务保留', '任务历史保留天数，0 表示全部保留；保存配置会立即清理过期历史，每日凌晨 3:00 也会自动清理。')}
                   required
                 >
                   <Space.Compact style={{ width: '100%' }}>
