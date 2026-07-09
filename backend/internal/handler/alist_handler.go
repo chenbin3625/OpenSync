@@ -2,7 +2,7 @@ package handler
 
 import (
 	"net/http"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/model"
 	"opensync/internal/service"
 	"strconv"
@@ -18,7 +18,7 @@ func GetAlist(c *gin.Context) {
 	if alistIDStr != "" && path != "" {
 		alistID, err := strconv.ParseInt(alistIDStr, 10, 64)
 		if err != nil {
-			c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return
 		}
 		result := service.GetChildPath(c.Request.Context(), alistID, path)
@@ -34,7 +34,7 @@ func GetAlist(c *gin.Context) {
 func AddAlist(c *gin.Context) {
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	service.AddClient(req)
@@ -45,7 +45,7 @@ func AddAlist(c *gin.Context) {
 func UpdateAlist(c *gin.Context) {
 	var req map[string]interface{}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	service.UpdateClient(req)
@@ -60,12 +60,12 @@ func DeleteAlist(c *gin.Context) {
 		idStr = c.PostForm("id")
 	}
 	if idStr == "" {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	service.RemoveClient(id)

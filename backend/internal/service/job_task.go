@@ -51,6 +51,11 @@ type JobTask struct {
 	FatalErr          *string
 	PersistMu         sync.Mutex
 	PersistErr        error
+	persistBufMu      sync.Mutex
+	persistBuffer     []JobTaskItem
+	persistFlushMu    sync.Mutex
+	persistFlushScheduled bool
+	copyMonitor       *copyTaskMonitor
 }
 
 // NewJobTask creates and starts a new task
@@ -250,10 +255,6 @@ func (jt *JobTask) lastWatchingUnix() int64 {
 }
 
 func (jt *JobTask) finishCopyItem(item *CopyItem) {
-	// Snapshot the fields CopyHook needs under the read lock, then release
-	// before invoking CopyHook. CopyHook -> appendFinish writes the completed
-	// item to the DB; holding item.mu during that write blocks concurrent
-	// progress readers.
 	item.mu.RLock()
 	srcPath := item.SrcPath
 	dstPath := item.DstPath

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/model"
 	"opensync/pkg/util"
 	"strings"
@@ -121,7 +121,7 @@ func TestSendNotifyRequestDoesNotPanicWithSecretURL(t *testing.T) {
 		if !ok {
 			t.Fatalf("panic type = %T, want model.PublicError", recovered)
 		}
-		if string(publicErr) != i18n.G("notify_send_fail") {
+		if string(publicErr) != msg.NotifySendFail {
 			t.Fatalf("panic = %q, want generic notify failure", publicErr)
 		}
 		if strings.Contains(string(publicErr), "very-secret-token") || strings.Contains(string(publicErr), "access_token") {

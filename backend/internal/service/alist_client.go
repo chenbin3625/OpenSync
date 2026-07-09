@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"strings"
 	"sync"
 	"time"
@@ -95,7 +95,7 @@ func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath stri
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
-		return nil, errors.New(i18n.G("address_incorrect"))
+		return nil, errors.New(msg.AddressIncorrect)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -110,7 +110,7 @@ func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath stri
 			return nil, ctxErr
 		}
 		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such host") {
-			return nil, errors.New(i18n.G("alist_connect_fail"))
+			return nil, errors.New(msg.AlistConnectFail)
 		}
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath stri
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, errors.New(i18n.G("code_not_200"))
+		return nil, errors.New(msg.CodeNot200)
 	}
 
 	var res alistResponse
@@ -131,13 +131,10 @@ func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath stri
 	}
 
 	if res.Code == 401 {
-		return nil, errors.New(i18n.G("alist_un_auth"))
+		return nil, errors.New(msg.AlistUnAuth)
 	}
 	if res.Code != 200 {
-		msg := i18n.G("alist_fail_code_reason")
-		msg = strings.Replace(msg, "{}", fmt.Sprintf("%d", res.Code), 1)
-		msg = strings.Replace(msg, "{}", res.Message, 1)
-		return nil, errors.New(msg)
+		return nil, errors.New(msg.AlistFailCodeReason(res.Code, res.Message))
 	}
 
 	return res.Data, nil
@@ -444,6 +441,22 @@ func alistTaskGroup(copyType taskItemType) string {
 func (c *AlistClient) taskActionContext(ctx context.Context, taskID string, copyType taskItemType, action string) (json.RawMessage, error) {
 	apiPath := fmt.Sprintf("/api/admin/task/%s/%s", alistTaskGroup(copyType), action)
 	return c.PostContext(ctx, apiPath, nil, map[string]string{"tid": taskID})
+}
+
+func (c *AlistClient) TaskUndoneListContext(ctx context.Context, copyType taskItemType) ([]map[string]interface{}, error) {
+	apiPath := fmt.Sprintf("/api/admin/task/%s/undone", alistTaskGroup(copyType))
+	data, err := c.PostContext(ctx, apiPath, map[string]interface{}{}, nil)
+	if err != nil {
+		return nil, err
+	}
+	var tasks []map[string]interface{}
+	if err := json.Unmarshal(data, &tasks); err != nil {
+		return nil, err
+	}
+	if tasks == nil {
+		tasks = []map[string]interface{}{}
+	}
+	return tasks, nil
 }
 
 func (c *AlistClient) TaskInfoContext(ctx context.Context, taskID string, copyType taskItemType) (map[string]interface{}, error) {

@@ -3,7 +3,7 @@ package service
 import (
 	"fmt"
 	"log"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/mapper"
 	"opensync/pkg/util"
 	"sync"
@@ -337,7 +337,7 @@ func (jc *JobClient) DoScheduled() bool {
 // DoManual triggers manual execution
 func (jc *JobClient) DoManual() {
 	if !jc.tryMarkDoing() {
-		panicPublic(i18n.G("job_running"))
+		panicPublic(msg.JobRunning)
 	}
 	go jc.runMarkedJob()
 }
@@ -346,7 +346,7 @@ func (jc *JobClient) DoManual() {
 // items of a historical task.
 func (jc *JobClient) DoRetryFailedTaskItems(sourceTaskID int64) {
 	if !jc.tryMarkDoing() {
-		panicPublic(i18n.G("job_running"))
+		panicPublic(msg.JobRunning)
 	}
 	go jc.runMarkedJobConfig(sourceTaskID, retryableTaskStatuses)
 }
@@ -365,7 +365,7 @@ func (jc *JobClient) ResumeJob() {
 	}
 
 	if scheduler == nil {
-		panicPublic(i18n.G("cannot_resume_lost_job"))
+		panicPublic(msg.CannotResumeLostJob)
 	}
 	err := scheduler.Resume(isCron, job, func() {
 		jc.DoScheduled()

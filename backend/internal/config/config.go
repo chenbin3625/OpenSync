@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/pkg/crypto"
 	"os"
 	"strconv"
@@ -262,16 +262,16 @@ func validateSystemSettings(settings SystemSettings) error {
 		value    int
 		min, max int
 	}{
-		{i18n.G("settings_expires"), settings.Expires, minExpires, maxExpires},
-		{i18n.G("settings_task_timeout"), settings.TaskTimeout, minTaskTimeout, maxTaskTimeout},
-		{i18n.G("settings_task_save"), settings.TaskSave, minTaskSave, maxTaskSave},
-		{i18n.G("settings_copy_concurrency"), settings.CopyConcurrency, MinCopyConcurrency, MaxCopyConcurrency},
-		{i18n.G("settings_scan_concurrency"), settings.ScanConcurrency, MinScanConcurrency, MaxScanConcurrency},
-		{i18n.G("settings_max_retries"), settings.MaxRetries, MinMaxRetries, MaxRetryAttempts},
+		{msg.SettingsExpires, settings.Expires, minExpires, maxExpires},
+		{msg.SettingsTaskTimeout, settings.TaskTimeout, minTaskTimeout, maxTaskTimeout},
+		{msg.SettingsTaskSave, settings.TaskSave, minTaskSave, maxTaskSave},
+		{msg.SettingsCopyConcurrency, settings.CopyConcurrency, MinCopyConcurrency, MaxCopyConcurrency},
+		{msg.SettingsScanConcurrency, settings.ScanConcurrency, MinScanConcurrency, MaxScanConcurrency},
+		{msg.SettingsMaxRetries, settings.MaxRetries, MinMaxRetries, MaxRetryAttempts},
 	}
 	for _, item := range checks {
 		if item.value < item.min || item.value > item.max {
-			return fmt.Errorf(i18n.G("settings_range_error"), item.name, item.min, item.max)
+			return fmt.Errorf("%s", msg.SettingsRangeError(item.name, item.min, item.max))
 		}
 	}
 	return nil

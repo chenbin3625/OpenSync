@@ -2,7 +2,7 @@ package service
 
 import (
 	"errors"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/mapper"
 	"opensync/pkg/util"
 	"testing"
@@ -194,7 +194,7 @@ func TestDoAllJobManualPropagatesMapperErrors(t *testing.T) {
 		if recovered == nil {
 			t.Fatalf("DoAllJobManual() did not panic")
 		}
-		if err, ok := recovered.(interface{ Error() string }); ok && err.Error() == i18n.G("no_job_for_run") {
+		if err, ok := recovered.(interface{ Error() string }); ok && err.Error() == msg.NoJobForRun {
 			t.Fatalf("DoAllJobManual() masked database error as no jobs")
 		}
 	}()
@@ -220,7 +220,7 @@ func TestGetUserUsesSentinelForUserNotFound(t *testing.T) {
 		if recovered == nil {
 			t.Fatalf("GetUser() did not panic")
 		}
-		if err, ok := recovered.(interface{ Error() string }); !ok || err.Error() != i18n.G("user_not_found") {
+		if err, ok := recovered.(interface{ Error() string }); !ok || err.Error() != msg.UserNotFound {
 			t.Fatalf("GetUser() panic = %#v, want public user_not_found", recovered)
 		}
 	}()
@@ -264,8 +264,8 @@ func TestRemoveJobClientRejectsRunningJobWithoutStoppingIt(t *testing.T) {
 	select {
 	case recovered := <-panicCh:
 		err, ok := recovered.(interface{ Error() string })
-		if !ok || err.Error() != i18n.G("job_running_cannot_delete") {
-			t.Fatalf("RemoveJobClient() panic = %#v, want %q", recovered, i18n.G("job_running_cannot_delete"))
+		if !ok || err.Error() != msg.JobRunningCannotDelete {
+			t.Fatalf("RemoveJobClient() panic = %#v, want %q", recovered, msg.JobRunningCannotDelete)
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatalf("RemoveJobClient() did not reject running job immediately")

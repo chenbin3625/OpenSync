@@ -3,7 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/mapper"
 	"opensync/pkg/crypto"
 	"opensync/pkg/util"
@@ -57,7 +57,7 @@ func CheckPwdTimeForScope(scope string) {
 		errPwd[scope] = cleaned
 	}
 	if len(cleaned) > 3 {
-		panicPublic(i18n.G("passwd_wrong_max_time"))
+		panicPublic(msg.PasswdWrongMaxTime)
 	}
 }
 
@@ -133,10 +133,10 @@ func normalizePwdErrorScope(scope string) string {
 
 func validatePassword(passwd string) {
 	if len(strings.TrimSpace(passwd)) < minPasswordLength {
-		panicPublic(i18n.G("passwd_too_short"))
+		panicPublic(msg.PasswdTooShort)
 	}
 	if len([]byte(passwd)) > maxPasswordBytes {
-		panicPublic(i18n.G("passwd_too_long"))
+		panicPublic(msg.PasswdTooLong)
 	}
 }
 
@@ -167,7 +167,7 @@ func GetUser(userID int64, userName string) map[string]interface{} {
 	}
 	if err != nil {
 		if errors.Is(err, mapper.ErrUserNotFound) {
-			panicPublic(i18n.G("user_not_found"))
+			panicPublic(msg.UserNotFound)
 		}
 		panic(err.Error())
 	}
@@ -187,12 +187,12 @@ func IsInitialized() bool {
 func InitializeUser(userName string, passwd string) (map[string]interface{}, string) {
 	userName = strings.TrimSpace(userName)
 	if userName == "" || strings.TrimSpace(passwd) == "" {
-		panicPublic(i18n.G("lost_part"))
+		panicPublic(msg.LostPart)
 	}
 	validatePassword(passwd)
 
 	if IsInitialized() {
-		panicPublic(i18n.G("system_initialized"))
+		panicPublic(msg.SystemInitialized)
 	}
 
 	hash, err := crypto.HashPassword(passwd)
@@ -203,7 +203,7 @@ func InitializeUser(userName string, passwd string) (map[string]interface{}, str
 	userID, err := mapper.CreateInitialUser(userName, hash, recoveryHash)
 	if err != nil {
 		if errors.Is(err, mapper.ErrAlreadyInitialized) || IsInitialized() {
-			panicPublic(i18n.G("system_initialized"))
+			panicPublic(msg.SystemInitialized)
 		}
 		panic(err.Error())
 	}
@@ -233,14 +233,14 @@ func CheckPwdScoped(userID int64, passwd string, userName string, clientScope st
 		if errors.Is(err, mapper.ErrUserNotFound) {
 			checkDummyPassword(passwd)
 			AddPwdErrorForScope(scope)
-			panicPublic(i18n.G("passwd_wrong"))
+			panicPublic(msg.PasswdWrong)
 		}
 		panic(err.Error())
 	}
 	storedHash := fmt.Sprintf("%v", user["passwd"])
 	if !crypto.CheckPassword(passwd, storedHash) {
 		AddPwdErrorForScope(scope)
-		panicPublic(i18n.G("passwd_wrong"))
+		panicPublic(msg.PasswdWrong)
 	}
 	return user
 }
@@ -264,7 +264,7 @@ func ResetPasswd(userName string, recoveryKey string, passwd string) string {
 	userName = strings.TrimSpace(userName)
 	recoveryKey = strings.TrimSpace(recoveryKey)
 	if userName == "" || recoveryKey == "" || strings.TrimSpace(passwd) == "" {
-		panicPublic(i18n.G("lost_part"))
+		panicPublic(msg.LostPart)
 	}
 	// Rate-limit recovery key attempts the same way login attempts are limited,
 	// scoped per username. The 24-char key is not practically brute-forceable,
@@ -276,14 +276,14 @@ func ResetPasswd(userName string, recoveryKey string, passwd string) string {
 		if errors.Is(err, mapper.ErrUserNotFound) {
 			checkDummyPassword(recoveryKey)
 			AddPwdErrorForScope(scope)
-			panicPublic(i18n.G("key_wrong"))
+			panicPublic(msg.KeyWrong)
 		}
 		panic(err.Error())
 	}
 	storedRecoveryHash := fmt.Sprintf("%v", user["recoveryKey"])
 	if !crypto.CheckPassword(recoveryKey, storedRecoveryHash) {
 		AddPwdErrorForScope(scope)
-		panicPublic(i18n.G("key_wrong"))
+		panicPublic(msg.KeyWrong)
 	}
 	validatePassword(passwd)
 	newRecoveryKey, newRecoveryHash := newRecoveryKeyHash()
@@ -301,7 +301,7 @@ func ResetPasswd(userName string, recoveryKey string, passwd string) string {
 func ResetPasswdForCLI(userName string) (string, string) {
 	userName = strings.TrimSpace(userName)
 	if userName == "" {
-		panicPublic(i18n.G("lost_part"))
+		panicPublic(msg.LostPart)
 	}
 	user := GetUser(0, userName)
 	newPasswd := crypto.GeneratePassword(cliGeneratedPasswordLength)

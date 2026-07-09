@@ -35,6 +35,12 @@ func (copyItemTestRuntime) lastWatchingUnix() int64 {
 
 func (copyItemTestRuntime) finishCopyItem(*CopyItem) {}
 
+func (copyItemTestRuntime) waitForRemoteCopyCompletion(ci *CopyItem) {
+	ci.pollStatusDirectly()
+}
+
+func (copyItemTestRuntime) notifyProgressChange() {}
+
 type copyItemTestClient struct {
 	copyCalls     int
 	moveCalls     int
@@ -74,6 +80,10 @@ func (c *copyItemTestClient) TaskInfoContext(context.Context, string, taskItemTy
 		return c.taskInfoFn(c.taskInfoCalls)
 	}
 	return map[string]interface{}{"state": taskStatusSuccess.Int(), "progress": 100}, nil
+}
+
+func (c *copyItemTestClient) TaskUndoneListContext(context.Context, taskItemType) ([]map[string]interface{}, error) {
+	return []map[string]interface{}{}, nil
 }
 
 func (c *copyItemTestClient) DeleteFileContext(context.Context, string, []string, int) error {
@@ -116,7 +126,7 @@ func TestCopyItemKeepsStoppedStatusWhenCancelFails(t *testing.T) {
 	item := newCopyItem(breakingCopyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
 	item.setTaskID("copy-task")
 
-	item.checkAndGetStatus()
+	item.pollStatusDirectly()
 
 	if status := item.status(); status != taskStatusStopped {
 		t.Fatalf("status = %d, want stopped", status)
@@ -149,14 +159,14 @@ func TestCopyItemStopsPollingWhenContextTimesOutWithoutBreakFlag(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		item.checkAndGetStatus()
+		item.pollStatusDirectly()
 		close(done)
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
-		t.Fatalf("checkAndGetStatus did not return after context cancellation")
+		t.Fatalf("pollStatusDirectly did not return after context cancellation")
 	}
 	if status := item.status(); status != taskStatusStopped {
 		t.Fatalf("status = %d, want stopped", status)
@@ -176,7 +186,7 @@ func TestCopyItem404MarksSuccessWhenDstExists(t *testing.T) {
 	item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
 	item.setTaskID("task-1")
 
-	item.checkAndGetStatus()
+	item.pollStatusDirectly()
 
 	if status := item.status(); status != taskStatusSuccess {
 		t.Fatalf("status = %d, want success after 404 with dst present", status)
@@ -196,7 +206,7 @@ func TestCopyItem404MarksFailedWhenDstMissing(t *testing.T) {
 	item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
 	item.setTaskID("task-1")
 
-	item.checkAndGetStatus()
+	item.pollStatusDirectly()
 
 	if status := item.status(); status != taskStatusFailed {
 		t.Fatalf("status = %d, want failed after 404 with dst missing", status)
@@ -216,7 +226,7 @@ func TestCopyItemTransientErrorsRetryThenSucceed(t *testing.T) {
 	item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
 	item.setTaskID("task-1")
 
-	item.checkAndGetStatus()
+	item.pollStatusDirectly()
 
 	if status := item.status(); status != taskStatusSuccess {
 		t.Fatalf("status = %d, want success after transient blips recovered", status)
@@ -235,7 +245,7 @@ func TestCopyItemTransientErrorsExhaustedMarksFailed(t *testing.T) {
 	item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
 	item.setTaskID("task-1")
 
-	item.checkAndGetStatus()
+	item.pollStatusDirectly()
 
 	if status := item.status(); status != taskStatusFailed {
 		t.Fatalf("status = %d, want failed after transient errors exhausted", status)

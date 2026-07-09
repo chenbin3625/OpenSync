@@ -56,7 +56,6 @@ func (jt *JobTask) finishFailedTask(errMsg string) {
 }
 
 func (jt *JobTask) updateTaskStatus() error {
-	jt.GetCurrent()
 	taskNum := GetCuTaskNum(jt.TaskID)
 	failOrOtherNum := util.ToInt(taskNum["failNum"]) + util.ToInt(taskNum["otherNum"])
 	allNum := util.ToInt(taskNum["allNum"])

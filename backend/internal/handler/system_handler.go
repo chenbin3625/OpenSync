@@ -1,15 +1,13 @@
 package handler
 
 import (
-	"log"
 	"net/http"
 	"opensync/internal/config"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"opensync/internal/middleware"
 	"opensync/internal/model"
 	"opensync/internal/service"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,7 +19,7 @@ func Login(c *gin.Context) {
 		Passwd   string `json:"passwd" form:"passwd"`
 	}
 	if err := c.ShouldBind(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	user := service.CheckPwdScoped(0, req.Passwd, req.UserName, c.ClientIP())
@@ -49,7 +47,7 @@ func Initialize(c *gin.Context) {
 		Passwd   string `json:"passwd" form:"passwd"`
 	}
 	if err := c.ShouldBind(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	user, recoveryKey := service.InitializeUser(req.UserName, req.Passwd)
@@ -71,11 +69,11 @@ func ResetPassword(c *gin.Context) {
 		Passwd      string `json:"passwd" form:"passwd"`
 	}
 	if err := c.ShouldBind(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	if strings.TrimSpace(req.UserName) == "" || strings.TrimSpace(req.RecoveryKey) == "" || strings.TrimSpace(req.Passwd) == "" {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	result := service.ResetPasswd(req.UserName, req.RecoveryKey, req.Passwd)
@@ -102,7 +100,7 @@ func EditPassword(c *gin.Context) {
 		OldPasswd string `json:"oldPasswd" form:"oldPasswd"`
 	}
 	if err := c.ShouldBind(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	user, _ := c.Get("user")
@@ -122,7 +120,7 @@ func GetSystemConfig(c *gin.Context) {
 func UpdateSystemConfig(c *gin.Context) {
 	var req config.SystemSettings
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	if err := config.UpdateSystemSettings(req); err != nil {
@@ -130,27 +128,6 @@ func UpdateSystemConfig(c *gin.Context) {
 		return
 	}
 	middleware.InitSecureCookie()
-	service.CleanupExpiredTasks(log.Default(), req.TaskSave, time.Now())
+	service.RunTaskRetentionCleanup()
 	c.JSON(http.StatusOK, model.Success(config.GetSystemSettings()))
-}
-
-// GetLanguage handles GET /svr/language
-func GetLanguage(c *gin.Context) {
-	c.JSON(http.StatusOK, model.Success(i18n.GetLanguage()))
-}
-
-// SetLanguage handles POST /svr/language
-func SetLanguage(c *gin.Context) {
-	var req struct {
-		Language string `json:"language" form:"language"`
-	}
-	if err := c.ShouldBind(&req); err != nil {
-		c.JSON(http.StatusOK, model.Error(i18n.G("lost_part")))
-		return
-	}
-	if err := i18n.SetLanguage(req.Language); err != nil {
-		c.JSON(http.StatusOK, model.Error(err.Error()))
-		return
-	}
-	c.JSON(http.StatusOK, model.Success(nil))
 }

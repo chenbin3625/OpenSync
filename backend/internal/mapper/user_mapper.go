@@ -3,7 +3,7 @@ package mapper
 import (
 	"errors"
 	"fmt"
-	"opensync/internal/i18n"
+	"opensync/internal/msg"
 	"sync"
 )
 
@@ -56,7 +56,7 @@ func GetUserByName(name string) (map[string]interface{}, error) {
 		return nil, err
 	}
 	if len(rst) == 0 {
-		return nil, fmt.Errorf("%w: %s", ErrUserNotFound, i18n.G("user_not_found"))
+		return nil, fmt.Errorf("%w: %s", ErrUserNotFound, msg.UserNotFound)
 	}
 	return rst[0], nil
 }
@@ -68,7 +68,7 @@ func GetUserByID(id int64) (map[string]interface{}, error) {
 		return nil, err
 	}
 	if len(rst) == 0 {
-		return nil, fmt.Errorf("%w: %s", ErrUserNotFound, i18n.G("user_not_found"))
+		return nil, fmt.Errorf("%w: %s", ErrUserNotFound, msg.UserNotFound)
 	}
 	return rst[0], nil
 }

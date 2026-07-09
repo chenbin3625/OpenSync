@@ -4,6 +4,7 @@ import "time"
 
 func (jt *JobTask) taskSubmit() {
 	jt.runCopyExecutor()
+	jt.stopCopyMonitor()
 	persistErr := jt.persistRemainingTaskItems()
 	jt.finishSubmittedTask(persistErr)
 }
@@ -133,11 +134,19 @@ func (jt *JobTask) copyItemStillDoing(item *CopyItem) bool {
 }
 
 func (jt *JobTask) markWaitingAsAborted() {
-	for _, item := range jt.Waiting.closeAndDrain() {
+	items := jt.Waiting.closeAndDrain()
+	if len(items) == 0 {
+		return
+	}
+	taskItems := make([]JobTaskItem, 0, len(items))
+	for _, item := range items {
 		item.setStatus(taskStatusStopped)
 		item.mu.RLock()
-		jt.CopyHook(item.SrcPath, item.DstPath, item.FileName, item.FileSize, item.AlistTaskID,
-			taskStatusStopped, item.ErrMsg, taskItemFile, item.CopyType, item.CreateTime)
+		taskItems = append(taskItems, NewCopyJobTaskItem(
+			jt.TaskID, item.SrcPath, item.DstPath, item.FileName, item.FileSize,
+			item.AlistTaskID, taskStatusStopped, item.ErrMsg, taskItemFile, item.CopyType, item.CreateTime,
+		))
 		item.mu.RUnlock()
 	}
+	jt.appendFinishMany(taskItems)
 }

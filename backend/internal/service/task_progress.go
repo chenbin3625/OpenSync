@@ -22,18 +22,34 @@ func (jt *JobTask) scanProgress() map[string]int64 {
 	}
 }
 
+func (jt *JobTask) touchWatching() {
+	jt.LastWatching.Store(time.Now().Unix())
+}
+
+// TouchJobWatching refreshes the "viewer present" timestamp used by copy pollers.
+func TouchJobWatching(jobID int64) {
+	jobClientListMu.RLock()
+	client := jobClientList[jobID]
+	jobClientListMu.RUnlock()
+	if client == nil {
+		return
+	}
+	if task := client.currentTask(); task != nil {
+		task.touchWatching()
+	}
+}
+
 // GetCurrent returns real-time task progress
 func (jt *JobTask) GetCurrent() map[string]interface{} {
 	jt.initRuntime()
+	jt.touchWatching()
 	now := time.Now().Unix()
-	jt.LastWatching.Store(now)
 
-	waits := jt.waitingTaskMaps()
 	dos := jt.doingTaskMaps()
+	waitCount, waitSize := jt.Waiting.stats()
 
 	jt.CurrentMu.Lock()
 	jt.CurrentTasks = map[int][]map[string]interface{}{
-		taskStatusWaiting.Int(): waits,
 		taskStatusRunning.Int(): dos,
 	}
 	jt.CurrentMu.Unlock()
@@ -55,8 +71,8 @@ func (jt *JobTask) GetCurrent() map[string]interface{} {
 
 	numMap := result["num"].(map[string]int)
 	sizeMap := result["size"].(map[string]int64)
-	numMap["wait"] = len(waits)
-	sizeMap["wait"] = taskListSize(waits)
+	numMap["wait"] = waitCount
+	sizeMap["wait"] = waitSize
 	numMap["running"] = len(dos)
 	sizeMap["running"] = taskListSize(dos)
 
@@ -90,6 +106,9 @@ func (jt *JobTask) GetCurrentByStatus(status int) []map[string]interface{} {
 func (jt *JobTask) GetCurrentByStatusPage(status, pageSize, pageNum int) map[string]interface{} {
 	jt.initRuntime()
 	statusValue := taskStatusFromValue(status)
+	if statusValue == taskStatusWaiting {
+		return jt.waitingTaskPage(pageSize, pageNum)
+	}
 	if statusValue != taskStatusWaiting && statusValue != taskStatusRunning {
 		return jt.finishedTaskPageFromDB(status, pageSize, pageNum)
 	}
@@ -106,6 +125,18 @@ func (jt *JobTask) GetCurrentByStatusPage(status, pageSize, pageNum int) map[str
 			}
 			tasks = tasks[start:end]
 		}
+	}
+	return map[string]interface{}{
+		"dataList": tasks,
+		"count":    count,
+	}
+}
+
+func (jt *JobTask) waitingTaskPage(pageSize, pageNum int) map[string]interface{} {
+	items, count := jt.Waiting.snapshotPage(pageSize, pageNum)
+	tasks := make([]map[string]interface{}, len(items))
+	for i, item := range items {
+		tasks[i] = jt.copyItemToMap(item)
 	}
 	return map[string]interface{}{
 		"dataList": tasks,
