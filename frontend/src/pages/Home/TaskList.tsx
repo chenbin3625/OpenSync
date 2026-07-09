@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typography, Tooltip, Spin, Pagination, Tabs, DatePicker, Input, Select } from 'antd';
+import { POLL_INTERVAL_MS } from '../../api/request';
+import EllipsisText from './components/EllipsisText';
 import {
   DeleteOutlined, EyeOutlined, StopOutlined, RedoOutlined,
   ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined,
@@ -14,13 +16,12 @@ import {
   filterRunningTaskRows,
   getTaskItemKey,
   mergeTaskRecords,
-  shouldPollRealtime,
   type TaskListView,
 } from './taskRows';
 import { useRealtimeTask } from './useRealtimeTask';
 import { useRealtimeTaskItems } from './useRealtimeTaskItems';
 import { canPollCurrentDocument } from './pollingVisibility';
-import { displayText, formatSize, taskStatusColors, taskTypeNames } from './homeUtils';
+import { displayText, formatSize, taskRecordStatusNames, taskStatusColors, taskTypeNames } from './homeUtils';
 
 const { Text } = Typography;
 
@@ -41,13 +42,9 @@ function formatDuration(seconds: number): string {
 
 const TAB_TASK_PAGE_SIZE = 20;
 
-const statusNames: Record<number, string> = {
-  0: '等待中', 1: '运行中', 2: '成功', 3: '部分失败',
-  4: '已中止', 5: '超时', 6: '失败', 7: '已停止', 8: '无需同步',
-};
 const historyStatusOptions = [2, 3, 4, 5, 6, 7, 8].map((value) => ({
   value,
-  label: statusNames[value],
+  label: taskRecordStatusNames[value],
 }));
 const historyCompletedStatuses = [2, 3, 4, 5, 6, 7, 8];
 type HistoryTimeRange = [Dayjs | null, Dayjs | null] | null;
@@ -76,26 +73,13 @@ function getTaskDisplayName(task: TaskItem): string {
   return cleanPath.split('/').pop() || cleanPath;
 }
 
-function TaskInlineText({
-  value,
-  tooltip,
-  type,
-  className,
-}: {
+function TaskInlineText(props: {
   value: string | number | null | undefined;
-  tooltip?: ReactNode;
+  tooltip?: React.ReactNode;
   type?: 'secondary' | 'danger';
   className?: string;
 }) {
-  const text = displayText(value);
-  if (text === '--') return <Text type="secondary" className={className}>--</Text>;
-  return (
-    <Tooltip title={tooltip || text}>
-      <Text type={type} ellipsis className={className}>
-        {text}
-      </Text>
-    </Tooltip>
-  );
+  return <EllipsisText {...props} />;
 }
 
 function RealtimeTaskItems({
@@ -370,11 +354,13 @@ function RealtimeTaskCard({
 export default function TaskList({
   jobId,
   onTaskDetail,
-  view = 'all',
+  view,
+  active = true,
 }: {
   jobId: string;
   onTaskDetail?: (taskId: number) => void;
-  view?: TaskListView;
+  view: TaskListView;
+  active?: boolean;
 }) {
   const { message } = App.useApp();
   const [list, setList] = useState<TaskRecord[]>([]);
@@ -390,8 +376,8 @@ export default function TaskList({
   const [historyTimeRange, setHistoryTimeRange] = useState<HistoryTimeRange>(null);
   const listRequestRef = useRef(0);
   const listLoadingRequestRef = useRef(0);
-  const showRealtime = shouldPollRealtime(view);
-  const showHistory = view === 'all' || view === 'history';
+  const showRealtime = view === 'realtime' && active;
+  const showHistory = view === 'history' && active;
   const { currentTask, refreshCurrentTask } = useRealtimeTask(jobId, showRealtime);
   const {
     activeTab,
@@ -470,7 +456,7 @@ export default function TaskList({
     if (!showHistory) return undefined;
     const pollID = setInterval(() => {
       if (canPollCurrentDocument()) fetchList(false);
-    }, 3000);
+    }, POLL_INTERVAL_MS);
     return () => { clearInterval(pollID); };
   }, [fetchList, showHistory]);
   const handleDeleteTask = useCallback(async (taskId: number) => {
@@ -522,7 +508,7 @@ export default function TaskList({
       render: (s: number, record: TaskRecord) => {
         const errorReason = typeof record.errMsg === 'string' ? record.errMsg.trim() : '';
         const statusTag = (
-          <Tag color={taskStatusColors[s]}>{statusNames[s] || s}</Tag>
+          <Tag color={taskStatusColors[s]}>{taskRecordStatusNames[s] || s}</Tag>
         );
         if (taskStatusColors[s] !== 'error' || !errorReason) {
           return statusTag;

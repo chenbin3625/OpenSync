@@ -82,21 +82,7 @@ func ShutdownJobs(ctx context.Context) {
 }
 
 func waitJobClientIdleContext(ctx context.Context, client *JobClient) {
-	for {
-		client.mu.Lock()
-		if client.isIdleLocked() {
-			client.mu.Unlock()
-			return
-		}
-		stateCh := client.stateChangeChLocked()
-		client.mu.Unlock()
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-stateCh:
-		}
-	}
+	client.waitUntilIdleContext(ctx, 0)
 }
 
 func CleanupExpiredTasks(logger *log.Logger, taskSaveDays int, now time.Time) {
@@ -161,10 +147,10 @@ func CleanJobInput(job map[string]interface{}) {
 		job["exclude"] = normalizeExclude(excludeStr)
 	}
 	if job["srcPath"] != nil {
-		job["srcPath"] = normalizeSrcPathForStorage(job["srcPath"])
+		job["srcPath"] = normalizePathListForStorage(job["srcPath"])
 	}
 	if job["dstPath"] != nil {
-		job["dstPath"] = normalizeDstPathForStorage(job["dstPath"])
+		job["dstPath"] = normalizePathListForStorage(job["dstPath"])
 	}
 	normalizeJobFileSizeRange(job)
 }
@@ -448,8 +434,13 @@ func GetTaskList(req map[string]interface{}) map[string]interface{} {
 	for _, item := range dataList {
 		var taskNum map[string]interface{}
 		taskNumStr, hasTaskNum := item["taskNum"]
-		if hasTaskNum && taskNumStr != nil && fmt.Sprintf("%v", taskNumStr) != "" {
-			json.Unmarshal([]byte(fmt.Sprintf("%v", taskNumStr)), &taskNum)
+		if hasTaskNum && taskNumStr != nil {
+			taskNum = parseTaskNumJSON(taskNumStr)
+			if taskNum == nil {
+				taskID := util.ToInt64(item["id"])
+				missingTaskIDs = append(missingTaskIDs, taskID)
+				missingTaskItems = append(missingTaskItems, item)
+			}
 		} else {
 			taskID := util.ToInt64(item["id"])
 			missingTaskIDs = append(missingTaskIDs, taskID)
@@ -468,7 +459,7 @@ func GetTaskList(req map[string]interface{}) map[string]interface{} {
 			taskID := util.ToInt64(item["id"])
 			taskNum := taskNumByID[taskID]
 			if taskNum == nil {
-				taskNum = emptyTaskNum()
+				taskNum = mapper.EmptyJobTaskCounts()
 			}
 			for k, v := range taskNum {
 				item[k] = v
@@ -490,6 +481,33 @@ func GetTaskList(req map[string]interface{}) map[string]interface{} {
 	return jobTaskList
 }
 
+func parseTaskNumJSON(value interface{}) map[string]interface{} {
+	var raw []byte
+	switch v := value.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		raw = []byte(v)
+	case []byte:
+		if len(v) == 0 {
+			return nil
+		}
+		raw = v
+	default:
+		text := strings.TrimSpace(fmt.Sprintf("%v", value))
+		if text == "" {
+			return nil
+		}
+		raw = []byte(text)
+	}
+	var taskNum map[string]interface{}
+	if err := json.Unmarshal(raw, &taskNum); err != nil {
+		return nil
+	}
+	return taskNum
+}
+
 func scheduleTaskNumUpdate(taskNums []map[string]interface{}) {
 	taskNums = cloneTaskRows(taskNums)
 	select {
@@ -507,19 +525,6 @@ func scheduleTaskNumUpdate(taskNums []map[string]interface{}) {
 	}
 }
 
-func emptyTaskNum() map[string]interface{} {
-	return map[string]interface{}{
-		"waitNum":    int64(0),
-		"runningNum": int64(0),
-		"successNum": int64(0),
-		"failNum":    int64(0),
-		"otherNum":   int64(0),
-		"allNum":     int64(0),
-		"sumSize":    int64(0),
-	}
-}
-
-// GetTaskItemList returns paginated task item list
 func GetTaskItemList(req map[string]interface{}) map[string]interface{} {
 	result, err := mapper.GetJobTaskItemList(req)
 	if err != nil {

@@ -8,8 +8,7 @@ import {
   mergeTaskItems,
   mergeTaskRecords,
   normalizeTaskItemPage,
-  shouldClearRealtimeRows,
-  shouldResetRealtimeTotal,
+  shouldResetRealtimeSnapshot,
   shouldReplaceRealtimeRows,
   shouldPollRealtime,
   sortTaskItemsByCreateTimeDesc,
@@ -119,8 +118,7 @@ test('filterRunningTaskRows removes active rows when history view does not poll 
   assert.deepEqual(filtered.map((row) => row.id), [10]);
 });
 
-test('shouldPollRealtime only enables polling for views that render realtime content', () => {
-  assert.equal(shouldPollRealtime('all'), true);
+test('shouldPollRealtime only enables polling for realtime view', () => {
   assert.equal(shouldPollRealtime('realtime'), true);
   assert.equal(shouldPollRealtime('history'), false);
 });
@@ -188,49 +186,24 @@ test('shouldReplaceRealtimeRows replaces rows only when task, tab, or page chang
   );
 });
 
-test('shouldResetRealtimeTotal keeps pagination total when only page changes', () => {
-  assert.equal(shouldResetRealtimeTotal(null, { status: 2, taskIdentity: '10:100', page: 1 }), true);
+test('shouldResetRealtimeSnapshot keeps pagination total when only page changes', () => {
+  assert.equal(shouldResetRealtimeSnapshot(null, { status: 2, taskIdentity: '10:100', page: 1 }), true);
   assert.equal(
-    shouldResetRealtimeTotal(
+    shouldResetRealtimeSnapshot(
       { status: 2, taskIdentity: '10:100', page: 1 },
       { status: 2, taskIdentity: '10:100', page: 2 },
     ),
     false,
   );
   assert.equal(
-    shouldResetRealtimeTotal(
+    shouldResetRealtimeSnapshot(
       { status: 2, taskIdentity: '10:100', page: 1 },
       { status: 7, taskIdentity: '10:100', page: 1 },
     ),
     true,
   );
   assert.equal(
-    shouldResetRealtimeTotal(
-      { status: 2, taskIdentity: '10:100', page: 1 },
-      { status: 2, taskIdentity: '11:200', page: 1 },
-    ),
-    true,
-  );
-});
-
-test('shouldClearRealtimeRows keeps current rows visible when only page changes', () => {
-  assert.equal(shouldClearRealtimeRows(null, { status: 2, taskIdentity: '10:100', page: 1 }), true);
-  assert.equal(
-    shouldClearRealtimeRows(
-      { status: 2, taskIdentity: '10:100', page: 1 },
-      { status: 2, taskIdentity: '10:100', page: 2 },
-    ),
-    false,
-  );
-  assert.equal(
-    shouldClearRealtimeRows(
-      { status: 2, taskIdentity: '10:100', page: 1 },
-      { status: 7, taskIdentity: '10:100', page: 1 },
-    ),
-    true,
-  );
-  assert.equal(
-    shouldClearRealtimeRows(
+    shouldResetRealtimeSnapshot(
       { status: 2, taskIdentity: '10:100', page: 1 },
       { status: 2, taskIdentity: '11:200', page: 1 },
     ),

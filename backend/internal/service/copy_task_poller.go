@@ -134,14 +134,10 @@ func (m *copyTaskMonitor) loop() {
 			}
 			taskInfo, ok := undoneByType[watch.copyType][watch.taskID]
 			if ok {
-				if m.applyTaskInfo(watch, taskInfo) {
-					continue
-				}
+				m.applyTaskInfo(watch, taskInfo)
 				continue
 			}
-			if m.pollTaskInfo(watch) {
-				continue
-			}
+			m.pollTaskInfo(watch)
 		}
 
 		select {
@@ -180,7 +176,7 @@ func (m *copyTaskMonitor) fetchUndoneByType(active []*copyTaskWatch) map[taskIte
 	}
 
 	result := make(map[taskItemType]map[string]map[string]interface{}, len(needed))
-	client := m.jt.AlistClient
+	client := m.jt.copyMonitorClient()
 	ctx := m.jt.context()
 	for copyType := range needed {
 		tasks, err := client.TaskUndoneListContext(ctx, copyType)
@@ -228,7 +224,7 @@ func (m *copyTaskMonitor) applyTaskInfo(watch *copyTaskWatch, taskInfo map[strin
 }
 
 func (m *copyTaskMonitor) pollTaskInfo(watch *copyTaskWatch) bool {
-	client := m.jt.AlistClient
+	client := m.jt.copyMonitorClient()
 	taskInfo, err := client.TaskInfoContext(m.jt.context(), watch.taskID, watch.copyType)
 	if err != nil {
 		if errors.Is(err, context.Canceled) && m.jt.isBreak() {
@@ -275,7 +271,7 @@ func (m *copyTaskMonitor) finishWatch(watch *copyTaskWatch) {
 		return
 	}
 	ctx, cancel := m.jt.cleanupContext()
-	_ = m.jt.AlistClient.TaskDeleteContext(ctx, watch.taskID, watch.copyType)
+	_ = m.jt.copyMonitorClient().TaskDeleteContext(ctx, watch.taskID, watch.copyType)
 	cancel()
 	watch.closeDone()
 }
@@ -284,7 +280,7 @@ func (m *copyTaskMonitor) abortWatch(watch *copyTaskWatch, cause error) {
 	if !m.takeWatch(watch) {
 		return
 	}
-	watch.ci.stopRemoteTask(m.jt.AlistClient, cause)
+	watch.ci.stopRemoteTask(m.jt.copyMonitorClient(), cause)
 	watch.closeDone()
 }
 
@@ -298,7 +294,7 @@ func (m *copyTaskMonitor) abortAll(cause error) {
 	m.mu.Unlock()
 
 	for _, watch := range watches {
-		watch.ci.stopRemoteTask(m.jt.AlistClient, cause)
+		watch.ci.stopRemoteTask(m.jt.copyMonitorClient(), cause)
 		watch.closeDone()
 	}
 }

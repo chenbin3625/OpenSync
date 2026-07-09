@@ -5,9 +5,8 @@ import {
   getRealtimeTaskIdentity,
   mergeTaskItems,
   normalizeTaskItemPage,
-  shouldClearRealtimeRows,
   shouldReplaceRealtimeRows,
-  shouldResetRealtimeTotal,
+  shouldResetRealtimeSnapshot,
   sortTaskItemsByCreateTimeDesc,
   type RealtimeTaskLoadKey,
 } from './taskRows';
@@ -78,8 +77,8 @@ export function useRealtimeTaskItems({
 
     const loadKey = { status: activeTab, taskIdentity, page: tabTaskPage };
     const replaceRows = shouldReplaceRealtimeRows(lastLoaded, loadKey);
-    const resetTotal = shouldResetRealtimeTotal(lastLoaded, loadKey);
-    const clearRows = shouldClearRealtimeRows(lastLoaded, loadKey);
+    const resetTotal = shouldResetRealtimeSnapshot(lastLoaded, loadKey);
+    const clearRows = shouldResetRealtimeSnapshot(lastLoaded, loadKey);
     const requestID = ++requestRef.current;
     lastLoadedRef.current = loadKey;
 

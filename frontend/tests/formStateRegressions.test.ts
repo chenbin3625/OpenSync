@@ -5,6 +5,7 @@ import test from 'node:test';
 const engineSource = readFileSync(new URL('../src/pages/Engine/index.tsx', import.meta.url), 'utf8');
 const notifySource = readFileSync(new URL('../src/pages/Notify/index.tsx', import.meta.url), 'utf8');
 const jobFormDrawerSource = readFileSync(new URL('../src/pages/Home/JobFormDrawer.tsx', import.meta.url), 'utf8');
+const usePathTreeSource = readFileSync(new URL('../src/pages/Home/usePathTree.ts', import.meta.url), 'utf8');
 const taskListSource = readFileSync(new URL('../src/pages/Home/TaskList.tsx', import.meta.url), 'utf8');
 const loginSource = readFileSync(new URL('../src/pages/Login/index.tsx', import.meta.url), 'utf8');
 const userApiSource = readFileSync(new URL('../src/api/user.ts', import.meta.url), 'utf8');
@@ -77,20 +78,21 @@ test('manual-only jobs keep enable true in the drawer and submit payload', () =>
 
 test('directory tree loading ignores stale engine responses', () => {
   assert.match(jobFormDrawerSource, /treeLoadRequestRef/);
-  assert.match(jobFormDrawerSource, /if \(requestID !== treeLoadRequestRef\.current\) return;/);
+  assert.match(usePathTreeSource, /if \(requestID !== treeLoadRequestRef\.current\) return;/);
+});
+
+test('job edit drawer seeds selected directory nodes before async tree data arrives', () => {
+  assert.match(usePathTreeSource, /buildPathTreeData\(parseJobPathList\(paths\)\)/);
+  assert.match(usePathTreeSource, /setTreeData\(pathTree\)/);
+  assert.match(usePathTreeSource, /mergeTreeData\(root, pathTree\)/);
+  assert.match(jobFormDrawerSource, /loadSrcRoot\(editingJobSrcPath\)/);
+  assert.match(jobFormDrawerSource, /loadDstRoot\(editingJobDstPath\)/);
 });
 
 test('job drawer aborts in-flight submit when closed', () => {
   assert.match(jobFormDrawerSource, /submitAbortRef/);
   assert.match(jobFormDrawerSource, /submitAbortRef\.current\?\.abort\(\)/);
   assert.match(jobFormDrawerSource, /jobPost\(jobData, \{ signal: controller\.signal \}\)/);
-});
-
-test('job edit drawer seeds selected directory nodes before async tree data arrives', () => {
-  assert.match(jobFormDrawerSource, /buildPathTreeData\(editingSrcPaths\)/);
-  assert.match(jobFormDrawerSource, /setSrcTreeData\(srcPathTreeData\)/);
-  assert.match(jobFormDrawerSource, /mergeTreeData\(root, srcPathTreeData\)/);
-  assert.match(jobFormDrawerSource, /mergeTreeData\(structuredClone\(root\), dstPathTreeData\)/);
 });
 
 test('forms inside overlays are force rendered before form APIs run', () => {

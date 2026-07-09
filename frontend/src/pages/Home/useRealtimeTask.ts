@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { jobGetTaskCurrent } from '../../api/job';
+import { POLL_INTERVAL_MS } from '../../api/request';
 import type { ApiResponse, CurrentTaskData, CurrentTaskView, PageData, TaskItem } from '../../types';
 import { canPollCurrentDocument } from './pollingVisibility';
 
@@ -94,7 +95,7 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
     const startPolling = () => {
       if (pollID || closed) return;
       refreshCurrentTask();
-      pollID = setInterval(refreshCurrentTask, 3000);
+      pollID = setInterval(refreshCurrentTask, POLL_INTERVAL_MS);
     };
 
     const stopPolling = () => {

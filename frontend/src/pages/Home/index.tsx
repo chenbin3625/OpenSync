@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import './Home.css';
 import { Alert, App, Typography, Tabs, Drawer, Empty } from 'antd';
@@ -11,14 +11,15 @@ import HomeOverview from './HomeOverview';
 import JobFormDrawer from './JobFormDrawer';
 import type { AlistItem, JobItem } from '../../types';
 import { buildHomeRouteSearch, readHomeRouteState, type HomeRouteState, type HomeTabKey } from './routeState';
+import { formatAlistLabel } from './homeUtils';
 
 export default function Home() {
   const { message } = App.useApp();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialRouteState = readHomeRouteState(searchParams);
+  const routeState = useMemo(() => readHomeRouteState(searchParams), [searchParams]);
+  const { tab: activeJobTab, jobId: selectedJobId, page } = routeState;
   const [list, setList] = useState<JobItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(() => initialRouteState.page);
   const [pageSize] = useState(12);
   const [loading, setLoading] = useState(false);
   const [listLoaded, setListLoaded] = useState(false);
@@ -26,8 +27,6 @@ export default function Home() {
   const [alistList, setAlistList] = useState<AlistItem[]>([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [editingJob, setEditingJob] = useState<JobItem | null>(null);
-  const [selectedJobId, setSelectedJobId] = useState<number | null>(() => initialRouteState.jobId);
-  const [activeJobTab, setActiveJobTab] = useState<HomeTabKey>(() => initialRouteState.tab);
   const [taskDetailDrawerTaskId, setTaskDetailDrawerTaskId] = useState<string>('');
   const listRequestRef = useRef(0);
 
@@ -37,8 +36,6 @@ export default function Home() {
     setListError(false);
     try {
       const res = await jobGetJob({ pageSize: ps, pageNum: p });
-      // Drop stale responses so a slow earlier page request can't overwrite
-      // the latest list (e.g. rapidly flipping through pagination).
       if (requestID !== listRequestRef.current) return;
       setList(res.data?.dataList || []);
       setTotal(res.data?.count || 0);
@@ -48,10 +45,9 @@ export default function Home() {
       setTotal(0);
       setListError(true);
       console.error('job list fetch failed', err);
-    }
-    finally {
-      setListLoaded(true);
+    } finally {
       if (requestID === listRequestRef.current) {
+        setListLoaded(true);
         setLoading(false);
       }
     }
@@ -68,12 +64,16 @@ export default function Home() {
 
   useEffect(() => { fetchAlistList(); }, [fetchAlistList]);
   useEffect(() => { fetchList(); }, [fetchList]);
-  useEffect(() => {
-    const routeState = readHomeRouteState(searchParams);
-    setActiveJobTab((current) => (current === routeState.tab ? current : routeState.tab));
-    setSelectedJobId((current) => (current === routeState.jobId ? current : routeState.jobId));
-    setPage((current) => (current === routeState.page ? current : routeState.page));
-  }, [searchParams]);
+
+  const updateHomeRouteState = useCallback((state: Partial<HomeRouteState>) => {
+    const current = readHomeRouteState(searchParams);
+    setSearchParams(buildHomeRouteSearch(searchParams, {
+      tab: state.tab ?? current.tab,
+      jobId: state.jobId !== undefined ? state.jobId : current.jobId,
+      page: state.page ?? current.page,
+    }), { replace: true });
+  }, [searchParams, setSearchParams]);
+
   useEffect(() => {
     if (!listLoaded) return;
     let nextJobId = selectedJobId;
@@ -84,13 +84,8 @@ export default function Home() {
     }
 
     if (nextJobId === selectedJobId) return;
-    setSelectedJobId(nextJobId);
-    setSearchParams(buildHomeRouteSearch(searchParams, {
-      tab: activeJobTab,
-      jobId: nextJobId,
-      page,
-    }), { replace: true });
-  }, [activeJobTab, list, listLoaded, page, searchParams, selectedJobId, setSearchParams]);
+    updateHomeRouteState({ jobId: nextJobId });
+  }, [list, listLoaded, selectedJobId, updateHomeRouteState]);
 
   const handleAdd = () => {
     setEditingJob(null);
@@ -147,18 +142,6 @@ export default function Home() {
     }
   };
 
-  const updateHomeRouteState = useCallback((state: Partial<HomeRouteState>) => {
-    const nextRouteState: HomeRouteState = {
-      tab: state.tab ?? activeJobTab,
-      jobId: state.jobId !== undefined ? state.jobId : selectedJobId,
-      page: state.page ?? page,
-    };
-    setActiveJobTab(nextRouteState.tab);
-    setSelectedJobId(nextRouteState.jobId);
-    setPage(nextRouteState.page);
-    setSearchParams(buildHomeRouteSearch(searchParams, nextRouteState), { replace: true });
-  }, [activeJobTab, page, searchParams, selectedJobId, setSearchParams]);
-
   const handlePageChange = useCallback((nextPage: number) => {
     updateHomeRouteState({ page: nextPage, jobId: null });
   }, [updateHomeRouteState]);
@@ -166,7 +149,7 @@ export default function Home() {
   const getAlistName = (alistId: number) => {
     const a = alistList.find((x) => x.id === alistId);
     if (!a) return `引擎 #${alistId}`;
-    return a.remark ? `${a.userName} (${a.remark})` : a.userName;
+    return formatAlistLabel(a);
   };
 
   const selectedJob = list.find((job) => job.id === selectedJobId) || null;
@@ -201,44 +184,53 @@ export default function Home() {
             className="sync-main-tabs"
             activeKey={activeJobTab}
             onChange={(key) => updateHomeRouteState({ tab: key as HomeTabKey })}
+            destroyInactiveTabPane={false}
             items={[
               {
                 key: 'overview',
                 label: '总览',
-                children: activeJobTab === 'overview' ? (
-                  <HomeOverview
-                    selectedJob={selectedJob}
-                    onRun={handleRun}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                    onToggle={handleToggle}
-                    getAlistName={getAlistName}
-                  />
-                ) : null,
+                children: (
+                  <div style={{ display: activeJobTab === 'overview' ? 'block' : 'none' }}>
+                    <HomeOverview
+                      selectedJob={selectedJob}
+                      onRun={handleRun}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                      onToggle={handleToggle}
+                      getAlistName={getAlistName}
+                    />
+                  </div>
+                ),
               },
               {
                 key: 'realtime',
                 label: '实时任务',
-                children: activeJobTab === 'realtime' ? (
-                  <TaskList
-                    key={`realtime-${selectedJob.id}`}
-                    jobId={String(selectedJob.id)}
-                    view="realtime"
-                    onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-                  />
-                ) : null,
+                children: (
+                  <div style={{ display: activeJobTab === 'realtime' ? 'block' : 'none' }}>
+                    <TaskList
+                      key={`realtime-${selectedJob.id}`}
+                      jobId={String(selectedJob.id)}
+                      view="realtime"
+                      active={activeJobTab === 'realtime'}
+                      onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+                    />
+                  </div>
+                ),
               },
               {
                 key: 'history',
                 label: '历史任务',
-                children: activeJobTab === 'history' ? (
-                  <TaskList
-                    key={`history-${selectedJob.id}`}
-                    jobId={String(selectedJob.id)}
-                    view="history"
-                    onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-                  />
-                ) : null,
+                children: (
+                  <div style={{ display: activeJobTab === 'history' ? 'block' : 'none' }}>
+                    <TaskList
+                      key={`history-${selectedJob.id}`}
+                      jobId={String(selectedJob.id)}
+                      view="history"
+                      active={activeJobTab === 'history'}
+                      onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+                    />
+                  </div>
+                ),
               },
             ]}
           />

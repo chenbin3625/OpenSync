@@ -138,24 +138,19 @@ func (jt *JobTask) markScanFinished() {
 }
 
 func (jt *JobTask) syncRetryItems() {
-	if jt.RetrySourceTaskID > 0 {
-		err := forEachJobTaskItemsByStatuses(jt.RetrySourceTaskID, taskStatusValues(jt.RetryStatuses...), retryTaskItemBatchSize, func(items []map[string]interface{}) error {
-			for _, item := range items {
-				if jt.isBreak() {
-					return errScanAborted
-				}
-				jt.retryTaskItem(item)
+	err := forEachJobTaskItemsByStatuses(jt.RetrySourceTaskID, taskStatusValues(jt.RetryStatuses...), retryTaskItemBatchSize, func(items []map[string]interface{}) error {
+		for _, item := range items {
+			if jt.isBreak() {
+				return errScanAborted
 			}
-			return nil
-		})
-		if err != nil && !errors.Is(err, errScanAborted) {
-			errMsg := err.Error()
-			jt.CopyHook("", "", "", nil, "", taskStatusFailed, &errMsg, taskItemPath, taskItemTypeCopy, time.Now().Unix())
+			jt.retryTaskItem(item)
 		}
-		jt.markScanFinished()
-		return
+		return nil
+	})
+	if err != nil && !errors.Is(err, errScanAborted) {
+		errMsg := err.Error()
+		jt.CopyHook("", "", "", nil, "", taskStatusFailed, &errMsg, taskItemPath, taskItemTypeCopy, time.Now().Unix())
 	}
-
 	jt.markScanFinished()
 }
 

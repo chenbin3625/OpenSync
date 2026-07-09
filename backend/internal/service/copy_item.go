@@ -3,10 +3,7 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
-	"opensync/internal/msg"
 	"opensync/pkg/util"
-	"strings"
 	"sync"
 	"time"
 )
@@ -241,90 +238,6 @@ func (ci *CopyItem) errorMessage() string {
 		return "copy failed"
 	}
 	return *ci.ErrMsg
-}
-
-func (ci *CopyItem) pollStatusDirectly() {
-	runtime := ci.copyRuntime()
-	client := ci.copyClient()
-	transientErrs := 0
-	for {
-		ctxErr := runtime.context().Err()
-		if runtime.isBreak() || ctxErr != nil {
-			if runtime.isBreak() {
-				ctxErr = nil
-			}
-			ci.stopRemoteTask(client, ctxErr)
-			break
-		}
-
-		cuTime := time.Now().Unix()
-		var sleepFor time.Duration
-		if cuTime-runtime.lastWatchingUnix() < 3 {
-			sleepFor = 610 * time.Millisecond
-		} else {
-			sleepFor = 2930 * time.Millisecond
-		}
-		if completed := runtime.waitForBreak(sleepFor); !completed {
-			continue
-		}
-
-		taskInfo, err := client.TaskInfoContext(runtime.context(), ci.taskID(), ci.CopyType)
-		if err != nil {
-			if errors.Is(err, context.Canceled) && runtime.isBreak() {
-				continue
-			}
-			eMsg := err.Error()
-			if strings.Contains(eMsg, "404") {
-				// Task record is gone. For move/copy this usually means AList
-				// finished and removed the record (source already deleted by the
-				// move). Verify the destination: if the file is there, the transfer
-				// succeeded and we must not falsely mark it failed.
-				if exists, verr := ci.verifyDstExists(runtime, client); verr == nil && exists {
-					ci.setProgress(taskStatusSuccess, 100, nil)
-					break
-				}
-				eMsg = msg.TaskMayDelete
-				ci.setProgress(taskStatusFailed, 0, &eMsg)
-				break
-			}
-			// Transient error (connection limit / timeout / 5xx): keep polling a
-			// few more times before giving up, so a momentary blip does not turn
-			// a completed transfer into a false failure.
-			transientErrs++
-			if transientErrs < maxTransientPollErrors {
-				continue
-			}
-			ci.setProgress(taskStatusFailed, 0, &eMsg)
-			break
-		}
-		transientErrs = 0
-
-		state := taskStatusFromValue(taskInfo["state"])
-		progress := util.ToFloat64(taskInfo["progress"])
-		errStr := ""
-		if e, ok := taskInfo["error"]; ok && e != nil {
-			errStr = fmt.Sprintf("%v", e)
-		}
-
-		ci.mu.RLock()
-		unchanged := state == ci.Status && progress == ci.Progress
-		ci.mu.RUnlock()
-		if unchanged {
-			continue
-		}
-		if errStr != "" {
-			ci.setProgress(state, progress, &errStr)
-		} else {
-			ci.setProgress(state, progress, nil)
-		}
-
-		if state == taskStatusSuccess || state == taskStatusStopped || state == taskStatusFailed {
-			ctx, cancel := runtime.cleanupContext()
-			_ = client.TaskDeleteContext(ctx, ci.taskID(), ci.CopyType)
-			cancel()
-			break
-		}
-	}
 }
 
 // verifyDstExists checks whether the destination file is present. Used when the

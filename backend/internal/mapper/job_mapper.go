@@ -491,43 +491,47 @@ func ForEachJobTaskItemsByStatuses(taskID int64, statuses []int, batchSize int, 
 	}
 }
 
-func statusInClause(statuses []int) (string, []interface{}) {
-	placeholders := make([]string, 0, len(statuses))
-	args := make([]interface{}, 0, len(statuses))
-	for _, status := range statuses {
-		placeholders = append(placeholders, "?")
-		args = append(args, status)
+const jobTaskCountSelect = `
+			COUNT(id) AS allNum,
+			COALESCE(SUM(CASE WHEN status=0 THEN 1 ELSE 0 END), 0) AS waitNum,
+			COALESCE(SUM(CASE WHEN status=1 THEN 1 ELSE 0 END), 0) AS runningNum,
+			COALESCE(SUM(CASE WHEN status=2 THEN 1 ELSE 0 END), 0) AS successNum,
+			COALESCE(SUM(CASE WHEN status=7 THEN 1 ELSE 0 END), 0) AS failNum,
+			COALESCE(SUM(CASE WHEN status NOT IN (0,1,2,7) THEN 1 ELSE 0 END), 0) AS otherNum,
+			COALESCE(SUM(CASE WHEN status=2 AND type<>1 AND fileSize IS NOT NULL THEN fileSize ELSE 0 END), 0) AS sumSize`
+
+func inClause(values []interface{}) (string, []interface{}) {
+	placeholders := make([]string, len(values))
+	for i := range values {
+		placeholders[i] = "?"
 	}
-	return strings.Join(placeholders, ","), args
+	return strings.Join(placeholders, ","), values
 }
 
-// GetResumableJobTaskItems returns interrupted task items that can continue
-// without scanning the job again.
-func GetResumableJobTaskItems(taskID int64) ([]map[string]interface{}, error) {
-	return FetchAllToTable(
-		fmt.Sprintf(`SELECT %s FROM job_task_item
-		 WHERE taskId=? AND status IN (0, 1, 4)
-		 ORDER BY createTime ASC, id ASC`, jobTaskItemRuntimeColumns),
-		taskID,
-	)
+func statusInClause(statuses []int) (string, []interface{}) {
+	args := make([]interface{}, 0, len(statuses))
+	for _, status := range statuses {
+		args = append(args, status)
+	}
+	return inClause(args)
+}
+
+func int64InClause(values []int64) (string, []interface{}) {
+	args := make([]interface{}, 0, len(values))
+	for _, value := range values {
+		args = append(args, value)
+	}
+	return inClause(args)
 }
 
 // GetJobTaskCounts returns all task item status counters in one query.
 func GetJobTaskCounts(taskID int64) map[string]interface{} {
 	rows, err := FetchAllToTable(
-		`SELECT
-			COUNT(id) AS allNum,
-			COALESCE(SUM(CASE WHEN status=0 THEN 1 ELSE 0 END), 0) AS waitNum,
-			COALESCE(SUM(CASE WHEN status=1 THEN 1 ELSE 0 END), 0) AS runningNum,
-				COALESCE(SUM(CASE WHEN status=2 THEN 1 ELSE 0 END), 0) AS successNum,
-				COALESCE(SUM(CASE WHEN status=7 THEN 1 ELSE 0 END), 0) AS failNum,
-				COALESCE(SUM(CASE WHEN status NOT IN (0,1,2,7) THEN 1 ELSE 0 END), 0) AS otherNum,
-				COALESCE(SUM(CASE WHEN status=2 AND type<>1 AND fileSize IS NOT NULL THEN fileSize ELSE 0 END), 0) AS sumSize
-			FROM job_task_item WHERE taskId=?`,
+		fmt.Sprintf(`SELECT%s FROM job_task_item WHERE taskId=?`, jobTaskCountSelect),
 		taskID,
 	)
 	if err != nil || len(rows) == 0 {
-		return emptyJobTaskCounts()
+		return EmptyJobTaskCounts()
 	}
 	return rows[0]
 }
@@ -546,7 +550,7 @@ func GetJobTaskCountsByTaskIDs(taskIDs []int64) map[int64]map[string]interface{}
 		}
 		seen[taskID] = struct{}{}
 		uniqueIDs = append(uniqueIDs, taskID)
-		results[taskID] = emptyJobTaskCounts()
+		results[taskID] = EmptyJobTaskCounts()
 	}
 	if len(uniqueIDs) == 0 {
 		return results
@@ -555,17 +559,10 @@ func GetJobTaskCountsByTaskIDs(taskIDs []int64) map[int64]map[string]interface{}
 	clause, args := int64InClause(uniqueIDs)
 	rows, err := FetchAllToTable(
 		fmt.Sprintf(`SELECT
-				taskId,
-				COUNT(id) AS allNum,
-				COALESCE(SUM(CASE WHEN status=0 THEN 1 ELSE 0 END), 0) AS waitNum,
-				COALESCE(SUM(CASE WHEN status=1 THEN 1 ELSE 0 END), 0) AS runningNum,
-				COALESCE(SUM(CASE WHEN status=2 THEN 1 ELSE 0 END), 0) AS successNum,
-				COALESCE(SUM(CASE WHEN status=7 THEN 1 ELSE 0 END), 0) AS failNum,
-				COALESCE(SUM(CASE WHEN status NOT IN (0,1,2,7) THEN 1 ELSE 0 END), 0) AS otherNum,
-				COALESCE(SUM(CASE WHEN status=2 AND type<>1 AND fileSize IS NOT NULL THEN fileSize ELSE 0 END), 0) AS sumSize
+				taskId,%s
 			FROM job_task_item
 			WHERE taskId IN (%s)
-			GROUP BY taskId`, clause),
+			GROUP BY taskId`, jobTaskCountSelect, clause),
 		args...,
 	)
 	if err != nil {
@@ -579,7 +576,7 @@ func GetJobTaskCountsByTaskIDs(taskIDs []int64) map[int64]map[string]interface{}
 	return results
 }
 
-func emptyJobTaskCounts() map[string]interface{} {
+func EmptyJobTaskCounts() map[string]interface{} {
 	return map[string]interface{}{
 		"waitNum":    int64(0),
 		"runningNum": int64(0),
@@ -589,16 +586,6 @@ func emptyJobTaskCounts() map[string]interface{} {
 		"allNum":     int64(0),
 		"sumSize":    int64(0),
 	}
-}
-
-func int64InClause(values []int64) (string, []interface{}) {
-	placeholders := make([]string, 0, len(values))
-	args := make([]interface{}, 0, len(values))
-	for _, value := range values {
-		placeholders = append(placeholders, "?")
-		args = append(args, value)
-	}
-	return strings.Join(placeholders, ","), args
 }
 
 func taskItemKeywordFilter(keyword string) (string, []interface{}) {
