@@ -11,9 +11,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"opensync/internal/msg"
 	"opensync/internal/mapper"
 	"opensync/internal/model"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strings"
 	"syscall"
@@ -211,10 +211,39 @@ func resolveNotifyParams(notify map[string]interface{}) (map[string]interface{},
 
 func validateNotifyParams(method int, params map[string]interface{}) error {
 	switch method {
-	case 0, 2, 4:
-		return validateNotifyHTTPSURL(paramString(params, "url", "webhook"))
-	default:
+	case 0:
+		if err := validateNotifyHTTPSURL(paramString(params, "url", "webhook")); err != nil {
+			return err
+		}
+		return validateWebhookMethod(paramString(params, "method", "httpMethod"))
+	case 1:
+		if paramString(params, "sendKey") == "" {
+			return errors.New(msg.NotifyParamInvalid)
+		}
 		return nil
+	case 2, 4:
+		return validateNotifyHTTPSURL(paramString(params, "url", "webhook"))
+	case 3:
+		if paramString(params, "corpid", "corpId") == "" ||
+			paramString(params, "corpsecret", "corpSecret") == "" ||
+			paramString(params, "agentid", "agentId") == "" {
+			return errors.New(msg.NotifyParamInvalid)
+		}
+		return nil
+	default:
+		return errors.New(msg.NotifyMethodInvalid)
+	}
+}
+
+func validateWebhookMethod(method string) error {
+	if method == "" {
+		return nil
+	}
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodGet, http.MethodPost, http.MethodPut:
+		return nil
+	default:
+		return errors.New(msg.NotifyParamInvalid)
 	}
 }
 

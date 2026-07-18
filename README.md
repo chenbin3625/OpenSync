@@ -1,6 +1,6 @@
 # OpenSync
 
-OpenSync 是面向飞牛 fnOS / 飞牛 NAS 和 Docker 环境的 AList / OpenList 自动同步工具。它把本地目录、网盘、对象存储、WebDAV 等存储端统一接到 AList / OpenList 后，通过可视化任务完成自动备份、归档和迁移。
+OpenSync 是面向飞牛 fnOS / 飞牛 NAS、普通 NAS 和 Docker 环境的 AList / OpenList 自动同步工具。它通过 AList / OpenList 连接本地目录、网盘、对象存储、WebDAV 等存储端，并用可视化任务完成备份、镜像、归档和迁移。
 
 如果你在飞牛 NAS 上想找一个类似群晖 Cloud Sync 的同步工具，用来把照片库、影音库、下载目录或文档目录同步到网盘、对象存储或另一台存储设备，OpenSync 就是面向这个场景做的。
 
@@ -10,21 +10,18 @@ OpenSync is an AList / OpenList automation tool for fnOS, NAS, and Docker enviro
 
 ## 重点功能
 
-- 支持单个或多个源目录同步到单个或多个目标目录。
-- 支持仅新增、全同步和移动模式，适合备份、镜像同步和归档迁移。
-- 支持手动执行、按分钟间隔执行、Cron 定时执行和一键执行全部启用任务。
-- 支持 Gitignore 风格排除规则，以及最小/最大文件大小过滤。
-- 实时展示扫描进度、传输速度、剩余时间、已完成、失败、等待和运行中明细。
-- 实时任务支持停止；历史任务支持查看详情、重试未完成项和删除记录。
-- 支持多个 AList / OpenList 引擎，添加或更新时会验证连接，令牌不会在列表中展示。
-- 支持自定义 Webhook、Server 酱、钉钉、企业微信、飞书 / Lark 通知。
-- 自定义 Webhook 支持 GET / POST / PUT、请求体模板和请求头 JSON。
-- 支持”无需同步时不发送”通知。
-- 首次启动通过 Web 页面引导创建管理员账号，自动展示 24 位恢复密钥。
-- 支持通过用户名 + 恢复密钥在 Web 端重置密码，重置后旧密钥自动失效。
-- CLI 命令 `reset-password --user <name>` 支持兜底密码重置。
-- SQL 注入防护与响应大小限制（10MB），防止 OOM。
-- 前端组件模块化，支持深色模式和系统运行配置。
+- 多源多目标：支持单个或多个源目录同步到单个或多个目标目录。
+- 三种同步模式：仅新增、全同步和移动模式，分别适合增量备份、目标镜像和归档迁移。
+- 灵活调度：支持手动执行、按分钟间隔执行、Cron 定时执行，以及一键执行全部已启用任务。
+- 精确筛选：支持 Gitignore 风格排除规则和最小/最大文件大小过滤。
+- 实时进度：展示扫描数量、传输速度、剩余时间，以及已完成、失败、等待和运行中的文件明细。
+- 任务管理：运行中的任务可以停止；历史任务可以查看详情、重试未完成项和删除记录。
+- 多引擎：可管理多个 AList / OpenList 实例，保存前验证地址和令牌，已保存令牌不会回显。
+- 通知渠道：支持自定义 Webhook、Server 酱、钉钉、企业微信和飞书 / Lark；可设置无文件需要同步时静默。
+- Webhook 定制：支持 GET / POST / PUT、JSON 请求体模板、自定义请求头和发送测试。
+- 在线运行配置：可调整历史任务保留时间、任务超时、复制/扫描并发和失败自动重试次数。
+- 账号恢复：首次初始化生成 24 位恢复密钥，支持网页重置密码和 `reset-password` CLI 兜底重置。
+- 自适应界面：支持桌面端和移动端布局、浅色/深色主题，任务结束后实时视图会立即更新。
 
 ## 界面预览
 
@@ -58,9 +55,9 @@ OpenSync is an AList / OpenList automation tool for fnOS, NAS, and Docker enviro
 
 ## 自定义 Webhook 通知
 
-在通知配置页新增通知时，选择“自定义Webhook”即可接入任意支持 HTTP 回调的消息服务或自动化平台。
+在通知配置页新增通知时，选择“自定义Webhook”即可接入支持 HTTPS 回调的消息服务或自动化平台。
 
-- `URL` 为必填项，填写接收通知的 Webhook 地址。
+- `URL` 为必填项，必须填写有效的 HTTPS Webhook 地址。
 - `HTTP方法` 支持 `GET`、`POST`、`PUT`，默认使用 `POST`。
 - `GET` 会把通知标题和内容作为 `title`、`content` 查询参数发送。
 - `POST` / `PUT` 默认以 `application/json` 发送请求体。
@@ -123,7 +120,7 @@ docker compose exec --user "${PUID:-1000}:${PGID:-1000}" opensync ./opensync res
 
 默认配置会把运行数据保存到当前目录的 `data/` 文件夹。请保留这个目录，它包含数据库、密钥、配置和日志。
 
-容器启动时会根据 `PUID` 和 `PGID` 修正 `/app/data` 的文件归属，并以该用户身份运行 OpenSync，避免宿主机 `data/` 目录生成 root 权限文件。默认 UID:GID 为 `1000:1000`；如需改成其它宿主机用户，可在 `.env` 中设置 `PUID` 和 `PGID`。
+容器启动时会根据 `PUID` 和 `PGID` 检查 `/app/data` 的文件归属，并以该用户身份运行 OpenSync，避免宿主机 `data/` 目录生成 root 权限文件。默认 UID:GID 为 `1000:1000`；如需改成其他宿主机用户，可在 `.env` 中设置 `PUID` 和 `PGID`。目录所有者已经匹配时不会重复递归修改，可通过 `OPENSYNC_CHOWN=always` 强制执行，或通过 `OPENSYNC_CHOWN=never` 跳过修改。
 
 ## docker-compose.yml
 
@@ -149,7 +146,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.10.1
+image: chenbin3625/opensync:1.10.2
 ```
 
 ## Docker 命令部署
@@ -194,6 +191,7 @@ docker run -d \
 | `OPENSYNC_COPY_CONCURRENCY` | `5` | 单个任务的复制并发数，范围 `1` 到 `100` |
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | 单个任务的扫描并发数，范围 `1` 到 `20` |
 | `OPENSYNC_MAX_RETRIES` | `2` | 单个复制项失败后的最大自动重试次数，`0` 表示不自动重试 |
+| `OPENSYNC_CHOWN` | 自动 | 容器数据目录权限策略：`always` 强制递归修改，`never` 跳过，未设置时仅在目录所有者不匹配时修改 |
 
 如果需要使用配置文件，可以创建或通过系统设置页生成 `data/config.ini`：
 
@@ -209,7 +207,7 @@ task_save=30
 task_timeout=48
 copy_concurrency=5
 scan_concurrency=8
-max_retries=0
+max_retries=2
 ```
 
 系统设置页可在线调整历史任务保留、任务超时、复制并发、扫描并发和自动重试次数。历史任务会在保存配置时立即清理过期记录，并在每日凌晨 3:00 按保留天数再次清理。端口、日志等级等启动期配置仍建议通过环境变量或配置文件维护。
@@ -291,7 +289,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.10.1`
+- `chenbin3625/opensync:1.10.2`
 - `chenbin3625/opensync:1.10`
 
 镜像支持以下平台：

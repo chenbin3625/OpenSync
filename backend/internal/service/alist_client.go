@@ -39,6 +39,11 @@ type alistResponse struct {
 
 // NewAlistClient creates a new AList client
 func NewAlistClient(alistURL string, token string, alistID int64) (*AlistClient, error) {
+	return NewAlistClientContext(context.Background(), alistURL, token, alistID)
+}
+
+// NewAlistClientContext creates a new AList client and validates it with ctx.
+func NewAlistClientContext(ctx context.Context, alistURL string, token string, alistID int64) (*AlistClient, error) {
 	c := &AlistClient{
 		URL:     strings.TrimRight(alistURL, "/"),
 		Token:   token,
@@ -53,7 +58,7 @@ func NewAlistClient(alistURL string, token string, alistID int64) (*AlistClient,
 			},
 		},
 	}
-	if err := c.getUser(); err != nil {
+	if err := c.getUserContext(ctx); err != nil {
 		c.Close()
 		return nil, err
 	}
@@ -149,7 +154,14 @@ func (c *AlistClient) GetContext(ctx context.Context, apiPath string, params map
 }
 
 func (c *AlistClient) getUser() error {
-	ctx, cancel := context.WithTimeout(context.Background(), alistValidationTimeout)
+	return c.getUserContext(context.Background())
+}
+
+func (c *AlistClient) getUserContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, alistValidationTimeout)
 	defer cancel()
 	data, err := c.GetContext(ctx, "/api/me", nil)
 	if err != nil {

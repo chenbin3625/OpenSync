@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"opensync/internal/msg"
 	"opensync/internal/model"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strings"
 	"testing"
@@ -64,6 +64,75 @@ func TestParseNotifyParamsRejectsInvalidJSON(t *testing.T) {
 	_, err := parseNotifyParams("{invalid-json")
 	if err == nil {
 		t.Fatalf("parseNotifyParams() error = nil, want invalid JSON error")
+	}
+}
+
+func TestValidateNotifyParamsRejectsIncompleteConfigs(t *testing.T) {
+	cases := []struct {
+		name   string
+		method int
+		params map[string]interface{}
+	}{
+		{
+			name:   "unknown method",
+			method: 99,
+			params: map[string]interface{}{},
+		},
+		{
+			name:   "serverchan missing sendKey",
+			method: 1,
+			params: map[string]interface{}{},
+		},
+		{
+			name:   "wecom missing secret",
+			method: 3,
+			params: map[string]interface{}{"corpid": "corp", "agentid": "agent"},
+		},
+		{
+			name:   "webhook unsupported method",
+			method: 0,
+			params: map[string]interface{}{"url": "https://example.test/hook", "method": "PATCH"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateNotifyParams(tc.method, tc.params); err == nil {
+				t.Fatalf("validateNotifyParams() error = nil, want error")
+			}
+		})
+	}
+}
+
+func TestValidateNotifyParamsAcceptsCompleteConfigs(t *testing.T) {
+	cases := []struct {
+		name   string
+		method int
+		params map[string]interface{}
+	}{
+		{
+			name:   "custom webhook",
+			method: 0,
+			params: map[string]interface{}{"url": "https://example.test/hook", "method": "PUT"},
+		},
+		{
+			name:   "serverchan",
+			method: 1,
+			params: map[string]interface{}{"sendKey": "send-key"},
+		},
+		{
+			name:   "wecom",
+			method: 3,
+			params: map[string]interface{}{"corpid": "corp", "corpsecret": "secret", "agentid": "agent"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateNotifyParams(tc.method, tc.params); err != nil {
+				t.Fatalf("validateNotifyParams() error = %v, want nil", err)
+			}
+		})
 	}
 }
 

@@ -14,15 +14,10 @@
 
 .sync-manager {
   display: grid;
-  grid-template-columns: 276px minmax(0, 1fr);
-  min-height: calc(100vh - 96px);
-  overflow: hidden;
-  gap: 18px;
-  padding: 18px;
-  background: var(--ant-color-bg-container);
-  border: 1px solid var(--ant-color-border-secondary);
-  border-radius: 8px;
-  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.06);
+  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-rows: minmax(calc(100vh - 90px), auto);
+  min-height: calc(100vh - 90px);
+  gap: 16px;
 }
 
 .sync-manager-sidebar {
@@ -30,11 +25,12 @@
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   padding: 12px;
   border: 1px solid var(--ant-color-border-secondary);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--ant-color-bg-container) 80%, var(--ant-color-fill-quaternary));
+  background: var(--ant-color-bg-container);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ant-color-text) 6%, transparent);
 }
 
 .sync-sidebar-toolbar {
@@ -53,9 +49,9 @@
   overflow: auto;
 }
 
-.sync-sidebar-list .ant-menu-inline {
+.sync-sidebar-list .ant-menu.ant-menu-inline {
   background: transparent;
-  border-inline-end: 0;
+  border-inline-end: 0 !important;
 }
 
 .sync-sidebar-list .ant-menu-item {
@@ -64,6 +60,10 @@
   padding: 0 !important;
   border-radius: 8px;
   line-height: normal;
+}
+
+.sync-sidebar-list .ant-menu-item::after {
+  display: none;
 }
 
 .sync-sidebar-list .ant-menu-title-content {
@@ -119,8 +119,7 @@
 .sync-manager-content {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
-  padding-right: 2px;
+  overflow: visible;
 }
 
 .sync-overview {
@@ -128,7 +127,6 @@
   gap: 16px;
 }
 
-.sync-overview-hero .ant-card-body,
 .sync-overview-summary .ant-card-body {
   display: flex;
   align-items: center;
@@ -138,10 +136,9 @@
 }
 
 .sync-overview-hero {
-  border-color: color-mix(in srgb, var(--ant-color-primary) 24%, var(--ant-color-border-secondary));
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--ant-color-primary) 10%, transparent), transparent 42%),
-    var(--ant-color-bg-container);
+  border-color: var(--ant-color-primary-border);
+  background: var(--ant-color-bg-container);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ant-color-text) 5%, transparent);
 }
 
 .sync-status-badge {
@@ -157,7 +154,9 @@
 }
 
 .sync-status-badge.is-enabled {
-  background: linear-gradient(135deg, #0f766e, #16a34a);
+  color: var(--ant-color-success-text);
+  background: var(--ant-color-success-bg);
+  border: 1px solid var(--ant-color-success-border);
 }
 
 .sync-status-badge.is-disabled {
@@ -208,7 +207,7 @@
   padding: 10px 12px;
   border: 1px solid var(--ant-color-border-secondary);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--ant-color-bg-container) 78%, var(--ant-color-fill-quaternary));
+  background: color-mix(in srgb, var(--ant-color-bg-container) 84%, var(--ant-color-fill-secondary));
 }
 
 .sync-summary-stat-label,
@@ -307,9 +306,7 @@
   padding: 13px 14px;
   border: 1px solid color-mix(in srgb, var(--ant-color-primary) 22%, var(--ant-color-border-secondary));
   border-radius: 8px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--ant-color-primary) 8%, transparent), transparent 56%),
-    color-mix(in srgb, var(--ant-color-bg-container) 84%, var(--ant-color-fill-quaternary));
+  background: var(--ant-color-fill-quaternary);
 }
 
 .task-progress-hero-title {
@@ -525,10 +522,7 @@
 }
 
 .sync-job-drawer .ant-drawer-body {
-  background:
-    linear-gradient(90deg, rgba(15, 118, 110, 0.035) 1px, transparent 1px),
-    var(--ant-color-bg-container);
-  background-size: 28px 28px, auto;
+  background: var(--ant-color-bg-container);
 }
 
 .sync-job-form .ant-divider {
@@ -548,18 +542,18 @@
 @media (max-width: 768px) {
   .sync-manager {
     grid-template-columns: minmax(0, 1fr);
-    min-height: calc(100vh - 104px);
-    padding: 12px;
+    grid-template-rows: auto;
+    min-height: calc(100vh - 82px);
+    gap: 12px;
   }
 
   .sync-manager-sidebar {
-    max-height: none;
+    max-height: 380px;
     padding: 10px;
-    border-inline-end: 1px solid var(--ant-color-border-secondary);
   }
 
   .sync-sidebar-list {
-    overflow-x: auto;
+    overflow: auto;
   }
 
   .sync-sidebar-pagination {

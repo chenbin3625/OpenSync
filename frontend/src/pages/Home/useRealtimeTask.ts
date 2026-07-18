@@ -132,7 +132,15 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
         sseRetries = 0;
         try {
           const payload = JSON.parse(event.data) as ApiResponse<CurrentTaskData | null>;
-          if (payload.code !== 200 || !payload.data || !isCurrentTaskData(payload.data)) {
+          if (payload.code !== 200) {
+            return;
+          }
+          if (!payload.data) {
+            prevTaskRef.current = null;
+            setCurrentTask(null);
+            return;
+          }
+          if (!isCurrentTaskData(payload.data)) {
             return;
           }
           applyCurrentPayload(payload.data, prevTaskRef, setCurrentTask);

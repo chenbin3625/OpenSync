@@ -17,7 +17,7 @@ const labelWithTip = (label: string, tip: string) => (
   <Space size={4}>
     {label}
     <Tooltip title={tip}>
-      <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+      <QuestionCircleOutlined className="settings-tip-icon" />
     </Tooltip>
   </Space>
 );
@@ -113,7 +113,7 @@ export default function Setting() {
             showIcon
             message="系统配置加载失败"
             action={<Button size="small" onClick={fetchConfig} loading={loading}>重试</Button>}
-            style={{ marginBottom: 12 }}
+            className="ops-feedback"
           />
         )}
         <Card className="ops-settings-panel" title={<span className="ops-section-title">运行配置</span>} loading={loading}>
@@ -128,11 +128,11 @@ export default function Setting() {
                   label={labelWithTip('登录有效期', '登录 Cookie 的有效天数，保存后对后续登录或刷新 Cookie 生效。')}
                   required
                 >
-                  <Space.Compact style={{ width: '100%' }}>
+                  <Space.Compact className="settings-unit-control">
                     <Form.Item name="expires" noStyle rules={[{ required: true, message: '请输入登录有效期' }]}>
-                      <InputNumber min={1} max={365} style={{ flex: 1 }} />
+                      <InputNumber min={1} max={365} />
                     </Form.Item>
-                    <Input value="天" readOnly style={{ width: 45, textAlign: 'center', pointerEvents: 'none' }} />
+                    <Input className="settings-unit" value="天" readOnly />
                   </Space.Compact>
                 </Form.Item>
               </Col>
@@ -141,11 +141,11 @@ export default function Setting() {
                   label={labelWithTip('任务超时时间', '单次同步任务允许运行的最长时间，0 表示不设置超时；新任务生效。')}
                   required
                 >
-                  <Space.Compact style={{ width: '100%' }}>
+                  <Space.Compact className="settings-unit-control">
                     <Form.Item name="taskTimeout" noStyle rules={[{ required: true, message: '请输入任务超时时间' }]}>
-                      <InputNumber min={0} max={8760} style={{ flex: 1 }} />
+                      <InputNumber min={0} max={8760} />
                     </Form.Item>
-                    <Input value="小时" readOnly style={{ width: 55, textAlign: 'center', pointerEvents: 'none' }} />
+                    <Input className="settings-unit is-wide" value="小时" readOnly />
                   </Space.Compact>
                 </Form.Item>
               </Col>
@@ -154,11 +154,11 @@ export default function Setting() {
                   label={labelWithTip('历史任务保留', '任务历史保留天数，0 表示全部保留；保存配置会立即清理过期历史，每日凌晨 3:00 也会自动清理。')}
                   required
                 >
-                  <Space.Compact style={{ width: '100%' }}>
+                  <Space.Compact className="settings-unit-control">
                     <Form.Item name="taskSave" noStyle rules={[{ required: true, message: '请输入历史任务保留天数' }]}>
-                      <InputNumber min={0} max={3650} style={{ flex: 1 }} />
+                      <InputNumber min={0} max={3650} />
                     </Form.Item>
-                    <Input value="天" readOnly style={{ width: 45, textAlign: 'center', pointerEvents: 'none' }} />
+                    <Input className="settings-unit" value="天" readOnly />
                   </Space.Compact>
                 </Form.Item>
               </Col>
@@ -168,7 +168,7 @@ export default function Setting() {
                   label={labelWithTip('复制并发数', '同一任务内同时执行的文件复制数量；数值越高越吃 AList 和存储端资源，新任务生效。')}
                   rules={[{ required: true, message: '请输入复制并发数' }]}
                 >
-                  <InputNumber min={1} max={100} style={{ width: '100%' }} />
+                  <InputNumber className="settings-number-control" min={1} max={100} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>
@@ -177,7 +177,7 @@ export default function Setting() {
                   label={labelWithTip('扫描并发数', '同一任务内并发扫描目录的数量，最大值为 20；新任务生效。')}
                   rules={[{ required: true, message: '请输入扫描并发数' }]}
                 >
-                  <InputNumber min={1} max={20} style={{ width: '100%' }} />
+                  <InputNumber className="settings-number-control" min={1} max={20} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>
@@ -186,12 +186,12 @@ export default function Setting() {
                   label={labelWithTip('最大重试次数', '单个复制项失败后的最大自动重试次数，0 表示不自动重试；新任务生效。')}
                   rules={[{ required: true, message: '请输入最大重试次数' }]}
                 >
-                  <InputNumber min={0} max={10} style={{ width: '100%' }} />
+                  <InputNumber className="settings-number-control" min={0} max={10} />
                 </Form.Item>
               </Col>
             </Row>
 
-            <Form.Item style={{ marginBottom: 0 }}>
+            <Form.Item className="settings-form-actions">
               <Space>
                 <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving}>
                   保存配置

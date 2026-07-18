@@ -101,13 +101,7 @@ export default function Login() {
       }}
     >
       <div className="login-page">
-        <div className="login-orbit login-orbit-primary" />
-        <div className="login-orbit login-orbit-secondary" />
-        <div className="login-backdrop-lines" />
-        <Card
-          className="login-card"
-          styles={{ body: { padding: '32px 36px' } }}
-        >
+        <Card className="login-card">
           <div className="login-brand">
             <img className="login-logo" src="/favicon.svg" alt="OpenSync" />
             <Title level={3}>OpenSync</Title>

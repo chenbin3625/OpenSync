@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"opensync/internal/msg"
 	"opensync/internal/mapper"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strings"
 	"sync"
@@ -18,8 +18,9 @@ var (
 	alistClientListMu sync.RWMutex
 	alistClientLoads  = make(map[int64]*alistClientLoad)
 
-	getAlistByID   = mapper.GetAlistByID
-	newAlistClient = NewAlistClient
+	getAlistByID          = mapper.GetAlistByID
+	newAlistClient        = NewAlistClient
+	newAlistClientContext = NewAlistClientContext
 )
 
 type alistClientLoad struct {
@@ -75,7 +76,8 @@ func GetClientByIDContext(ctx context.Context, alistID int64) *AlistClient {
 		panicAlistClientLoadError(err)
 	}
 
-	newClient, err := newAlistClient(
+	newClient, err := newAlistClientContext(
+		ctx,
 		fmt.Sprintf("%v", alist["url"]),
 		fmt.Sprintf("%v", alist["token"]),
 		alistID,
@@ -185,26 +187,33 @@ func validateAlistURL(rawURL string) error {
 	return errors.New(msg.AlistURLInvalid)
 }
 
+func normalizeAlistToken(alist map[string]interface{}, required bool) (string, bool) {
+	token, ok := alist["token"]
+	if !ok || token == nil {
+		if required {
+			panicPublic(msg.AlistTokenRequired)
+		}
+		delete(alist, "token")
+		return "", false
+	}
+	tokenStr := strings.TrimSpace(fmt.Sprintf("%v", token))
+	if tokenStr == "" || tokenStr == "<nil>" {
+		if required {
+			panicPublic(msg.AlistTokenRequired)
+		}
+		delete(alist, "token")
+		return "", false
+	}
+	alist["token"] = tokenStr
+	return tokenStr, true
+}
+
 // UpdateClient updates an AList client
 func UpdateClient(alist map[string]interface{}) {
 	alistID := util.ToInt64(alist["id"])
 	urlStr := normalizeAlistInput(alist)
 
-	token, hasToken := alist["token"]
-	if hasToken {
-		if token == nil {
-			delete(alist, "token")
-			hasToken = false
-		} else if s, ok := token.(string); ok {
-			s = strings.TrimSpace(s)
-			if s == "" {
-				delete(alist, "token")
-				hasToken = false
-			} else {
-				alist["token"] = s
-			}
-		}
-	}
+	token, hasToken := normalizeAlistToken(alist, false)
 
 	alistOld, err := mapper.GetAlistByID(alistID)
 	if err != nil {
@@ -217,7 +226,7 @@ func UpdateClient(alist map[string]interface{}) {
 		if !hasToken {
 			panicPublic(msg.WithoutToken)
 		}
-		client, err = newAlistClient(urlStr, fmt.Sprintf("%v", alist["token"]), alistID)
+		client, err = newAlistClient(urlStr, token, alistID)
 		if err != nil {
 			log.Printf("alist client update failed: %v", err)
 			panicPublic(msg.AlistConnectFail)
@@ -226,8 +235,7 @@ func UpdateClient(alist map[string]interface{}) {
 
 	var tokenPtr *string
 	if hasToken {
-		t := fmt.Sprintf("%v", alist["token"])
-		tokenPtr = &t
+		tokenPtr = &token
 	}
 	remarkStr := ""
 	remark, _ := alist["remark"]
@@ -248,7 +256,7 @@ func UpdateClient(alist map[string]interface{}) {
 // AddClient adds a new AList client
 func AddClient(alist map[string]interface{}) {
 	urlStr := normalizeAlistInput(alist)
-	token := fmt.Sprintf("%v", alist["token"])
+	token, _ := normalizeAlistToken(alist, true)
 
 	client, err := NewAlistClient(urlStr, token, 0)
 	if err != nil {
@@ -288,7 +296,7 @@ func RemoveClient(alistID int64) {
 
 // GetChildPath gets child directory paths for path selector
 func GetChildPath(ctx context.Context, alistID int64, path string) []map[string]string {
-	client := GetClientByID(alistID)
+	client := GetClientByIDContext(ctx, alistID)
 	result, err := client.FilePathList(ctx, path)
 	if err != nil {
 		log.Printf("alist path list failed: alistID=%d path=%q: %v", alistID, path, err)

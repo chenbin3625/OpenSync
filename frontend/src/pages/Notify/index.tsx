@@ -430,7 +430,7 @@ export default function Notify() {
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={<Text type="secondary">通知配置加载失败</Text>}
             />
-            <div style={{ marginTop: 16, textAlign: 'center' }}>
+            <div className="ops-empty-action">
               <Button icon={<ReloadOutlined />} onClick={fetchList} loading={loading}>重试</Button>
             </div>
           </div>

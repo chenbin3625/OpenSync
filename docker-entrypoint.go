@@ -29,8 +29,14 @@ func main() {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		fatal(fmt.Errorf("failed to create %s: %w", dataDir, err))
 	}
-	if err := chownRecursive(dataDir, uid, gid); err != nil {
-		fatal(fmt.Errorf("failed to change ownership of %s to %d:%d: %w", dataDir, uid, gid, err))
+	needChown, err := shouldChownRecursive(dataDir, uid, gid)
+	if err != nil {
+		fatal(err)
+	}
+	if needChown {
+		if err := chownRecursive(dataDir, uid, gid); err != nil {
+			fatal(fmt.Errorf("failed to change ownership of %s to %d:%d: %w", dataDir, uid, gid, err))
+		}
 	}
 
 	args := os.Args[1:]
@@ -83,6 +89,25 @@ func chownRecursive(root string, uid int, gid int) error {
 		}
 		return os.Lchown(path, uid, gid)
 	})
+}
+
+func shouldChownRecursive(root string, uid int, gid int) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("OPENSYNC_CHOWN"))) {
+	case "always", "true", "1":
+		return true, nil
+	case "never", "false", "0":
+		return false, nil
+	}
+
+	info, err := os.Lstat(root)
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect %s ownership: %w", root, err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return true, nil
+	}
+	return int(stat.Uid) != uid || int(stat.Gid) != gid, nil
 }
 
 func executablePath(name string) (string, error) {
