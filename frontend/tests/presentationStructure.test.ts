@@ -11,9 +11,10 @@ const engineSource = readFileSync(new URL('../src/pages/Engine/index.tsx', impor
 const notifySource = readFileSync(new URL('../src/pages/Notify/index.tsx', import.meta.url), 'utf8');
 const settingSource = readFileSync(new URL('../src/pages/Setting/index.tsx', import.meta.url), 'utf8');
 const cssSource = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+const homeCssSource = readFileSync(new URL('../src/pages/Home/Home.css', import.meta.url), 'utf8');
 
 test('application defines shared presentation theme tokens', () => {
-  assert.match(appSource, /colorPrimary:\s*'#0f766e'/);
+  assert.match(appSource, /colorPrimary:\s*isDark\s*\?\s*'#2dd4bf'\s*:\s*'#0f766e'/);
   assert.match(cssSource, /\.ops-page-surface/);
   assert.match(cssSource, /\.ops-section-title/);
 });
@@ -22,6 +23,7 @@ test('home dashboard exposes scannable task workspace sections', () => {
   assert.match(homeSidebarSource, /sync-sidebar-job/);
   assert.match(homeOverviewSource, /sync-overview-hero/);
   assert.match(homeOverviewSource, /sync-info-grid/);
+  assert.match(homeCssSource, /grid-template-rows:\s*minmax\(calc\(100vh - 90px\), auto\)/);
 });
 
 test('task execution views use compact operational surfaces', () => {

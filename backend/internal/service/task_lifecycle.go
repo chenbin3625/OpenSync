@@ -30,6 +30,7 @@ func (jt *JobTask) finishSuccessfulTask() {
 	}
 	jt.JobClient.markDone()
 	jt.JobClient.clearCurrentTask(jt)
+	jt.notifyProgressNow()
 }
 
 func taskPersistenceErrorMessage(err error) string {
@@ -52,6 +53,7 @@ func (jt *JobTask) finishFailedTask(errMsg string) {
 	if jt.JobClient != nil {
 		jt.JobClient.markDone()
 		jt.JobClient.clearCurrentTask(jt)
+		jt.notifyProgressNow()
 	}
 }
 

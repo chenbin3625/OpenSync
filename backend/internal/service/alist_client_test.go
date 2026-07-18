@@ -59,13 +59,13 @@ func TestGetClientByIDCoalescesConcurrentLoads(t *testing.T) {
 	alistClientList = make(map[int64]*AlistClient)
 	alistClientListMu.Unlock()
 	oldGet := getAlistByID
-	oldNew := newAlistClient
+	oldNew := newAlistClientContext
 	defer func() {
 		alistClientListMu.Lock()
 		alistClientList = oldList
 		alistClientListMu.Unlock()
 		getAlistByID = oldGet
-		newAlistClient = oldNew
+		newAlistClientContext = oldNew
 	}()
 
 	var loads atomic.Int64
@@ -75,7 +75,7 @@ func TestGetClientByIDCoalescesConcurrentLoads(t *testing.T) {
 			"token": "token",
 		}, nil
 	}
-	newAlistClient = func(alistURL string, token string, alistID int64) (*AlistClient, error) {
+	newAlistClientContext = func(ctx context.Context, alistURL string, token string, alistID int64) (*AlistClient, error) {
 		loads.Add(1)
 		time.Sleep(20 * time.Millisecond)
 		return &AlistClient{URL: alistURL, Token: token, AlistID: alistID}, nil
@@ -105,6 +105,46 @@ func TestGetClientByIDCoalescesConcurrentLoads(t *testing.T) {
 			t.Fatalf("clients[%d] = different pointer, want shared cached client", i)
 		}
 	}
+}
+
+func TestGetClientByIDContextPassesCancellationToInitialLoad(t *testing.T) {
+	alistClientListMu.Lock()
+	oldList := alistClientList
+	oldLoads := alistClientLoads
+	alistClientList = make(map[int64]*AlistClient)
+	alistClientLoads = make(map[int64]*alistClientLoad)
+	alistClientListMu.Unlock()
+	oldGet := getAlistByID
+	oldNew := newAlistClientContext
+	defer func() {
+		alistClientListMu.Lock()
+		alistClientList = oldList
+		alistClientLoads = oldLoads
+		alistClientListMu.Unlock()
+		getAlistByID = oldGet
+		newAlistClientContext = oldNew
+	}()
+
+	getAlistByID = func(alistID int64) (map[string]interface{}, error) {
+		return map[string]interface{}{
+			"url":   "https://example.test",
+			"token": "token",
+		}, nil
+	}
+	newAlistClientContext = func(ctx context.Context, alistURL string, token string, alistID int64) (*AlistClient, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	defer func() {
+		if recovered := recover(); recovered == nil {
+			t.Fatalf("GetClientByIDContext() panic = nil, want cancellation error panic")
+		}
+	}()
+	GetClientByIDContext(ctx, 7)
 }
 
 func TestGetContextDoesNotSendContentTypeWithoutBody(t *testing.T) {
@@ -343,4 +383,25 @@ func TestValidateAlistURLAcceptsHTTPAndHTTPS(t *testing.T) {
 	if err := validateAlistURL("ftp://alist.example.com"); err == nil {
 		t.Fatalf("validateAlistURL() accepted unsupported scheme")
 	}
+}
+
+func TestNormalizeAlistTokenTrimsAndRejectsMissingRequiredToken(t *testing.T) {
+	alist := map[string]interface{}{"token": "  token-value \n"}
+	token, ok := normalizeAlistToken(alist, true)
+	if !ok {
+		t.Fatalf("normalizeAlistToken() ok = false, want true")
+	}
+	if token != "token-value" {
+		t.Fatalf("token = %q, want trimmed token", token)
+	}
+	if alist["token"] != "token-value" {
+		t.Fatalf("stored token = %q, want trimmed token", alist["token"])
+	}
+
+	defer func() {
+		if recovered := recover(); recovered == nil {
+			t.Fatalf("normalizeAlistToken() panic = nil, want missing required token panic")
+		}
+	}()
+	normalizeAlistToken(map[string]interface{}{}, true)
 }

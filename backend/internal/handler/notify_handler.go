@@ -2,8 +2,8 @@ package handler
 
 import (
 	"net/http"
-	"opensync/internal/msg"
 	"opensync/internal/model"
+	"opensync/internal/msg"
 	"opensync/internal/service"
 	"opensync/pkg/util"
 
@@ -65,7 +65,13 @@ func UpdateNotify(c *gin.Context) {
 		// Edit notify
 		if nMap, ok := notify.(map[string]interface{}); ok {
 			service.EditNotify(nMap)
+		} else {
+			c.JSON(http.StatusOK, model.Error(msg.LostPart))
+			return
 		}
+	} else {
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
+		return
 	}
 	c.JSON(http.StatusOK, model.Success(nil))
 }

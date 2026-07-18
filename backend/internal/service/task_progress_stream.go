@@ -50,7 +50,6 @@ func (h *progressHub) unsubscribe(jobID int64, ch <-chan []byte) {
 	for candidate := range subs {
 		if candidate == ch {
 			delete(subs, candidate)
-			close(candidate)
 			break
 		}
 	}
@@ -64,6 +63,13 @@ func (jt *JobTask) notifyProgressChange() {
 		return
 	}
 	jobProgressHub.schedule(jt.JobClient.JobID)
+}
+
+func (jt *JobTask) notifyProgressNow() {
+	if jt == nil || jt.JobClient == nil {
+		return
+	}
+	jobProgressHub.publish(jt.JobClient.JobID)
 }
 
 func (h *progressHub) schedule(jobID int64) {
@@ -82,32 +88,56 @@ func (h *progressHub) schedule(jobID int64) {
 	time.AfterFunc(progressNotifyDebounce, func() {
 		h.mu.Lock()
 		delete(h.pending, jobID)
-		subs := h.subscribers[jobID]
 		h.mu.Unlock()
-		if len(subs) == 0 {
-			return
-		}
 
-		payload, err := marshalJobProgress(jobID)
-		if err != nil {
-			log.Printf("Failed to marshal job %d progress stream payload: %v", jobID, err)
-			return
-		}
-		for ch := range subs {
-			select {
-			case ch <- payload:
-			default:
-				select {
-				case <-ch:
-				default:
-				}
-				select {
-				case ch <- payload:
-				default:
-				}
-			}
-		}
+		h.publish(jobID)
 	})
+}
+
+func (h *progressHub) publish(jobID int64) {
+	subs := h.subscriberSnapshot(jobID)
+	if len(subs) == 0 {
+		return
+	}
+
+	payload, err := marshalJobProgress(jobID)
+	if err != nil {
+		log.Printf("Failed to marshal job %d progress stream payload: %v", jobID, err)
+		return
+	}
+	for _, ch := range subs {
+		sendProgressPayload(ch, payload)
+	}
+}
+
+func (h *progressHub) subscriberSnapshot(jobID int64) []chan []byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	subs := h.subscribers[jobID]
+	if len(subs) == 0 {
+		return nil
+	}
+	channels := make([]chan []byte, 0, len(subs))
+	for ch := range subs {
+		channels = append(channels, ch)
+	}
+	return channels
+}
+
+func sendProgressPayload(ch chan []byte, payload []byte) {
+	select {
+	case ch <- payload:
+	default:
+		select {
+		case <-ch:
+		default:
+		}
+		select {
+		case ch <- payload:
+		default:
+		}
+	}
 }
 
 func marshalJobProgress(jobID int64) ([]byte, error) {

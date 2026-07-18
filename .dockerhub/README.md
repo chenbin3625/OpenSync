@@ -2,7 +2,7 @@
 
 OpenSync 是为飞牛 fnOS / 飞牛 NAS 准备的 AList / OpenList 自动同步工具，可以作为飞牛 NAS 下的群晖 Cloud Sync 平替方案。
 
-它通过 AList / OpenList 统一接入本地目录、网盘、对象存储、WebDAV 等存储端，再用可视化任务完成自动备份、归档和迁移。适合把照片库、影音库、下载目录、文档目录同步到网盘、对象存储或另一台存储设备。
+它通过 AList / OpenList 统一接入本地目录、网盘、对象存储、WebDAV 等存储端，再用可视化任务完成备份、镜像、归档和迁移。适合把照片库、影音库、下载目录、文档目录同步到网盘、对象存储或另一台存储设备。
 
 ![OpenSync 任务总览](https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/tasks-overview.png)
 
@@ -57,7 +57,7 @@ services:
 ## 镜像标签
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.10.1`
+- `chenbin3625/opensync:1.10.2`
 - `chenbin3625/opensync:1.10`
 
 镜像支持以下平台：
@@ -76,14 +76,14 @@ services:
 - 多源目录、多目标目录同步。
 - 文件大小过滤和 Gitignore 风格排除规则。
 - 实时扫描进度、传输速度、剩余大小和任务明细。
-- 运行中任务暂停、历史任务继续执行和删除记录。
-- Webhook、Server 酱、钉钉、企业微信、飞书通知。
-- 登录、密码恢复、系统设置、深色模式、中英文语言。
+- 运行中任务停止，历史任务查看详情、重试未完成项和删除记录。
+- 自定义 Webhook、Server 酱、钉钉、企业微信、飞书 / Lark 通知。
+- 登录、恢复密钥重置密码、在线运行配置、移动端适配和浅色/深色主题。
 - SQLite 本地数据存储。
 
 ## 数据持久化
 
-请持久化 `/app/data`。该目录包含数据库、密钥、配置和日志。
+请持久化 `/app/data`。该目录包含数据库、密钥、配置和日志。容器默认以 `PUID=1000`、`PGID=1000` 运行；目录所有者匹配时不会重复递归修改权限，也可通过 `OPENSYNC_CHOWN=always` 或 `OPENSYNC_CHOWN=never` 明确控制。
 
 不要公开 `data/` 目录或任何包含 AList / OpenList Token 的文件。`data/secret.key` 会影响登录 Cookie 和敏感信息加解密，部署后应保留。
 

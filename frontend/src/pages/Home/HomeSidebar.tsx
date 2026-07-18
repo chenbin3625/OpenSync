@@ -62,7 +62,6 @@ export default function HomeSidebar({
           <Spin spinning={loading && list.length === 0}>
             <Menu
               mode="inline"
-              style={{ borderInlineEnd: 0 }}
               selectedKeys={selectedJobId ? [String(selectedJobId)] : []}
               onClick={({ key }) => {
                 onSelectJob(Number(key));

@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Layout as AntLayout, Menu, Button, Typography, Popconfirm, Space, theme } from 'antd';
+import { Layout as AntLayout, Menu, Button, Typography, Popconfirm, Space } from 'antd';
 import {
   HomeOutlined,
   CloudServerOutlined,
@@ -17,18 +17,16 @@ const { Header, Content } = AntLayout;
 const { Text } = Typography;
 
 const menuItems = [
-  { key: '/home', icon: <HomeOutlined />, label: '任务管理' },
-  { key: '/engine', icon: <CloudServerOutlined />, label: '引擎管理' },
-  { key: '/notify', icon: <BellOutlined />, label: '通知配置' },
-  { key: '/setting', icon: <SettingOutlined />, label: '系统设置' },
+  { key: '/home', icon: <HomeOutlined />, label: <span className="app-nav-label">任务管理</span>, title: '任务管理' },
+  { key: '/engine', icon: <CloudServerOutlined />, label: <span className="app-nav-label">引擎管理</span>, title: '引擎管理' },
+  { key: '/notify', icon: <BellOutlined />, label: <span className="app-nav-label">通知配置</span>, title: '通知配置' },
+  { key: '/setting', icon: <SettingOutlined />, label: <span className="app-nav-label">系统设置</span>, title: '系统设置' },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { theme: themeMode, setTheme, setUserInfo } = useStore();
-  const { token } = theme.useToken();
-
   const selectedKey = '/' + location.pathname.split('/')[1];
 
   const handleMenuClick = (e: { key: string }) => {
@@ -50,43 +48,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AntLayout className="app-shell" style={{ minHeight: '100vh' }}>
-      <Header
-        className="app-header"
-        style={{
-          padding: '0 18px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 14,
-          background: token.colorBgContainer,
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          boxShadow: '0 8px 28px rgba(15, 23, 42, 0.05)',
-          height: 58,
-          lineHeight: '58px',
-        }}
-      >
+    <AntLayout className="app-shell">
+      <Header className="app-header">
         <div
           className="app-brand"
-          style={{
-            height: 58,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            cursor: 'pointer',
-            flex: '0 0 auto',
-          }}
           onClick={() => navigate('/home')}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') navigate('/home');
+          }}
         >
           <img className="app-logo-mark" src="/favicon.svg" alt="OpenSync" />
-          <Text
-            strong
-            style={{
-              color: token.colorText,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            OpenSync
-          </Text>
+          <Text strong>OpenSync</Text>
         </div>
         <Menu
           className="app-top-nav"
@@ -95,21 +69,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           selectedKeys={[selectedKey]}
           items={menuItems}
           onClick={handleMenuClick}
-          style={{
-            flex: '1 1 auto',
-            minWidth: 0,
-            background: token.colorBgContainer,
-            borderBottom: 'none',
-            color: token.colorText,
-            lineHeight: '58px',
-          }}
         />
-        <Space className="app-actions" style={{ flex: '0 0 auto' }}>
+        <Space className="app-actions">
           <Button
             type="text"
             icon={themeMode === 'dark' ? <BulbFilled /> : <BulbOutlined />}
             onClick={toggleTheme}
             title={themeMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+            aria-label={themeMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
           />
           <Popconfirm
             title="确认退出"
@@ -127,15 +94,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </Popconfirm>
         </Space>
       </Header>
-      <Content
-        className="app-content"
-        style={{
-          margin: 18,
-          padding: 0,
-          overflow: 'auto',
-          minHeight: 0,
-        }}
-      >
+      <Content className="app-content">
         {children}
       </Content>
     </AntLayout>

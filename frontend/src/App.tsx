@@ -17,6 +17,7 @@ function MessageInitializer() {
 
 function App() {
   const themeMode = useStore((s) => s.theme);
+  const isDark = themeMode === 'dark';
   const setUserInfo = useStore((s) => s.setUserInfo);
   const setAuthChecked = useStore((s) => s.setAuthChecked);
 
@@ -42,33 +43,55 @@ function App() {
       locale={zhCN}
       theme={{
         cssVar: { key: 'openlist-sync' },
-        algorithm: themeMode === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: {
-          colorPrimary: '#0f766e',
-          colorSuccess: '#16a34a',
-          colorWarning: '#d97706',
-          colorError: '#dc2626',
-          colorInfo: '#2563eb',
+          colorPrimary: isDark ? '#2dd4bf' : '#0f766e',
+          colorSuccess: isDark ? '#4ade80' : '#16a34a',
+          colorWarning: isDark ? '#fbbf24' : '#d97706',
+          colorError: isDark ? '#fb7185' : '#dc2626',
+          colorInfo: isDark ? '#60a5fa' : '#2563eb',
+          colorBgBase: isDark ? '#17191c' : '#f6f8f7',
+          colorTextBase: isDark ? '#f3f4f6' : '#17201e',
+          colorBgLayout: isDark ? '#151817' : '#eef3f2',
+          colorBgContainer: isDark ? '#202322' : '#ffffff',
+          colorBgElevated: isDark ? '#292d2b' : '#ffffff',
+          colorBorder: isDark ? '#48504d' : '#cfd8d5',
+          colorBorderSecondary: isDark ? '#353b39' : '#dde4e2',
+          colorText: isDark ? '#eef2f1' : '#17201e',
+          colorTextSecondary: isDark ? '#bcc4c1' : '#52605c',
+          colorTextTertiary: isDark ? '#8f9a96' : '#74817d',
           borderRadius: 8,
           fontSize: 14,
           wireframe: false,
         },
         components: {
           Layout: {
-            bodyBg: themeMode === 'dark' ? '#0f1417' : '#eef3f2',
-            headerBg: themeMode === 'dark' ? '#11181c' : '#fbfdfc',
+            bodyBg: isDark ? '#111315' : '#eef3f2',
+            headerBg: isDark ? '#191c20' : '#ffffff',
           },
           Card: {
             borderRadiusLG: 8,
             headerHeight: 44,
+            headerBg: isDark ? '#1d2024' : '#fbfcfc',
           },
           Button: {
             borderRadius: 6,
             controlHeight: 34,
           },
           Table: {
-            headerBg: themeMode === 'dark' ? '#172126' : '#f4f8f7',
-            rowHoverBg: themeMode === 'dark' ? '#172126' : '#f7fbfa',
+            headerBg: isDark ? '#23272c' : '#f2f6f5',
+            rowHoverBg: isDark ? '#242a2f' : '#f5faf8',
+          },
+          Menu: {
+            itemBg: 'transparent',
+            itemHoverBg: isDark ? '#2a302e' : '#edf7f5',
+            itemSelectedBg: isDark ? '#1c4e47' : '#d9efeb',
+            itemSelectedColor: isDark ? '#5eead4' : '#0f766e',
+            darkItemBg: '#191c20',
+            darkItemColor: '#c8cdd2',
+            darkItemHoverBg: '#242a2f',
+            darkItemSelectedBg: '#174d48',
+            darkItemSelectedColor: '#ccfbf1',
           },
           Tabs: {
             horizontalItemGutter: 26,

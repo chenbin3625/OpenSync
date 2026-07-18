@@ -176,7 +176,7 @@ export default function Home() {
             type="error"
             showIcon
             message="同步任务列表加载失败"
-            style={{ marginBottom: 12 }}
+            className="task-feedback"
           />
         )}
         {selectedJob ? (
@@ -190,46 +190,40 @@ export default function Home() {
                 key: 'overview',
                 label: '总览',
                 children: (
-                  <div style={{ display: activeJobTab === 'overview' ? 'block' : 'none' }}>
-                    <HomeOverview
-                      selectedJob={selectedJob}
-                      onRun={handleRun}
-                      onEdit={handleEdit}
-                      onDelete={handleDelete}
-                      onToggle={handleToggle}
-                      getAlistName={getAlistName}
-                    />
-                  </div>
+                  <HomeOverview
+                    selectedJob={selectedJob}
+                    onRun={handleRun}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    onToggle={handleToggle}
+                    getAlistName={getAlistName}
+                  />
                 ),
               },
               {
                 key: 'realtime',
                 label: '实时任务',
                 children: (
-                  <div style={{ display: activeJobTab === 'realtime' ? 'block' : 'none' }}>
-                    <TaskList
-                      key={`realtime-${selectedJob.id}`}
-                      jobId={String(selectedJob.id)}
-                      view="realtime"
-                      active={activeJobTab === 'realtime'}
-                      onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-                    />
-                  </div>
+                  <TaskList
+                    key={`realtime-${selectedJob.id}`}
+                    jobId={String(selectedJob.id)}
+                    view="realtime"
+                    active={activeJobTab === 'realtime'}
+                    onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+                  />
                 ),
               },
               {
                 key: 'history',
                 label: '历史任务',
                 children: (
-                  <div style={{ display: activeJobTab === 'history' ? 'block' : 'none' }}>
-                    <TaskList
-                      key={`history-${selectedJob.id}`}
-                      jobId={String(selectedJob.id)}
-                      view="history"
-                      active={activeJobTab === 'history'}
-                      onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-                    />
-                  </div>
+                  <TaskList
+                    key={`history-${selectedJob.id}`}
+                    jobId={String(selectedJob.id)}
+                    view="history"
+                    active={activeJobTab === 'history'}
+                    onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+                  />
                 ),
               },
             ]}
@@ -238,7 +232,7 @@ export default function Home() {
           <div className="sync-manager-empty">
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={<Typography.Text type="secondary">暂无同步任务，点击左侧「新建」创建第一个同步任务</Typography.Text>}
+              description={<Typography.Text type="secondary">暂无同步任务，点击「新建」创建第一个同步任务</Typography.Text>}
             />
           </div>
         )}
