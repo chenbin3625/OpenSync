@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
@@ -96,6 +97,51 @@ func TestSecurityHeadersAreApplied(t *testing.T) {
 	}
 	if got := w.Header().Get("Referrer-Policy"); got != "no-referrer" {
 		t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
+	}
+}
+
+func TestSPAFallbackServesIndexForClientRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	webDist := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html>OpenSync</html>")},
+	}
+	router := gin.New()
+	router.NoRoute(func(c *gin.Context) {
+		serveSPAFallback(c, webDist)
+	})
+
+	for _, route := range []string{"/login", "/home", "/home/task/detail", "/engine", "/notify", "/setting"} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, route, nil)
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("GET %s status = %d, want %d", route, w.Code, http.StatusOK)
+		}
+		if !strings.Contains(w.Body.String(), "OpenSync") {
+			t.Errorf("GET %s body = %q, want frontend index", route, w.Body.String())
+		}
+	}
+}
+
+func TestSPAFallbackKeepsAPIAndAssetMissesAs404(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	webDist := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html>OpenSync</html>")},
+	}
+	router := gin.New()
+	router.NoRoute(func(c *gin.Context) {
+		serveSPAFallback(c, webDist)
+	})
+
+	for _, route := range []string{"/svr/missing", "/assets/missing.js", "/favicon.ico"} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, route, nil)
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want %d", route, w.Code, http.StatusNotFound)
+		}
 	}
 }
 

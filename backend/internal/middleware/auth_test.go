@@ -241,6 +241,23 @@ func TestAuthRequiredReturnsHTTP401WhenCookieMissing(t *testing.T) {
 	}
 }
 
+func TestAuthRequiredAllowsFrontendRoutesWithoutCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(AuthRequired())
+	router.GET("/engine", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/engine", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("frontend route status = %d, want %d; body=%s", w.Code, http.StatusNoContent, w.Body.String())
+	}
+}
+
 func TestAuthRequiredReusesRecentlyVerifiedCookieUser(t *testing.T) {
 	oldConfig := config.GetConfig()
 	config.SetConfigForTest(&config.Config{

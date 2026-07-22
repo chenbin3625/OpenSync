@@ -212,6 +212,11 @@ select {
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.ops-resource-grid > .ops-resource-card:only-child {
+  width: 100%;
+  max-width: 420px;
+}
+
 .ops-resource-card.ant-card-hoverable:hover {
   border-color: var(--ant-color-primary-border);
   box-shadow: 0 8px 24px color-mix(in srgb, var(--ant-color-text) 8%, transparent);

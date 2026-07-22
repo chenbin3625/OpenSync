@@ -296,7 +296,18 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 	}
 	defer jt.releaseScanSlot()
 
-	result, err := jt.AlistClient.FileListApiContext(jt.context(), path, useCache, scanInterval)
+	var result map[string]interface{}
+	var err error
+	for attempt := 0; attempt <= maxScanListRetries; attempt++ {
+		result, err = jt.AlistClient.FileListApiContext(jt.context(), path, useCache, scanInterval)
+		if err == nil || !shouldRetryScanList(jt.context(), err) || attempt == maxScanListRetries {
+			break
+		}
+		log.Printf("Directory scan failed for %q; retrying (%d/%d): %v", path, attempt+1, maxScanListRetries, err)
+		if !jt.waitForBreak(scanListRetryDelay(attempt)) {
+			return nil, context.Canceled
+		}
+	}
 	if err != nil {
 		if jt.isBreak() && errors.Is(err, context.Canceled) {
 			return nil, err
@@ -325,6 +336,21 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 	}
 
 	return result, nil
+}
+
+func shouldRetryScanList(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	errMsg := err.Error()
+	return errMsg != msg.AlistUnAuth && errMsg != msg.AddressIncorrect
+}
+
+func defaultScanListRetryDelay(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	return time.Duration(1<<attempt) * time.Second
 }
 
 func excludeMatchPath(rootPath, currentPath, name string) string {

@@ -10,9 +10,9 @@ import (
 	"net"
 	"net/http"
 	"opensync/internal/config"
-	"opensync/internal/msg"
 	"opensync/internal/mapper"
 	"opensync/internal/model"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strings"
 	"sync"
@@ -237,12 +237,10 @@ func isLoopbackRemote(remoteAddr string) bool {
 func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		// Skip auth for login APIs and embedded frontend assets.
-		if strings.HasPrefix(path, "/svr/noAuth") ||
-			path == "/" ||
-			strings.HasPrefix(path, "/assets/") ||
-			path == "/favicon.svg" ||
-			path == "/icons.svg" {
+		// Frontend routes are public entry points; authentication is enforced by
+		// the API routes and the client-side guards.
+		if (path != "/svr" && !strings.HasPrefix(path, "/svr/")) ||
+			strings.HasPrefix(path, "/svr/noAuth") {
 			c.Next()
 			return
 		}
