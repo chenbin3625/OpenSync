@@ -41,7 +41,9 @@ const isApiEnvelope = (data: unknown): data is ApiEnvelope => {
 const redirectToLogin = () => {
   useStore.getState().setUserInfo(null);
   useStore.getState().setAuthChecked(true);
-  window.location.hash = '#/login';
+  if (window.location.pathname !== '/login') {
+    window.location.replace('/login');
+  }
 };
 
 const rejectApiEnvelope = (data: ApiEnvelope, fallbackStatus?: number, silent = false) => {

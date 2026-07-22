@@ -7,10 +7,14 @@ services:
       - "8023:8023"
     volumes:
       - ./data:/app/data
+    tmpfs:
+      - /tmp:mode=1777
     environment:
       TZ: Asia/Shanghai
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
+      SQLITE_TMPDIR: /tmp
+      TMPDIR: /tmp
       OPENSYNC_BIND: 0.0.0.0
       OPENSYNC_PORT: 8023
       GIN_MODE: release

@@ -12,6 +12,7 @@ const (
 	retryTaskItemBatchSize = 500
 	persistBatchSize       = 100
 	persistFlushInterval   = 500 * time.Millisecond
+	maxScanListRetries     = 2
 )
 
 var errScanAborted = errors.New("scan aborted")
@@ -20,6 +21,7 @@ var persistJobTaskItems = mapper.AddJobTaskItemMany
 var forEachJobTaskItemsByStatuses = mapper.ForEachJobTaskItemsByStatuses
 var countJobTaskItemsByStatuses = mapper.CountJobTaskItemsByStatuses
 var copyRetryDelay = defaultCopyRetryDelay
+var scanListRetryDelay = defaultScanListRetryDelay
 
 type taskRuntimeLimits struct {
 	CopyConcurrency int

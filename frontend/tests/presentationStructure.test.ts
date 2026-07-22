@@ -4,19 +4,29 @@ import test from 'node:test';
 
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const routerSource = readFileSync(new URL('../src/router/index.tsx', import.meta.url), 'utf8');
+const requestSource = readFileSync(new URL('../src/api/request.ts', import.meta.url), 'utf8');
 const homeSidebarSource = readFileSync(new URL('../src/pages/Home/HomeSidebar.tsx', import.meta.url), 'utf8');
 const homeOverviewSource = readFileSync(new URL('../src/pages/Home/HomeOverview.tsx', import.meta.url), 'utf8');
 const taskListSource = readFileSync(new URL('../src/pages/Home/TaskList.tsx', import.meta.url), 'utf8');
 const engineSource = readFileSync(new URL('../src/pages/Engine/index.tsx', import.meta.url), 'utf8');
 const notifySource = readFileSync(new URL('../src/pages/Notify/index.tsx', import.meta.url), 'utf8');
 const settingSource = readFileSync(new URL('../src/pages/Setting/index.tsx', import.meta.url), 'utf8');
+const loginSource = readFileSync(new URL('../src/pages/Login/index.tsx', import.meta.url), 'utf8');
 const cssSource = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 const homeCssSource = readFileSync(new URL('../src/pages/Home/Home.css', import.meta.url), 'utf8');
+const loginCssSource = readFileSync(new URL('../src/pages/Login/Login.css', import.meta.url), 'utf8');
 
 test('application defines shared presentation theme tokens', () => {
   assert.match(appSource, /colorPrimary:\s*isDark\s*\?\s*'#2dd4bf'\s*:\s*'#0f766e'/);
   assert.match(cssSource, /\.ops-page-surface/);
   assert.match(cssSource, /\.ops-section-title/);
+});
+
+test('login page inherits the active theme and uses shared color tokens', () => {
+  assert.doesNotMatch(loginSource, /theme\.defaultAlgorithm|ConfigProvider/);
+  assert.match(loginCssSource, /background:\s*var\(--ant-color-bg-layout\)/);
+  assert.match(loginCssSource, /background:\s*var\(--ant-color-bg-container\)/);
+  assert.match(loginCssSource, /border:\s*1px solid var\(--ant-color-border-secondary\)/);
 });
 
 test('home dashboard exposes scannable task workspace sections', () => {
@@ -53,6 +63,7 @@ test('configuration pages share the same resource page shell', () => {
   assert.match(engineSource, /ops-resource-page/);
   assert.match(notifySource, /ops-resource-page/);
   assert.match(settingSource, /ops-resource-page/);
+  assert.match(cssSource, /\.ops-resource-grid\s*>\s*\.ops-resource-card:only-child\s*{[^}]*max-width:\s*420px/s);
 });
 
 test('authenticated application shell is lazy loaded outside the login route', () => {
@@ -64,6 +75,13 @@ test('login route redirects already authenticated users', () => {
   assert.match(routerSource, /function ReverseAuthGuard/);
   assert.match(routerSource, /if \(userInfo\) \{\s+return <Navigate to="\/home" replace \/>;\s+\}/s);
   assert.match(routerSource, /path="\/login" element=\{<ReverseAuthGuard><Login \/><\/ReverseAuthGuard>\}/);
+});
+
+test('application routes use browser history without URL hashes', () => {
+  assert.match(routerSource, /BrowserRouter/);
+  assert.doesNotMatch(routerSource, /HashRouter/);
+  assert.match(requestSource, /window\.location\.replace\('\/login'\)/);
+  assert.doesNotMatch(requestSource, /window\.location\.hash|#\/login/);
 });
 
 test('resource page header and body use separated layout primitives', () => {

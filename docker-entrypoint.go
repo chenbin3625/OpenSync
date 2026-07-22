@@ -38,6 +38,9 @@ func main() {
 			fatal(fmt.Errorf("failed to change ownership of %s to %d:%d: %w", dataDir, uid, gid, err))
 		}
 	}
+	if err := prepareSQLiteTempDir(); err != nil {
+		fatal(err)
+	}
 
 	args := os.Args[1:]
 	if len(args) == 0 {
@@ -65,6 +68,33 @@ func main() {
 	if err := syscall.Exec(binary, args, os.Environ()); err != nil {
 		fatal(fmt.Errorf("failed to execute %s: %w", binary, err))
 	}
+}
+
+func prepareSQLiteTempDir() error {
+	tempDir := strings.TrimSpace(os.Getenv("SQLITE_TMPDIR"))
+	if tempDir == "" {
+		tempDir = "/tmp"
+	}
+	if !filepath.IsAbs(tempDir) {
+		return fmt.Errorf("SQLITE_TMPDIR must be an absolute path: %s", tempDir)
+	}
+
+	mode := os.ModeSticky | 0777
+	if err := os.MkdirAll(tempDir, mode); err != nil {
+		return fmt.Errorf("failed to create sqlite temporary directory %s: %w", tempDir, err)
+	}
+	if err := os.Chmod(tempDir, mode); err != nil {
+		return fmt.Errorf("failed to set sqlite temporary directory permissions on %s: %w", tempDir, err)
+	}
+	if err := os.Setenv("SQLITE_TMPDIR", tempDir); err != nil {
+		return fmt.Errorf("failed to configure SQLITE_TMPDIR: %w", err)
+	}
+	if strings.TrimSpace(os.Getenv("TMPDIR")) == "" {
+		if err := os.Setenv("TMPDIR", tempDir); err != nil {
+			return fmt.Errorf("failed to configure TMPDIR: %w", err)
+		}
+	}
+	return nil
 }
 
 func numericEnv(name string, fallback int) (int, error) {

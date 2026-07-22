@@ -19,6 +19,7 @@ import (
 	"opensync/internal/service"
 	"os"
 	"os/signal"
+	pathpkg "path"
 	"strings"
 	"syscall"
 	"time"
@@ -76,6 +77,19 @@ func serveWebFile(c *gin.Context, webDist fs.FS, filePath, contentType string) {
 		return
 	}
 	c.Data(http.StatusOK, contentType, data)
+}
+
+func serveSPAFallback(c *gin.Context, webDist fs.FS) {
+	requestPath := c.Request.URL.Path
+	if c.Request.Method != http.MethodGet ||
+		requestPath == "/svr" ||
+		strings.HasPrefix(requestPath, "/svr/") ||
+		strings.HasPrefix(requestPath, "/assets/") ||
+		pathpkg.Ext(requestPath) != "" {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	serveWebFile(c, webDist, "index.html", "text/html; charset=utf-8")
 }
 
 func main() {
@@ -216,6 +230,9 @@ func run(parent context.Context) error {
 		})
 		r.GET("/", func(c *gin.Context) {
 			serveWebFile(c, webDist, "index.html", "text/html; charset=utf-8")
+		})
+		r.NoRoute(func(c *gin.Context) {
+			serveSPAFallback(c, webDist)
 		})
 	}
 

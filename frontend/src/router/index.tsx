@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from 'react';
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useStore } from '../stores/useStore';
 
 const Layout = lazy(() => import('../components/Layout'));
@@ -36,7 +36,7 @@ function ReverseAuthGuard({ children }: { children: ReactNode }) {
 
 export default function AppRouter() {
   return (
-    <HashRouter>
+    <BrowserRouter>
       <Suspense fallback={null}>
         <Routes>
           <Route path="/login" element={<ReverseAuthGuard><Login /></ReverseAuthGuard>} />
@@ -49,6 +49,6 @@ export default function AppRouter() {
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </Suspense>
-    </HashRouter>
+    </BrowserRouter>
   );
 }
