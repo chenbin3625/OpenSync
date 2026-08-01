@@ -33,6 +33,11 @@ type copyTaskMonitor struct {
 	stopCh  chan struct{}
 	once    sync.Once
 	wg      sync.WaitGroup
+	// stopped is set under mu once the monitor loop has exited (task broken,
+	// timed out, or shut down). A track() call that arrives after the loop has
+	// exited must not enqueue a watch nobody will ever process, otherwise the
+	// copy goroutine blocks forever on <-watch.done and the job stays "doing".
+	stopped bool
 }
 
 func (jt *JobTask) ensureCopyMonitor() *copyTaskMonitor {
@@ -82,16 +87,35 @@ func (m *copyTaskMonitor) track(ci *CopyItem) {
 		done:     make(chan struct{}),
 	}
 
+	abortSelf := false
 	m.mu.Lock()
-	m.watches[m.watchKey(taskID, ci.CopyType)] = watch
+	if m.stopped {
+		// The loop has already exited; enqueuing this watch would block the
+		// copy goroutine forever. Abort the remote task ourselves instead.
+		abortSelf = true
+	} else {
+		m.watches[m.watchKey(taskID, ci.CopyType)] = watch
+	}
 	m.mu.Unlock()
+	if abortSelf {
+		watch.ci.stopRemoteTask(m.jt.copyMonitorClient(), m.jt.context().Err())
+		return
+	}
 
 	m.once.Do(func() {
 		m.wg.Add(1)
 		go m.loop()
 	})
 
-	<-watch.done
+	select {
+	case <-watch.done:
+	case <-m.jt.context().Done():
+		// Task cancelled while waiting for the monitor to process the watch.
+		// Self-abort so the copy goroutine can proceed without waiting for the
+		// loop's next iteration. abortWatch is a no-op if the loop already
+		// took the watch, and closeDone is idempotent.
+		m.abortWatch(watch, m.jt.context().Err())
+	}
 }
 
 func (m *copyTaskMonitor) stop() {
@@ -100,6 +124,9 @@ func (m *copyTaskMonitor) stop() {
 	default:
 		close(m.stopCh)
 	}
+	m.mu.Lock()
+	m.stopped = true
+	m.mu.Unlock()
 	m.wg.Wait()
 }
 
@@ -286,6 +313,7 @@ func (m *copyTaskMonitor) abortWatch(watch *copyTaskWatch, cause error) {
 
 func (m *copyTaskMonitor) abortAll(cause error) {
 	m.mu.Lock()
+	m.stopped = true
 	watches := make([]*copyTaskWatch, 0, len(m.watches))
 	for _, watch := range m.watches {
 		watches = append(watches, watch)
@@ -293,8 +321,17 @@ func (m *copyTaskMonitor) abortAll(cause error) {
 	m.watches = make(map[string]*copyTaskWatch)
 	m.mu.Unlock()
 
+	// Cancel/delete remote tasks in parallel so shutdown is gated by the
+	// slowest single cleanup (not the sum). closeDone stays after stopRemoteTask
+	// per watch to preserve the existing status-before-unblock ordering.
+	var wg sync.WaitGroup
 	for _, watch := range watches {
-		watch.ci.stopRemoteTask(m.jt.copyMonitorClient(), cause)
-		watch.closeDone()
+		wg.Add(1)
+		go func(w *copyTaskWatch) {
+			defer wg.Done()
+			w.ci.stopRemoteTask(m.jt.copyMonitorClient(), cause)
+			w.closeDone()
+		}(watch)
 	}
+	wg.Wait()
 }

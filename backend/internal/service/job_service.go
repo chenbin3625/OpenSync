@@ -120,6 +120,12 @@ func GetJobClientByID(jobID int64) *JobClient {
 
 	job, err := mapper.GetJobByID(jobID)
 	if err != nil {
+		// Surface "job not found" as a meaningful public message instead of the
+		// generic "internal server error" that a plain panic produces. Real DB
+		// errors keep the raw panic (masked as 500).
+		if err.Error() == msg.JobNotFound {
+			panicPublic(msg.JobNotFound)
+		}
 		panic(err.Error())
 	}
 	client = NewJobClient(job, false)

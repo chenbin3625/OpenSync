@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"opensync/internal/config"
 	"opensync/internal/mapper"
@@ -215,22 +214,17 @@ func isSecureRequest(c *gin.Context) bool {
 	if c.Request.TLS != nil {
 		return true
 	}
-	if !isLoopbackRemote(c.Request.RemoteAddr) {
+	// Only honor X-Forwarded-Proto from loopback or explicitly configured
+	// trusted proxies, otherwise a remote attacker could forge it and force the
+	// cookie to be marked Secure. Operators behind a TLS-terminating reverse
+	// proxy configure trusted_proxies so the Secure attribute is set correctly.
+	if !config.GetConfig().Server.IsTrustedProxy(c.Request.RemoteAddr) {
 		return false
 	}
 	if strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https") {
 		return true
 	}
 	return strings.EqualFold(c.GetHeader("X-Forwarded-Ssl"), "on")
-}
-
-func isLoopbackRemote(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		host = remoteAddr
-	}
-	ip := net.ParseIP(strings.TrimSpace(host))
-	return ip != nil && ip.IsLoopback()
 }
 
 // AuthRequired is the Gin middleware for authentication

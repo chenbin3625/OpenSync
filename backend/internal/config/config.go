@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"net"
 	"opensync/internal/msg"
 	"opensync/pkg/crypto"
 	"os"
@@ -26,6 +27,10 @@ type ServerConfig struct {
 	ScanConcurrency int
 	MaxRetries      int
 	PasswdStr       string
+	// TrustedProxies lists CIDR ranges (or bare IPs) whose X-Forwarded-Proto
+	// header may be honored when deciding whether to mark the auth cookie
+	// Secure behind a TLS-terminating reverse proxy.
+	TrustedProxies []string
 }
 
 // DBConfig holds database configuration
@@ -160,6 +165,9 @@ func GetConfig() *Config {
 			if v, ok := opensync["max_retries"]; ok {
 				sCfg.MaxRetries = intConfigValue(v, sCfg.MaxRetries, "max_retries")
 			}
+			if v, ok := opensync["trusted_proxies"]; ok {
+				sCfg.TrustedProxies = parseTrustedProxies(v)
+			}
 		}
 	} else {
 		// Read from environment variables
@@ -174,6 +182,7 @@ func GetConfig() *Config {
 		sCfg.CopyConcurrency = envIntConfigValue("OPENSYNC_COPY_CONCURRENCY", sCfg.CopyConcurrency)
 		sCfg.ScanConcurrency = envIntConfigValue("OPENSYNC_SCAN_CONCURRENCY", sCfg.ScanConcurrency)
 		sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
+		sCfg.TrustedProxies = parseTrustedProxies(os.Getenv("OPENSYNC_TRUSTED_PROXIES"))
 	}
 
 	sysConfig = &Config{
@@ -205,6 +214,49 @@ func clampInt(value, min, max, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+// parseTrustedProxies splits a comma-separated list of CIDRs / bare IPs.
+func parseTrustedProxies(value string) []string {
+	var proxies []string
+	for _, part := range strings.Split(value, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			proxies = append(proxies, p)
+		}
+	}
+	return proxies
+}
+
+// IsTrustedProxy reports whether remoteAddr (host:port) is a loopback address
+// or falls within a configured trusted-proxy CIDR / equals a configured bare IP.
+// Used to decide whether X-Forwarded-Proto may be honored for the Secure cookie
+// attribute when the app is deployed behind a TLS-terminating reverse proxy.
+func (s *ServerConfig) IsTrustedProxy(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, entry := range s.TrustedProxies {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			if _, network, parseErr := net.ParseCIDR(entry); parseErr == nil && network.Contains(ip) {
+				return true
+			}
+		} else if entry == ip.String() {
+			return true
+		}
+	}
+	return false
 }
 
 // SetConfigForTest swaps the process config for tests in other packages.
@@ -305,6 +357,7 @@ task_timeout=%d
 copy_concurrency=%d
 scan_concurrency=%d
 max_retries=%d
+trusted_proxies=%s
 	`,
 		sCfg.Bind,
 		sCfg.Port,
@@ -317,6 +370,7 @@ max_retries=%d
 		sCfg.CopyConcurrency,
 		sCfg.ScanConcurrency,
 		sCfg.MaxRetries,
+		strings.Join(sCfg.TrustedProxies, ","),
 	)
 	tmpFile, err := os.CreateTemp("data", "config.ini.*")
 	if err != nil {
