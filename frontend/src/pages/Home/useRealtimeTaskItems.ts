@@ -87,8 +87,7 @@ export function useRealtimeTaskItems({
 
     const loadKey = { status: activeTab, taskIdentity, page: tabTaskPage };
     const replaceRows = shouldReplaceRealtimeRows(lastLoaded, loadKey);
-    const resetTotal = shouldResetRealtimeSnapshot(lastLoaded, loadKey);
-    const clearRows = shouldResetRealtimeSnapshot(lastLoaded, loadKey);
+    const resetSnapshot = shouldResetRealtimeSnapshot(lastLoaded, loadKey);
 
     if (activeTab === 1) {
       // Invalidate any in-flight server fetch and reset the fetch throttle so
@@ -122,8 +121,8 @@ export function useRealtimeTaskItems({
     lastLoadedRef.current = loadKey;
 
     if (replaceRows) {
-      if (clearRows) setTabTaskList([]);
-      if (resetTotal) setTabTaskTotal(0);
+      if (resetSnapshot) setTabTaskList([]);
+      if (resetSnapshot) setTabTaskTotal(0);
       setTabLoading(true);
     }
 
@@ -148,8 +147,8 @@ export function useRealtimeTaskItems({
       } catch {
         if (controller.signal.aborted) return;
         if (requestID === requestRef.current && replaceRows) {
-          if (clearRows) setTabTaskList([]);
-          if (resetTotal) setTabTaskTotal(0);
+          if (resetSnapshot) setTabTaskList([]);
+          if (resetSnapshot) setTabTaskTotal(0);
         }
       } finally {
         if (requestID === requestRef.current) {

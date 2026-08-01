@@ -1,5 +1,5 @@
 import { PlusOutlined, PlayCircleOutlined } from '@ant-design/icons';
-import { Button, Tag, Pagination, Empty, Typography, Spin, Menu } from 'antd';
+import { Button, Empty, Menu, Pagination, Spin, Tag, Typography } from 'antd';
 import type { JobItem } from '../../types';
 import { jobStatusColors, statusLabels, methodNames, formatJobPaths, countJobPaths, getJobName, formatSchedule } from './homeUtils';
 

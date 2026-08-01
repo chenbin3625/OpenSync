@@ -2,6 +2,11 @@
   box-sizing: border-box;
 }
 
+:root {
+  /* 原生控件（滚动条/表单控件）默认同时支持明暗，实际由 App 按主题覆写 */
+  color-scheme: light dark;
+}
+
 html,
 body,
 #root {
@@ -300,6 +305,16 @@ select {
   text-align: center;
 }
 
+/* 加载失败 / 空态的中部占位块（表格、列表页通用） */
+.ops-state-block {
+  padding: 32px 0;
+  text-align: center;
+}
+
+.ops-state-action {
+  margin-top: 16px;
+}
+
 .ops-settings-panel {
   max-width: 960px;
 }
@@ -308,7 +323,8 @@ select {
   padding: 20px;
 }
 
-.ops-feedback {
+.ops-feedback,
+.task-feedback {
   margin-bottom: 12px;
 }
 
@@ -427,4 +443,31 @@ select {
   .ops-settings-panel {
     max-width: none;
   }
+}
+
+/* 统一滚动条：细、圆角、跟随主题（WebKit / Chromium / Firefox） */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ant-color-fill-secondary) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--ant-color-fill-secondary);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ant-color-fill);
+  background-clip: padding-box;
 }

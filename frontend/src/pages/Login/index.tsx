@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import './Login.css';
-import { Form, Input, Button, Card, Modal, App, Typography } from 'antd';
+import { App, Button, Card, Form, Input, Modal, Typography } from 'antd';
 import { UserOutlined, LockOutlined, KeyOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { getInitStatus, initializeUser, login, resetPwd } from '../../api/user';
