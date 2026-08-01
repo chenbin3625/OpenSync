@@ -33,22 +33,21 @@ type scanWork struct {
 }
 
 func (jt *JobTask) acquireScanSlot() bool {
-	for {
+	if jt.isBreak() {
+		return false
+	}
+	// Block on the semaphore instead of polling every 50ms. The context is
+	// cancelled on break/timeout (requestBreak / task timeout), so the wait
+	// still propagates cancellation promptly.
+	select {
+	case jt.scanSem <- struct{}{}:
 		if jt.isBreak() {
+			<-jt.scanSem
 			return false
 		}
-		select {
-		case jt.scanSem <- struct{}{}:
-			if jt.isBreak() {
-				<-jt.scanSem
-				return false
-			}
-			return true
-		default:
-			if completed := jt.waitForBreak(50 * time.Millisecond); !completed {
-				return false
-			}
-		}
+		return true
+	case <-jt.context().Done():
+		return false
 	}
 }
 

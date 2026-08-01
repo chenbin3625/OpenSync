@@ -24,12 +24,17 @@ func (jt *JobTask) finishSubmittedTask(persistErr error) {
 }
 
 func (jt *JobTask) finishSuccessfulTask() {
+	// Mark the job idle and clear the current task BEFORE persisting status +
+	// sending notifications. finishJobTaskStatus -> SendTaskNotification makes
+	// synchronous HTTP calls (up to 30s per notify config) and would otherwise
+	// keep the job "doing", blocking the next scheduled run and manual/retry/
+	// delete operations until all webhooks are delivered.
+	jt.JobClient.markDone()
+	jt.JobClient.clearCurrentTask(jt)
 	if err := jt.updateTaskStatus(); err != nil {
 		jt.finishFailedTask(taskStatusUpdateErrorMessage(err))
 		return
 	}
-	jt.JobClient.markDone()
-	jt.JobClient.clearCurrentTask(jt)
 	jt.notifyProgressNow()
 }
 

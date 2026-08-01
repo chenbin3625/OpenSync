@@ -119,7 +119,9 @@ func InitSQL() {
 
 	// Existing database - check version and migrate if needed. A fresh schema
 	// can exist without any user rows when the server was stopped before web
-	// setup completed; in that case the table definition is already current.
+	// setup completed. schemaVersion() returns 0 in that case so the idempotent
+	// migrations run (a no-op on an already-current schema), which is important
+	// when the schema was created by an older binary missing newer columns.
 	sqlVersion := schemaVersion(db)
 
 	if sqlVersion < int64(currentVersion) {
@@ -141,7 +143,14 @@ func schemaVersion(db *sql.DB) int64 {
 		return sqlVersion
 	}
 	if err == sql.ErrNoRows {
-		return currentVersion
+		// user_list exists with the sqlVersion column but has no rows. This can
+		// happen when an older binary created the table (with sqlVersion but
+		// missing newer columns) and web setup was never completed. Returning 0
+		// runs the idempotent migrations to bring the schema up to date before
+		// first-run setup; migrateDBTx(0) on an already-current schema is a
+		// no-op. Returning currentVersion here would skip migrations and leave
+		// the schema stale, breaking InitializeUser (e.g. missing recoveryKey).
+		return 0
 	}
 	return 0
 }

@@ -301,6 +301,10 @@ func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatu
 	}()
 
 	if !jc.enabled() {
+		// tryMarkDoing already set JobDoing=true; the async task.Start() below
+		// is never reached on this path, so we must clear it here or the job is
+		// permanently stuck "doing" (cannot rerun/delete without a restart).
+		jc.markDone()
 		return
 	}
 
@@ -314,6 +318,7 @@ func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatu
 		if err := UpdateJobTaskStatusSimple(taskID, taskStatusStopped, nil); err != nil {
 			log.Printf("Failed to mark disabled task %d as stopped: %v", taskID, err)
 		}
+		jc.markDone()
 		return
 	}
 	task := newJobTask(taskID, jc)

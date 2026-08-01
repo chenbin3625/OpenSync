@@ -5,7 +5,6 @@ import (
 	"opensync/internal/msg"
 	"opensync/internal/model"
 	"opensync/internal/service"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,7 +15,7 @@ func GetJob(c *gin.Context) {
 	taskIDStr := c.Query("taskId")
 
 	if idStr != "" {
-		id, err := strconv.ParseInt(idStr, 10, 64)
+		id, err := parseRequiredID(idStr, "id")
 		if err != nil {
 			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return

@@ -354,7 +354,7 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 
 	statusNames := map[int]string{
 		0: "Waiting", 1: "Running", 2: "Success", 3: "Partial Success",
-		4: "Aborted", 5: "Timeout", 6: "Failed", 7: "Stopped", 8: "No sync needed",
+		4: "Stopped", 5: "Timeout", 6: "System Failed", 7: "Failed", 8: "No sync needed",
 	}
 	statusName := statusNames[status]
 	if status < 0 || status > 8 {
@@ -482,6 +482,14 @@ func buildNotifyRequest(method, urlStr string, body io.Reader, contentType strin
 }
 
 func sendNotifyRequest(client *http.Client, req *http.Request) {
+	sendNotifyRequestBytes(client, req)
+}
+
+// sendNotifyRequestBytes sends the request, validates the HTTP status, and
+// returns the response body so callers can inspect provider-specific error
+// codes. DingTalk/Lark/ServerChan/WeCom return HTTP 200 with a non-zero
+// errcode/code/errno in the body on failure, which a status-only check misses.
+func sendNotifyRequestBytes(client *http.Client, req *http.Request) []byte {
 	resp := doNotifyRequest(client, req)
 	defer resp.Body.Close()
 	bodyBytes, err := readAllWithLimit(resp.Body, maxNotifyResponseBytes)
@@ -495,6 +503,27 @@ func sendNotifyRequest(client *http.Client, req *http.Request) {
 		}
 		panic(fmt.Sprintf("notify request failed: %s", resp.Status))
 	}
+	return bodyBytes
+}
+
+// notifyProviderError returns a non-nil error when the provider's JSON response
+// body indicates failure via one of the given fields being non-zero. Returns nil
+// for non-JSON bodies (e.g. custom webhooks) or when no recognized field is
+// present, so callers don't false-positive on arbitrary response shapes.
+func notifyProviderError(body []byte, fields ...string) error {
+	var m map[string]interface{}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil
+	}
+	for _, field := range fields {
+		if v, ok := m[field]; ok {
+			if code := util.ToInt(v); code != 0 {
+				return fmt.Errorf("notify %s=%d: %s", field, code, strings.TrimSpace(string(body)))
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 func doNotifyRequest(client *http.Client, req *http.Request) *http.Response {
@@ -503,6 +532,11 @@ func doNotifyRequest(client *http.Client, req *http.Request) *http.Response {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		// On a redirect error client.Do can return a non-nil resp together
+		// with err; close the body or the underlying connection leaks.
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
 		log.Printf("notify request failed: target=%s error=%s", notifyRequestTarget(req), notifyNetworkError(err))
 		panicPublic(msg.NotifySendFail)
 	}
@@ -584,9 +618,9 @@ func sendWebhook(client *http.Client, params map[string]interface{}, title, cont
 			}
 			req, err = buildNotifyRequest(method, urlStr, strings.NewReader(strings.Join(formBody, "&")), contentType)
 		} else {
-			jsonData, err := json.Marshal(body)
-			if err != nil {
-				panic(err.Error())
+			jsonData, marshalErr := json.Marshal(body)
+			if marshalErr != nil {
+				panic(marshalErr.Error())
 			}
 			req, err = buildNotifyRequest(method, urlStr, bytes.NewReader(jsonData), contentType)
 		}
@@ -644,7 +678,10 @@ func sendServerChan(client *http.Client, params map[string]interface{}, title, c
 	if err != nil {
 		panic(err.Error())
 	}
-	sendNotifyRequest(client, req)
+	respBody := sendNotifyRequestBytes(client, req)
+	if err := notifyProviderError(respBody, "code", "errno"); err != nil {
+		panic(err.Error())
+	}
 }
 
 func sendDingTalk(client *http.Client, params map[string]interface{}, title, content string) {
@@ -663,7 +700,10 @@ func sendDingTalk(client *http.Client, params map[string]interface{}, title, con
 	if err != nil {
 		panic(err.Error())
 	}
-	sendNotifyRequest(client, req)
+	respBody := sendNotifyRequestBytes(client, req)
+	if err := notifyProviderError(respBody, "errcode"); err != nil {
+		panic(err.Error())
+	}
 }
 
 func sendWeCom(client *http.Client, params map[string]interface{}, title, content string) {
@@ -721,7 +761,10 @@ func sendWeCom(client *http.Client, params map[string]interface{}, title, conten
 	if err != nil {
 		panic(err.Error())
 	}
-	sendNotifyRequest(client, msgReq)
+	msgRespBody := sendNotifyRequestBytes(client, msgReq)
+	if err := notifyProviderError(msgRespBody, "errcode"); err != nil {
+		panic(err.Error())
+	}
 }
 
 func sendLark(client *http.Client, params map[string]interface{}, title, content string) {
@@ -751,7 +794,10 @@ func sendLark(client *http.Client, params map[string]interface{}, title, content
 	if err != nil {
 		panic(err.Error())
 	}
-	sendNotifyRequest(client, req)
+	respBody := sendNotifyRequestBytes(client, req)
+	if err := notifyProviderError(respBody, "code", "StatusCode"); err != nil {
+		panic(err.Error())
+	}
 }
 
 func paramString(params map[string]interface{}, keys ...string) string {
