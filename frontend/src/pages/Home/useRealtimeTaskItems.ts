@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { jobGetTaskCurrent } from '../../api/job';
+import { POLL_INTERVAL_MS } from '../../api/request';
 import type { CurrentTaskView, TaskItem } from '../../types';
 import {
   getRealtimeTaskIdentity,
@@ -40,6 +41,9 @@ export function useRealtimeTaskItems({
   const [tabLoading, setTabLoading] = useState(false);
   const requestRef = useRef(0);
   const lastLoadedRef = useRef<RealtimeTaskLoadKey | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const lastFetchKeyRef = useRef<string | null>(null);
+  const lastFetchAtRef = useRef<number | null>(null);
 
   const setActiveTab = useCallback((status: number) => {
     setActiveTabValue(status);
@@ -54,6 +58,9 @@ export function useRealtimeTaskItems({
     if (!enabled || !jobId || !currentTask) {
       requestRef.current += 1;
       lastLoadedRef.current = null;
+      lastFetchKeyRef.current = null;
+      lastFetchAtRef.current = null;
+      abortRef.current?.abort();
       setTabTaskList([]);
       setTabTaskTotal(0);
       setTabLoading(false);
@@ -68,6 +75,9 @@ export function useRealtimeTaskItems({
 
     if (mustResetPage && tabTaskPage !== 1) {
       requestRef.current += 1;
+      lastFetchKeyRef.current = null;
+      lastFetchAtRef.current = null;
+      abortRef.current?.abort();
       setTabTaskList([]);
       setTabTaskTotal(0);
       setTabLoading(true);
@@ -79,6 +89,35 @@ export function useRealtimeTaskItems({
     const replaceRows = shouldReplaceRealtimeRows(lastLoaded, loadKey);
     const resetTotal = shouldResetRealtimeSnapshot(lastLoaded, loadKey);
     const clearRows = shouldResetRealtimeSnapshot(lastLoaded, loadKey);
+
+    if (activeTab === 1) {
+      // Invalidate any in-flight server fetch and reset the fetch throttle so
+      // returning to a non-running tab always fetches fresh.
+      requestRef.current += 1;
+      lastFetchKeyRef.current = null;
+      lastFetchAtRef.current = null;
+      abortRef.current?.abort();
+      lastLoadedRef.current = loadKey;
+      const doingTask = currentTask.doingTask || [];
+      setTabTaskList((previous) => replaceRows ? doingTask : mergeTaskItems(previous, doingTask));
+      setTabTaskTotal(doingTask.length);
+      setTabLoading(false);
+      return;
+    }
+
+    // Non-running tabs fetch server-side rows. Throttle to at most one request
+    // per poll interval per view: currentTask changes on every SSE push, and
+    // refetching on each push would pile up requests against a slow backend.
+    // A fresh view (new tab / task / page) always fetches immediately.
+    const fetchKey = `${loadKey.status}:${loadKey.taskIdentity}:${loadKey.page}`;
+    const now = Date.now();
+    const changedView = lastFetchKeyRef.current !== fetchKey;
+    if (!changedView && lastFetchAtRef.current != null && now - lastFetchAtRef.current < POLL_INTERVAL_MS) {
+      return;
+    }
+    lastFetchKeyRef.current = fetchKey;
+    lastFetchAtRef.current = now;
+
     const requestID = ++requestRef.current;
     lastLoadedRef.current = loadKey;
 
@@ -88,13 +127,11 @@ export function useRealtimeTaskItems({
       setTabLoading(true);
     }
 
-    if (activeTab === 1) {
-      const doingTask = currentTask.doingTask || [];
-      setTabTaskList((previous) => replaceRows ? doingTask : mergeTaskItems(previous, doingTask));
-      setTabTaskTotal(doingTask.length);
-      setTabLoading(false);
-      return;
-    }
+    // Cancel the previous request before starting a new one so a slow response
+    // doesn't stack with later ones.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     async function loadTabTasks() {
       try {
@@ -103,12 +140,13 @@ export function useRealtimeTaskItems({
           status: activeTab,
           pageSize,
           pageNum: tabTaskPage,
-        }, { silent: true });
-        if (requestID !== requestRef.current) return;
+        }, { silent: true, signal: controller.signal });
+        if (controller.signal.aborted || requestID !== requestRef.current) return;
         const { rows, total } = normalizeTaskItemPage(res.data);
         setTabTaskList((previous) => replaceRows ? rows : mergeTaskItems(previous, rows));
         setTabTaskTotal(total);
       } catch {
+        if (controller.signal.aborted) return;
         if (requestID === requestRef.current && replaceRows) {
           if (clearRows) setTabTaskList([]);
           if (resetTotal) setTabTaskTotal(0);
@@ -122,6 +160,10 @@ export function useRealtimeTaskItems({
 
     loadTabTasks();
   }, [activeTab, currentTask, enabled, jobId, pageSize, tabTaskPage]);
+
+  // Abort any in-flight tab fetch when the component unmounts (job switch /
+  // tab teardown remounts TaskList via `key`).
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   const pagedTabTaskList = useMemo(() => {
     const sortedList = sortTaskItemsByCreateTimeDesc(tabTaskList);

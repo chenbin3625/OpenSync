@@ -43,7 +43,7 @@ export default function Engine() {
     setLoading(true);
     setListError(false);
     try {
-      const res = await alistGet();
+      const res = await alistGet({ silent: true });
       if (reqID !== listReqRef.current) return;
       setList(res.data || []);
     } catch (err) {

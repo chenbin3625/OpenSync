@@ -73,6 +73,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
   const [keywordInput, setKeywordInput] = useState('');
   const [keywordFilter, setKeywordFilter] = useState('');
   const requestRef = useRef(0);
+  const loadingRequestRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
   const fetchData = useCallback(async (options?: { silent?: boolean }) => {
@@ -84,6 +85,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
     const controller = new AbortController();
     abortRef.current = controller;
     const requestID = ++requestRef.current;
+    const loadingRequestID = showLoading ? ++loadingRequestRef.current : 0;
     if (showLoading) {
       setLoading(true);
       setError(false);
@@ -125,7 +127,11 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       setTotal(0);
       console.error('task detail fetch failed', err);
     } finally {
-      if (showLoading && requestID === requestRef.current && !controller.signal.aborted) {
+      // Clear loading whenever the loading request completes, regardless of
+      // whether a later request superseded it. Otherwise a silent poll that
+      // aborts the in-flight non-silent fetch would leave the spinner stuck
+      // forever (the aborted request's requestID no longer matches).
+      if (showLoading && loadingRequestID === loadingRequestRef.current) {
         setLoading(false);
       }
     }

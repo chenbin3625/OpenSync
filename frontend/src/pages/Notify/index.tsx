@@ -207,7 +207,7 @@ export default function Notify() {
     setLoading(true);
     setListError(false);
     try {
-      const res = await notifyGet();
+      const res = await notifyGet({ silent: true });
       if (reqID !== listReqRef.current) return;
       setList(res.data || []);
     } catch (err) {

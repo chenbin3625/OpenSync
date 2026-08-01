@@ -1,8 +1,8 @@
-import request from './request';
+import request, { type RequestOptions, withRequestOptions } from './request';
 import type { ApiResponse, SystemSettings } from '../types';
 
-export function getSystemConfig() {
-  return request.get('/system/config') as Promise<ApiResponse<SystemSettings>>;
+export function getSystemConfig(options?: RequestOptions) {
+  return request.get('/system/config', withRequestOptions({}, options)) as Promise<ApiResponse<SystemSettings>>;
 }
 
 export function updateSystemConfig(data: SystemSettings) {

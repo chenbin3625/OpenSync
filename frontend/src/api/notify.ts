@@ -1,8 +1,8 @@
-import request from './request';
+import request, { type RequestOptions, withRequestOptions } from './request';
 import type { ApiResponse, NotifyItem } from '../types';
 
-export function notifyGet() {
-  return request.get('/notify') as Promise<ApiResponse<NotifyItem[]>>;
+export function notifyGet(options?: RequestOptions) {
+  return request.get('/notify', withRequestOptions({}, options)) as Promise<ApiResponse<NotifyItem[]>>;
 }
 
 export function notifyPost(data: Record<string, unknown>) {

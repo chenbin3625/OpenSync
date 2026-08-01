@@ -35,7 +35,7 @@ export default function Home() {
     setLoading(true);
     setListError(false);
     try {
-      const res = await jobGetJob({ pageSize: ps, pageNum: p });
+      const res = await jobGetJob({ pageSize: ps, pageNum: p }, { silent: true });
       if (requestID !== listRequestRef.current) return;
       setList(res.data?.dataList || []);
       setTotal(res.data?.count || 0);

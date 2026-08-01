@@ -41,7 +41,7 @@ export default function Setting() {
     setLoading(true);
     setConfigError(false);
     try {
-      const res = await getSystemConfig();
+      const res = await getSystemConfig({ silent: true });
       if (res.data) {
         setConfigValues(res.data);
       }
