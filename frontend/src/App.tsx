@@ -21,6 +21,11 @@ function App() {
   const setUserInfo = useStore((s) => s.setUserInfo);
   const setAuthChecked = useStore((s) => s.setAuthChecked);
 
+  // 让原生控件（滚动条、表单控件）跟随主题而非系统偏好。
+  useEffect(() => {
+    document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+  }, [isDark]);
+
   useEffect(() => {
     let alive = true;
     getUser()

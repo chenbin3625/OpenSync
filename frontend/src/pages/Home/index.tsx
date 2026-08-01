@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import './Home.css';
-import { Alert, App, Typography, Tabs, Drawer, Empty } from 'antd';
+import { Alert, App, Drawer, Empty, Tabs, Typography } from 'antd';
 import { jobGetJob, jobPut, jobDelete } from '../../api/job';
 import { alistGet } from '../../api/alist';
 import TaskList from './TaskList';
@@ -13,6 +13,8 @@ import type { AlistItem, JobItem } from '../../types';
 import { buildHomeRouteSearch, readHomeRouteState, type HomeRouteState, type HomeTabKey } from './routeState';
 import { formatAlistLabel } from './homeUtils';
 
+const PAGE_SIZE = 12;
+
 export default function Home() {
   const { message } = App.useApp();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -20,7 +22,6 @@ export default function Home() {
   const { tab: activeJobTab, jobId: selectedJobId, page } = routeState;
   const [list, setList] = useState<JobItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [pageSize] = useState(12);
   const [loading, setLoading] = useState(false);
   const [listLoaded, setListLoaded] = useState(false);
   const [listError, setListError] = useState(false);
@@ -30,7 +31,7 @@ export default function Home() {
   const [taskDetailDrawerTaskId, setTaskDetailDrawerTaskId] = useState<string>('');
   const listRequestRef = useRef(0);
 
-  const fetchList = useCallback(async (p = page, ps = pageSize) => {
+  const fetchList = useCallback(async (p = page, ps = PAGE_SIZE) => {
     const requestID = ++listRequestRef.current;
     setLoading(true);
     setListError(false);
@@ -51,7 +52,7 @@ export default function Home() {
         setLoading(false);
       }
     }
-  }, [page, pageSize]);
+  }, [page]);
 
   const fetchAlistList = useCallback(async () => {
     try {
@@ -137,6 +138,7 @@ export default function Home() {
     try {
       await jobPut({});
       message.success('已提交执行所有同步任务');
+      fetchList();
     } catch (err) {
       console.error('job run all failed', err);
     }
@@ -146,11 +148,11 @@ export default function Home() {
     updateHomeRouteState({ page: nextPage, jobId: null });
   }, [updateHomeRouteState]);
 
-  const getAlistName = (alistId: number) => {
+  const getAlistName = useCallback((alistId: number) => {
     const a = alistList.find((x) => x.id === alistId);
     if (!a) return `引擎 #${alistId}`;
     return formatAlistLabel(a);
-  };
+  }, [alistList]);
 
   const selectedJob = list.find((job) => job.id === selectedJobId) || null;
 
@@ -162,7 +164,7 @@ export default function Home() {
         selectedJobId={selectedJobId}
         total={total}
         page={page}
-        pageSize={pageSize}
+        pageSize={PAGE_SIZE}
         onAdd={handleAdd}
         onRunAll={handleRunAll}
         onSelectJob={(jobId) => updateHomeRouteState({ jobId })}
@@ -181,7 +183,6 @@ export default function Home() {
         )}
         {selectedJob ? (
           <Tabs
-            className="sync-main-tabs"
             activeKey={activeJobTab}
             onChange={(key) => updateHomeRouteState({ tab: key as HomeTabKey })}
             destroyInactiveTabPane={false}

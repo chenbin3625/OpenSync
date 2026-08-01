@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import './Home.css';
-import { Table, Tag, Button, Space, Select, Progress, Empty, Typography, Card, Tooltip, Input } from 'antd';
+import {
+  Button, Card, Empty, Input, Progress, Select, Space, Table, Tag, Tooltip, Typography,
+} from 'antd';
 import { ArrowLeftOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { jobGetTaskItem } from '../../api/job';
@@ -34,18 +36,6 @@ const errorFilterOptions = [
 
 function pathFallback(record: TaskItem): string {
   return displayText(record.fileName || record.dstPath || record.srcPath);
-}
-
-function LongText({
-  value,
-  maxWidth = 260,
-  type,
-}: {
-  value: string | number | null | undefined;
-  maxWidth?: number;
-  type?: 'secondary' | 'danger';
-}) {
-  return <EllipsisText value={value} maxWidth={maxWidth} type={type} />;
 }
 
 type TaskDetailProps = {
@@ -159,21 +149,21 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       key: 'fileName',
       width: 220,
       render: (_: unknown, record: TaskItem) =>
-        <LongText value={pathFallback(record)} maxWidth={200} />,
+        <EllipsisText value={pathFallback(record)} maxWidth={200} />,
     },
     {
       title: '来源目录',
       dataIndex: 'srcPath',
       key: 'srcPath',
       width: 260,
-      render: (val: string | null) => <LongText value={val} maxWidth={240} />,
+      render: (val: string | null) => <EllipsisText value={val} maxWidth={240} />,
     },
     {
       title: '目标目录',
       dataIndex: 'dstPath',
       key: 'dstPath',
       width: 260,
-      render: (val: string | null) => <LongText value={val} maxWidth={240} />,
+      render: (val: string | null) => <EllipsisText value={val} maxWidth={240} />,
     },
     {
       title: '文件大小',
@@ -263,7 +253,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
 
   const content = (
     <div className={embedded ? 'task-detail-panel is-embedded' : 'task-detail-panel'}>
-      <div className="page-header task-detail-header">
+      <div className="page-header">
         {embedded ? (
           <span />
         ) : (
@@ -321,12 +311,12 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
       </div>
 
       {error ? (
-        <div style={{ textAlign: 'center', padding: '32px 0' }}>
+        <div className="ops-state-block">
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={<Text type="secondary">文件详情加载失败</Text>}
           />
-          <Button style={{ marginTop: 16 }} onClick={() => fetchData()}>重试</Button>
+          <Button className="ops-state-action" onClick={() => fetchData()}>重试</Button>
         </div>
       ) : list.length === 0 && !loading ? (
         <Empty

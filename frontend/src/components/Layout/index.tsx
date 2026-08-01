@@ -1,13 +1,10 @@
 import type React from 'react';
-import { Layout as AntLayout, Menu, Button, Typography, Popconfirm, Space } from 'antd';
 import {
-  HomeOutlined,
-  CloudServerOutlined,
-  BellOutlined,
-  SettingOutlined,
-  LogoutOutlined,
-  BulbOutlined,
-  BulbFilled,
+  Button, Layout as AntLayout, Menu, Popconfirm, Space, Typography,
+} from 'antd';
+import {
+  BellOutlined, BulbFilled, BulbOutlined, CloudServerOutlined, HomeOutlined,
+  LogoutOutlined, SettingOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../../stores/useStore';

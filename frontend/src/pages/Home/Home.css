@@ -60,6 +60,7 @@
   padding: 0 !important;
   border-radius: 8px;
   line-height: normal;
+  transition: background-color 0.2s ease;
 }
 
 .sync-sidebar-list .ant-menu-item::after {
@@ -168,12 +169,12 @@
   flex: 1 1 auto;
 }
 
-.sync-overview-heading {
+.sync-overview-heading.ant-typography {
   margin: 0 0 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 24px !important;
+  font-size: 24px;
   letter-spacing: 0;
 }
 
@@ -268,6 +269,10 @@
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.task-progress-card {
+  margin-bottom: 12px;
 }
 
 .task-progress-card .ant-card-head {
@@ -415,7 +420,7 @@
   gap: 8px;
   min-width: 0;
   padding: 7px 8px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  border-bottom: 1px solid color-mix(in srgb, var(--ant-color-border) 60%, transparent);
   border-radius: 6px;
 }
 

@@ -1,5 +1,8 @@
-import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import { Card, Table, Tag, Button, Space, Popconfirm, App, Progress, Empty, Typography, Tooltip, Spin, Pagination, Tabs, DatePicker, Input, Select } from 'antd';
+import { useState, useEffect, useRef, useCallback, useMemo, memo, type ReactNode } from 'react';
+import {
+  App, Button, Card, DatePicker, Empty, Input, Pagination, Popconfirm, Progress,
+  Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography,
+} from 'antd';
 import { POLL_INTERVAL_MS } from '../../api/request';
 import EllipsisText from './components/EllipsisText';
 import {
@@ -73,16 +76,7 @@ function getTaskDisplayName(task: TaskItem): string {
   return cleanPath.split('/').pop() || cleanPath;
 }
 
-function TaskInlineText(props: {
-  value: string | number | null | undefined;
-  tooltip?: React.ReactNode;
-  type?: 'secondary' | 'danger';
-  className?: string;
-}) {
-  return <EllipsisText {...props} />;
-}
-
-function RealtimeTaskItems({
+const RealtimeTaskItems = memo(function RealtimeTaskItems({
   activeTab,
   loading,
   page,
@@ -131,9 +125,9 @@ function RealtimeTaskItems({
                   <Tag color={task.type === 1 ? 'red' : task.type === 2 ? 'orange' : 'blue'}>
                     {taskTypeNames[task.type ?? 0] || '复制'}
                   </Tag>
-                  <TaskInlineText className="task-progress-file-name" value={name} tooltip={tooltip} />
-                  <TaskInlineText className="task-progress-file-path" value={task.srcPath} tooltip={srcPath} type="secondary" />
-                  <TaskInlineText className="task-progress-file-path" value={task.dstPath} tooltip={dstPath} type="secondary" />
+                  <EllipsisText className="task-progress-file-name" value={name} tooltip={tooltip} />
+                  <EllipsisText className="task-progress-file-path" value={task.srcPath} tooltip={srcPath} type="secondary" />
+                  <EllipsisText className="task-progress-file-path" value={task.dstPath} tooltip={dstPath} type="secondary" />
                   <Text type="secondary" className="task-progress-file-size">
                     {formatSize(task.fileSize || 0)}
                   </Text>
@@ -175,7 +169,7 @@ function RealtimeTaskItems({
       )}
     </Spin>
   );
-}
+});
 
 function RealtimeTaskCard({
   activeTab,
@@ -282,7 +276,6 @@ function RealtimeTaskCard({
           </Tag>
         </Space>
       )}
-      style={{ marginBottom: 12 }}
     >
       <div className="task-progress-hero">
         <div>
@@ -603,12 +596,12 @@ export default function TaskList({
   );
 
   const historyBody = historyError ? (
-    <div style={{ textAlign: 'center', padding: '32px 0' }}>
+    <div className="ops-state-block">
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}
         description={<Text type="secondary">历史任务加载失败</Text>}
       />
-      <Button icon={<ReloadOutlined />} style={{ marginTop: 16 }} onClick={() => fetchList(true)} loading={loading}>
+      <Button icon={<ReloadOutlined />} className="ops-state-action" onClick={() => fetchList(true)} loading={loading}>
         重试
       </Button>
     </div>
