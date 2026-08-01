@@ -369,13 +369,13 @@ export default function TaskList({
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [historyError, setHistoryError] = useState(false);
-  const [queryJobId, setQueryJobId] = useState(jobId);
   const [historyStatusFilter, setHistoryStatusFilter] = useState<number | undefined>(undefined);
   const [historyKeywordInput, setHistoryKeywordInput] = useState('');
   const [historyKeywordFilter, setHistoryKeywordFilter] = useState('');
   const [historyTimeRange, setHistoryTimeRange] = useState<HistoryTimeRange>(null);
   const listRequestRef = useRef(0);
   const listLoadingRequestRef = useRef(0);
+  const listAbortRef = useRef<AbortController | null>(null);
   const showRealtime = view === 'realtime' && active;
   const showHistory = view === 'history' && active;
   const { currentTask, refreshCurrentTask } = useRealtimeTask(jobId, showRealtime);
@@ -396,7 +396,12 @@ export default function TaskList({
   });
 
   const fetchList = useCallback(async (showLoading = false) => {
-    if (!jobId || queryJobId !== jobId) return;
+    if (!jobId) return;
+    // Cancel the previous request (e.g. a slow history poll) before starting a
+    // new one so requests don't pile up against the 90s axios timeout.
+    listAbortRef.current?.abort();
+    const controller = new AbortController();
+    listAbortRef.current = controller;
     const requestID = ++listRequestRef.current;
     const loadingRequestID = showLoading ? ++listLoadingRequestRef.current : 0;
     if (showLoading) {
@@ -414,13 +419,14 @@ export default function TaskList({
       if (historyTimeRange?.[0]) params.startTime = historyTimeRange[0].startOf('day').unix();
       if (historyTimeRange?.[1]) params.endTime = historyTimeRange[1].endOf('day').unix();
 
-      const res = await jobGetTask(params, { silent: !showLoading });
+      const res = await jobGetTask(params, { silent: !showLoading, signal: controller.signal });
       if (requestID === listRequestRef.current) {
         setList((previous) => mergeTaskRecords(previous, res.data?.dataList || []));
         setTotal(res.data?.count || 0);
         setHistoryError(false);
       }
     } catch (err) {
+      if (controller.signal.aborted) return; // cancelled, not a real failure
       if (requestID === listRequestRef.current) {
         console.error('task history fetch failed', err);
         if (showLoading) {
@@ -434,20 +440,12 @@ export default function TaskList({
         setLoading(false);
       }
     }
-  }, [historyKeywordFilter, historyStatusFilter, historyTimeRange, jobId, page, pageSize, queryJobId]);
+  }, [historyKeywordFilter, historyStatusFilter, historyTimeRange, jobId, page, pageSize]);
 
-  useEffect(() => {
-    setQueryJobId(jobId);
-    setPage(1);
-    setPageSize(20);
-    setList([]);
-    setTotal(0);
-    setHistoryError(false);
-    setHistoryStatusFilter(undefined);
-    setHistoryKeywordInput('');
-    setHistoryKeywordFilter('');
-    setHistoryTimeRange(null);
-  }, [jobId]);
+  // Cancel any in-flight history request when the component unmounts. TaskList
+  // is remounted via `key` when the selected job changes, so all local state
+  // (including the history filters above) is already reset by React.
+  useEffect(() => () => { listAbortRef.current?.abort(); }, []);
 
   useEffect(() => {
     if (showHistory) fetchList(true);

@@ -1,8 +1,8 @@
 import request, { type RequestOptions, withRequestOptions } from './request';
 import type { AlistItem, ApiResponse, PathItem } from '../types';
 
-export function alistGet() {
-  return request.get('/alist') as Promise<ApiResponse<AlistItem[]>>;
+export function alistGet(options?: RequestOptions) {
+  return request.get('/alist', withRequestOptions({}, options)) as Promise<ApiResponse<AlistItem[]>>;
 }
 
 export function alistGetPath(alistId: number | string, path: string, options?: RequestOptions) {

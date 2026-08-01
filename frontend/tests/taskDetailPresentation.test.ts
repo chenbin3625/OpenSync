@@ -41,5 +41,8 @@ test('task detail polling follows document visibility', () => {
 test('task detail silent polling does not toggle table loading state', () => {
   assert.match(taskDetailSource, /const showLoading = !options\?\.silent/);
   assert.match(taskDetailSource, /if \(showLoading\) \{\s+setLoading\(true\);\s+setError\(false\);\s+\}/s);
-  assert.match(taskDetailSource, /showLoading && requestID === requestRef\.current/);
+  // Loading cleanup is gated on the loading request only (not on whether a
+  // later silent poll superseded it), so a silent poll aborting an in-flight
+  // non-silent fetch cannot leave the spinner stuck.
+  assert.match(taskDetailSource, /showLoading && loadingRequestID === loadingRequestRef\.current/);
 });
