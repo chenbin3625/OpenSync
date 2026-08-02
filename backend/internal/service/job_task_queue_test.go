@@ -781,8 +781,8 @@ func TestFinalTaskStatusUsesTimeoutWhenContextDeadlineExceeded(t *testing.T) {
 }
 
 func TestFinalTaskStatusKeepsManualBreakAsStopped(t *testing.T) {
-	if status := finalTaskStatus(true, context.DeadlineExceeded, 0, 0); status != taskStatusFailed {
-		t.Fatalf("finalTaskStatus() = %d, want stopped status 7", status)
+	if status := finalTaskStatus(true, context.DeadlineExceeded, 0, 0); status != taskStatusStopped {
+		t.Fatalf("finalTaskStatus() = %d, want stopped status 4", status)
 	}
 }
 

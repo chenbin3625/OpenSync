@@ -58,10 +58,13 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
   const [currentTask, setCurrentTask] = useState<CurrentTaskView | null>(null);
   const prevTaskRef = useRef<CurrentTaskView | null>(null);
   const requestRef = useRef(0);
+  const inFlightRef = useRef(false);
 
   const refreshCurrentTask = useCallback(async () => {
     if (!jobId || !canPollCurrentDocument()) return;
+    if (inFlightRef.current) return;
     const requestID = ++requestRef.current;
+    inFlightRef.current = true;
     try {
       const res = await jobGetTaskCurrent({ id: jobId }, { silent: true });
       if (requestID !== requestRef.current) return;
@@ -74,6 +77,8 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
       }
     } catch {
       /* keep the last visible realtime snapshot on transient polling errors */
+    } finally {
+      inFlightRef.current = false;
     }
   }, [jobId]);
 
@@ -178,6 +183,14 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
       stopPolling();
     };
   }, [enabled, jobId, refreshCurrentTask]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (!document.hidden) refreshCurrentTask();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [refreshCurrentTask]);
 
   return { currentTask, refreshCurrentTask };
 }

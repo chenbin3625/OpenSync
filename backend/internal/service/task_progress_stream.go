@@ -86,6 +86,12 @@ func (h *progressHub) schedule(jobID int64) {
 	h.mu.Unlock()
 
 	time.AfterFunc(progressNotifyDebounce, func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("panic in progressHub.schedule publish for job %d: %v", jobID, r)
+			}
+		}()
+
 		h.mu.Lock()
 		delete(h.pending, jobID)
 		h.mu.Unlock()
