@@ -261,6 +261,7 @@ func expiredJobTaskIDs(cutoff int64, limit int) ([]int64, error) {
 	rows, err := GetDB().Query(
 		`SELECT id FROM job_task
 		 WHERE COALESCE(NULLIF(runTime, 0), createTime) < ?
+		   AND status NOT IN (0, 1)
 		 ORDER BY COALESCE(NULLIF(runTime, 0), createTime), id
 		 LIMIT ?`,
 		cutoff,

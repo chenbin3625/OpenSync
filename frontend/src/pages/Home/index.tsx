@@ -88,6 +88,18 @@ export default function Home() {
     updateHomeRouteState({ jobId: nextJobId });
   }, [list, listLoaded, selectedJobId, updateHomeRouteState]);
 
+  // Clamp `page` back to the max valid page when the loaded total no longer
+  // supports it (e.g. deleting the last jobs on page > 1 leaves total ≤ PAGE_SIZE).
+  // Setting `page` in the route triggers `fetchList` via the page-driven effect,
+  // and once `page <= maxPage` this effect stops firing (no infinite loop).
+  useEffect(() => {
+    if (!listLoaded) return;
+    const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (page > maxPage) {
+      updateHomeRouteState({ page: maxPage });
+    }
+  }, [listLoaded, total, page, updateHomeRouteState]);
+
   const handleAdd = () => {
     setEditingJob(null);
     setDrawerVisible(true);

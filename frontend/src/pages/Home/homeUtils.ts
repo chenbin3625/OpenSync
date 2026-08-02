@@ -25,7 +25,7 @@ export const taskStatusColors: Record<number, string> = {
 };
 export const taskRecordStatusNames: Record<number, string> = {
   0: '等待中', 1: '运行中', 2: '成功', 3: '部分失败',
-  4: '已中止', 5: '超时', 6: '失败', 7: '已停止', 8: '无需同步',
+  4: '已停止', 5: '超时', 6: '失败', 7: '失败', 8: '无需同步',
 };
 export const taskItemStatusColors: Record<number, string> = {
   0: 'default', 1: 'processing', 2: 'success', 3: 'warning',

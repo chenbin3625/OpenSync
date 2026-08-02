@@ -369,6 +369,7 @@ export default function TaskList({
   const listRequestRef = useRef(0);
   const listLoadingRequestRef = useRef(0);
   const listAbortRef = useRef<AbortController | null>(null);
+  const listFetchingRef = useRef(false);
   const showRealtime = view === 'realtime' && active;
   const showHistory = view === 'history' && active;
   const { currentTask, refreshCurrentTask } = useRealtimeTask(jobId, showRealtime);
@@ -390,9 +391,10 @@ export default function TaskList({
 
   const fetchList = useCallback(async (showLoading = false) => {
     if (!jobId) return;
-    // Cancel the previous request (e.g. a slow history poll) before starting a
-    // new one so requests don't pile up against the 90s axios timeout.
-    listAbortRef.current?.abort();
+    // Skip while a previous request is still in flight so a poll tick doesn't
+    // cancel the in-flight request (which still runs the DB query server-side).
+    if (listFetchingRef.current) return;
+    listFetchingRef.current = true;
     const controller = new AbortController();
     listAbortRef.current = controller;
     const requestID = ++listRequestRef.current;
@@ -429,6 +431,7 @@ export default function TaskList({
         }
       }
     } finally {
+      listFetchingRef.current = false;
       if (showLoading && loadingRequestID === listLoadingRequestRef.current) {
         setLoading(false);
       }

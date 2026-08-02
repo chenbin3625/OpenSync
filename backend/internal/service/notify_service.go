@@ -175,7 +175,9 @@ func isMaskedSecretValue(value string) bool {
 // resolveNotifyParams merges incoming params with stored secrets for fields
 // that were redacted (masked) or left empty. For new configs (no id) the
 // incoming params are returned unchanged. The returned map contains real
-// secret values, suitable for sending a test or persisting.
+// secret values, suitable for sending a test or persisting. An explicitly
+// empty headers object ({}) clears the stored headers instead of restoring
+// them.
 func resolveNotifyParams(notify map[string]interface{}) (map[string]interface{}, error) {
 	method := util.ToInt(notify["method"])
 	incoming, err := parseNotifyParams(fmt.Sprintf("%v", notify["params"]))
@@ -199,10 +201,21 @@ func resolveNotifyParams(notify map[string]interface{}) (map[string]interface{},
 			}
 			continue
 		}
-		s, _ := v.(string)
-		if s == "" || isMaskedSecretValue(s) {
-			if ev, ok2 := existingParams[key]; ok2 && ev != nil {
-				incoming[key] = ev
+		s, isStr := v.(string)
+		if isStr {
+			if s == "" || isMaskedSecretValue(s) {
+				if ev, ok2 := existingParams[key]; ok2 && ev != nil {
+					incoming[key] = ev
+				}
+			}
+			continue
+		}
+		// Non-string values (e.g. the parsed headers object) are real input
+		// and replace the stored value. An explicitly-empty headers object
+		// means the user cleared headers, so drop the stored value.
+		if key == "headers" {
+			if hMap, ok := v.(map[string]interface{}); ok && len(hMap) == 0 {
+				delete(incoming, key)
 			}
 		}
 	}

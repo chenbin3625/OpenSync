@@ -127,7 +127,7 @@ func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath stri
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, errors.New(msg.CodeNot200)
+		return nil, fmt.Errorf("%s (HTTP %d)", msg.CodeNot200, resp.StatusCode)
 	}
 
 	var res alistResponse

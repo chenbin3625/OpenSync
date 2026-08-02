@@ -77,7 +77,7 @@ func (jt *JobTask) updateTaskStatus() error {
 
 func finalTaskStatus(isBreak bool, ctxErr error, allNum, failOrOtherNum int) taskStatus {
 	if isBreak {
-		return taskStatusFailed
+		return taskStatusStopped
 	}
 	if errors.Is(ctxErr, context.DeadlineExceeded) {
 		return taskStatusTimeout

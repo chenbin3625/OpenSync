@@ -167,6 +167,10 @@ const normalizeNotifyParams = (method: number, params: NotifyParams): NotifyPara
     if (headers) {
       normalized.headers = headers;
     } else {
+      // Omit the key when headers are empty so the backend restores the stored
+      // value (the list view redacts headers to "", so an untouched field must
+      // not silently wipe the saved headers). Non-empty edits send the parsed
+      // object, which resolveNotifyParams now accepts as a real change.
       delete normalized.headers;
     }
     delete normalized.httpMethod;

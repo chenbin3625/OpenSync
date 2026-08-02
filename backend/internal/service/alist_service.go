@@ -24,9 +24,10 @@ var (
 )
 
 type alistClientLoad struct {
-	client *AlistClient
-	err    error
-	done   chan struct{}
+	client   *AlistClient
+	baseline *AlistClient
+	err      error
+	done     chan struct{}
 }
 
 // GetClientList returns all alist entries without token
@@ -88,7 +89,7 @@ func GetClientByIDContext(ctx context.Context, alistID int64) *AlistClient {
 	}
 
 	finishAlistClientLoad(alistID, load, newClient, nil)
-	return newClient
+	return load.client
 }
 
 func beginAlistClientLoad(alistID int64) (*alistClientLoad, bool) {
@@ -104,25 +105,34 @@ func beginAlistClientLoad(alistID int64) (*alistClientLoad, bool) {
 		return load, false
 	}
 
-	load := &alistClientLoad{done: make(chan struct{})}
+	load := &alistClientLoad{baseline: alistClientList[alistID], done: make(chan struct{})}
 	alistClientLoads[alistID] = load
 	return load, true
 }
 
 func finishAlistClientLoad(alistID int64, load *alistClientLoad, client *AlistClient, err error) {
-	var previous *AlistClient
+	var stale *AlistClient
 	alistClientListMu.Lock()
-	load.client = client
 	load.err = err
 	if err == nil && client != nil {
-		previous = alistClientList[alistID]
-		alistClientList[alistID] = client
+		current := alistClientList[alistID]
+		if current != nil && current != load.baseline {
+			// A newer client was stored (e.g. via UpdateClient) while we were
+			// loading; keep the fresh one and discard the stale client we built.
+			load.client = current
+			stale = client
+		} else {
+			alistClientList[alistID] = client
+			load.client = client
+		}
+	} else {
+		load.client = client
 	}
 	delete(alistClientLoads, alistID)
 	alistClientListMu.Unlock()
 	close(load.done)
-	if previous != nil && previous != client {
-		previous.Close()
+	if stale != nil {
+		stale.Close()
 	}
 }
 

@@ -131,16 +131,14 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
   // Cancel any in-flight request when the component unmounts.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  // Poll while there are in-progress items so the progress bars stay live.
+  // Poll while the detail view is open so the progress bars stay live.
   useEffect(() => {
     if (!taskId) return undefined;
-    const hasRunning = list.some((item) => item.status === 1);
-    if (!hasRunning) return undefined;
     const pollID = setInterval(() => {
       if (canPollCurrentDocument()) fetchData({ silent: true });
     }, POLL_INTERVAL_MS);
     return () => { clearInterval(pollID); };
-  }, [list, taskId, fetchData]);
+  }, [taskId, fetchData]);
 
   const columns = useMemo(() => [
     {

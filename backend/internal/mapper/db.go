@@ -238,9 +238,14 @@ func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...in
 		if err != nil {
 			return nil, err
 		}
+		countQuery := "SELECT COUNT(*) FROM (" + stripOrderBy(baseSQL) + ")"
+		count, err := FetchFirstVal(countQuery, sqlArgs...)
+		if err != nil {
+			return nil, err
+		}
 		return map[string]interface{}{
 			"dataList": dataList,
-			"count":    len(dataList),
+			"count":    util.ToInt64(count),
 		}, nil
 	}
 

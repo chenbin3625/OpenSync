@@ -42,6 +42,7 @@ export function useRealtimeTaskItems({
   const requestRef = useRef(0);
   const lastLoadedRef = useRef<RealtimeTaskLoadKey | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const tabFetchingRef = useRef(false);
   const lastFetchKeyRef = useRef<string | null>(null);
   const lastFetchAtRef = useRef<number | null>(null);
 
@@ -114,6 +115,12 @@ export function useRealtimeTaskItems({
     if (!changedView && lastFetchAtRef.current != null && now - lastFetchAtRef.current < POLL_INTERVAL_MS) {
       return;
     }
+    // Skip the whole run while a request is still in flight: the in-flight
+    // request completes and updates state instead of being cancelled, and the
+    // next push/tick (changedView stays true) fetches any new view. Guarding
+    // here — before any state mutation — avoids clearing the view and leaving
+    // a stuck loading spinner when a tab/page switch races a slow fetch.
+    if (tabFetchingRef.current) return;
     lastFetchKeyRef.current = fetchKey;
     lastFetchAtRef.current = now;
 
@@ -126,13 +133,11 @@ export function useRealtimeTaskItems({
       setTabLoading(true);
     }
 
-    // Cancel the previous request before starting a new one so a slow response
-    // doesn't stack with later ones.
-    abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
     async function loadTabTasks() {
+      tabFetchingRef.current = true;
       try {
         const res = await jobGetTaskCurrent({
           id: jobId,
@@ -151,6 +156,7 @@ export function useRealtimeTaskItems({
           if (resetSnapshot) setTabTaskTotal(0);
         }
       } finally {
+        tabFetchingRef.current = false;
         if (requestID === requestRef.current) {
           setTabLoading(false);
         }
