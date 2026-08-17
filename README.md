@@ -1,3 +1,5 @@
+
+
 # OpenSync
 
 OpenSync 是面向飞牛 fnOS / 飞牛 NAS、普通 NAS 和 Docker 环境的 AList / OpenList 自动同步工具。它通过 AList / OpenList 连接本地目录、网盘、对象存储、WebDAV 等存储端，并用可视化任务完成备份、镜像、归档和迁移。
@@ -127,6 +129,8 @@ Docker Compose 部署可执行：
 [ -f .env ] && . ./.env
 docker compose exec --user "${PUID:-1000}:${PGID:-1000}" opensync ./opensync reset-password --user admin
 ```
+
+CLI 会打印新生成的密码和 24 位恢复密钥，请妥善保存；旧恢复密钥会随之失效。
 
 默认配置会把运行数据保存到当前目录的 `data/` 文件夹。请保留这个目录，它包含数据库、密钥、配置和日志。
 
