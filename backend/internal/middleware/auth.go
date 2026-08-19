@@ -26,7 +26,10 @@ const cookieName = "open_sync"
 var sc *securecookie.SecureCookie
 var scMu sync.RWMutex
 
-const authUserCacheTTL = 15 * time.Second
+const (
+	authUserCacheTTL          = 15 * time.Second
+	maxAuthUserCacheEntries   = 1024
+)
 
 type authUserCacheEntry struct {
 	user      map[string]interface{}
@@ -156,10 +159,28 @@ func cachedAuthUser(cookieUser CookieUser) (map[string]interface{}, bool) {
 
 func cacheAuthUser(cookieUser CookieUser, trueUser map[string]interface{}) {
 	key := authUserCacheKey(cookieUser)
+	now := time.Now()
 	authUserCacheMu.Lock()
+	if len(authUserCache) >= maxAuthUserCacheEntries {
+		for k, v := range authUserCache {
+			if now.After(v.expiresAt) {
+				delete(authUserCache, k)
+			}
+		}
+		if len(authUserCache) >= maxAuthUserCacheEntries {
+			count := 0
+			for k := range authUserCache {
+				delete(authUserCache, k)
+				count++
+				if count >= maxAuthUserCacheEntries/2 {
+					break
+				}
+			}
+		}
+	}
 	authUserCache[key] = authUserCacheEntry{
 		user:      publicAuthUser(trueUser),
-		expiresAt: time.Now().Add(authUserCacheTTL),
+		expiresAt: now.Add(authUserCacheTTL),
 	}
 	authUserCacheMu.Unlock()
 }

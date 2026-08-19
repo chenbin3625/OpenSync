@@ -12,6 +12,10 @@ interface AppState {
 
 const getInitialTheme = (): 'dark' | 'light' => {
   try {
+    const directTheme = localStorage.getItem('opensync_theme');
+    if (directTheme === 'light' || directTheme === 'dark') {
+      return directTheme;
+    }
     const data = JSON.parse(localStorage.getItem('lifeData') || '{}');
     return data.vuex_theme === 'light' || data.vuex_theme === 'dark' ? data.vuex_theme : 'dark';
   } catch (err) {
@@ -30,6 +34,10 @@ const isUserInfo = (value: unknown): value is UserInfo => {
 
 const getInitialUser = (): UserInfo | null => {
   try {
+    const directUser = JSON.parse(localStorage.getItem('opensync_userInfo') || 'null');
+    if (isUserInfo(directUser)) {
+      return directUser;
+    }
     const data = JSON.parse(localStorage.getItem('lifeData') || '{}');
     return isUserInfo(data.vuex_userInfo) ? data.vuex_userInfo : null;
   } catch (err) {
@@ -38,10 +46,17 @@ const getInitialUser = (): UserInfo | null => {
   }
 };
 
-const saveLifeData = (key: string, value: unknown) => {
+const persistState = (newKey: string, oldKey: string, value: unknown) => {
   try {
+    if (value === null || value === undefined) {
+      localStorage.removeItem(newKey);
+    } else if (typeof value === 'string') {
+      localStorage.setItem(newKey, value);
+    } else {
+      localStorage.setItem(newKey, JSON.stringify(value));
+    }
     const data = JSON.parse(localStorage.getItem('lifeData') || '{}');
-    data[key] = value;
+    data[oldKey] = value;
     localStorage.setItem('lifeData', JSON.stringify(data));
   } catch (err) {
     console.error('failed to persist local state', err);
@@ -53,12 +68,12 @@ export const useStore = create<AppState>((set) => ({
   authChecked: false,
   theme: getInitialTheme(),
   setUserInfo: (user) => {
-    saveLifeData('vuex_userInfo', user);
+    persistState('opensync_userInfo', 'vuex_userInfo', user);
     set({ userInfo: user });
   },
   setAuthChecked: (checked) => set({ authChecked: checked }),
   setTheme: (theme) => {
-    saveLifeData('vuex_theme', theme);
+    persistState('opensync_theme', 'vuex_theme', theme);
     set({ theme });
   },
 }));

@@ -31,3 +31,15 @@ func TestToIntRejectsPartiallyNumericStrings(t *testing.T) {
 		t.Fatalf("ToInt64(%q) = %d, want 0", "12abc", got)
 	}
 }
+
+func TestToFloat64Conversions(t *testing.T) {
+	if got := ToFloat64(float32(3.14)); got < 3.13 || got > 3.15 {
+		t.Fatalf("ToFloat64(float32(3.14)) = %v", got)
+	}
+	if got := ToFloat64(" 42.5 "); got != 42.5 {
+		t.Fatalf("ToFloat64(%q) = %v, want 42.5", " 42.5 ", got)
+	}
+	if got := ToFloat64("invalid"); got != 0 {
+		t.Fatalf("ToFloat64(%q) = %v, want 0", "invalid", got)
+	}
+}

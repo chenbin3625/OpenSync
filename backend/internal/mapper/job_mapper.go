@@ -416,7 +416,12 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 		if err != nil {
 			return nil, err
 		}
-		return map[string]interface{}{"dataList": dataList, "count": len(dataList)}, nil
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM job_task_item %s", where)
+		count, err := FetchFirstVal(countQuery, args...)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"dataList": dataList, "count": util.ToInt64(count)}, nil
 	}
 
 	offset := (pn - 1) * ps

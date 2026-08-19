@@ -101,10 +101,22 @@ func ToFloat64(v interface{}) float64 {
 	switch val := v.(type) {
 	case float64:
 		return val
+	case float32:
+		return float64(val)
 	case int:
 		return float64(val)
 	case int64:
 		return float64(val)
+	case string:
+		val = strings.TrimSpace(val)
+		if val == "" {
+			return 0
+		}
+		n, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			return 0
+		}
+		return n
 	default:
 		return 0
 	}

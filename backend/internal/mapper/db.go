@@ -201,6 +201,9 @@ func ExecuteUpdate(query string, args ...interface{}) error {
 
 // ExecuteMany executes batch operations
 func ExecuteMany(query string, argsList [][]interface{}) error {
+	if len(argsList) == 0 {
+		return nil
+	}
 	tx, err := GetDB().Begin()
 	if err != nil {
 		return err
