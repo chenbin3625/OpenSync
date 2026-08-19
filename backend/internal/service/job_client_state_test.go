@@ -2,8 +2,8 @@ package service
 
 import (
 	"errors"
-	"opensync/internal/msg"
 	"opensync/internal/mapper"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"testing"
 	"time"

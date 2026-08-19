@@ -3,8 +3,8 @@ package service
 import (
 	"errors"
 	"fmt"
-	"opensync/internal/msg"
 	"opensync/internal/mapper"
+	"opensync/internal/msg"
 	"opensync/pkg/crypto"
 	"opensync/pkg/util"
 	"strings"

@@ -12,6 +12,11 @@ import {
   type RealtimeTaskLoadKey,
 } from './taskRows';
 
+// Non-running tabs (success/fail/other/... ) fetch from the DB-backed server
+// page; slowing them down avoids hammering the sqlite aggregation queries on
+// very large task item sets while each tab is simply being watched.
+const NON_RUNNING_POLL_INTERVAL_MS = 15000;
+
 type RealtimeTaskItemsParams = {
   jobId: string;
   enabled: boolean;
@@ -112,7 +117,8 @@ export function useRealtimeTaskItems({
     const fetchKey = `${loadKey.status}:${loadKey.taskIdentity}:${loadKey.page}`;
     const now = Date.now();
     const changedView = lastFetchKeyRef.current !== fetchKey;
-    if (!changedView && lastFetchAtRef.current != null && now - lastFetchAtRef.current < POLL_INTERVAL_MS) {
+    const pollIntervalMs = activeTab === 1 ? POLL_INTERVAL_MS : NON_RUNNING_POLL_INTERVAL_MS;
+    if (!changedView && lastFetchAtRef.current != null && now - lastFetchAtRef.current < pollIntervalMs) {
       return;
     }
     // Skip the whole run while a request is still in flight: the in-flight

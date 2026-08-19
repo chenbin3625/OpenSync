@@ -121,9 +121,31 @@ func runCLI(args []string, stdout io.Writer) (bool, error) {
 			return true, errors.New("missing --user")
 		}
 		return true, runResetPasswordCommand(*userName, stdout)
+	case "healthcheck":
+		return true, runHealthCheckCommand()
 	default:
 		return false, nil
 	}
+}
+
+// runHealthCheckCommand performs an HTTP GET on the server's own root URL and
+// exits non-zero on failure. It touches neither the database nor the config
+// files, so it is safe to run from the container HEALTHCHECK as any user.
+func runHealthCheckCommand() error {
+	port := os.Getenv("OPENSYNC_PORT")
+	if port == "" {
+		port = "8023"
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest {
+		return nil
+	}
+	return fmt.Errorf("healthcheck: unexpected status %d", resp.StatusCode)
 }
 
 func runResetPasswordCommand(userName string, stdout io.Writer) (err error) {

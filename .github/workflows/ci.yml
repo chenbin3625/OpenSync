@@ -20,6 +20,18 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
+      - name: Check formatting (gofmt)
+        working-directory: backend
+        run: |
+          unformatted="$(gofmt -l . | grep -v '/web/' || true)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::Files not formatted with gofmt:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Run go vet
+        working-directory: backend
+        run: go vet ./...
+
       - name: Run Backend Tests
         working-directory: backend
         run: go test -v ./...
@@ -45,6 +57,10 @@ jobs:
       - name: Run Frontend Tests
         working-directory: frontend
         run: npm test
+
+      - name: Run ESLint
+        working-directory: frontend
+        run: npm run lint
 
       - name: Build Frontend
         working-directory: frontend

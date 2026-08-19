@@ -27,8 +27,8 @@ var sc *securecookie.SecureCookie
 var scMu sync.RWMutex
 
 const (
-	authUserCacheTTL          = 15 * time.Second
-	maxAuthUserCacheEntries   = 1024
+	authUserCacheTTL        = 15 * time.Second
+	maxAuthUserCacheEntries = 1024
 )
 
 type authUserCacheEntry struct {

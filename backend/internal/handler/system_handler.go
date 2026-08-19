@@ -3,9 +3,9 @@ package handler
 import (
 	"net/http"
 	"opensync/internal/config"
-	"opensync/internal/msg"
 	"opensync/internal/middleware"
 	"opensync/internal/model"
+	"opensync/internal/msg"
 	"opensync/internal/service"
 	"strings"
 

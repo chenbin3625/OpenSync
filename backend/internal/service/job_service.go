@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"opensync/internal/msg"
 	"opensync/internal/mapper"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strconv"
 	"strings"
@@ -21,7 +21,11 @@ var (
 	getEnableJobList = mapper.GetEnableJobList
 )
 
-var taskNumUpdateSlots = make(chan struct{}, 1)
+var (
+	taskNumUpdateSlots      = make(chan struct{}, 1)
+	pendingTaskNumUpdatesMu sync.Mutex
+	pendingTaskNumUpdates   = make(map[int64]map[string]interface{})
+)
 
 // InitJobs loads and starts all enabled jobs on startup
 func InitJobs() {
@@ -515,19 +519,55 @@ func parseTaskNumJSON(value interface{}) map[string]interface{} {
 }
 
 func scheduleTaskNumUpdate(taskNums []map[string]interface{}) {
-	taskNums = cloneTaskRows(taskNums)
+	// Merge into a pending map instead of dropping when a previous worker is
+	// still running: each task keeps only its latest value, and the running
+	// worker drains the merged set on its next pass.
+	pendingTaskNumUpdatesMu.Lock()
+	for _, tn := range taskNums {
+		if tn == nil {
+			continue
+		}
+		taskID := util.ToInt64(tn["taskId"])
+		if taskID <= 0 {
+			continue
+		}
+		pendingTaskNumUpdates[taskID] = cloneTaskRows([]map[string]interface{}{tn})[0]
+	}
+	pendingTaskNumUpdatesMu.Unlock()
+
 	select {
 	case taskNumUpdateSlots <- struct{}{}:
 		go func() {
 			defer func() {
 				<-taskNumUpdateSlots
 			}()
-			if err := mapper.UpdateJobTaskNumMany(taskNums); err != nil {
-				log.Printf("Failed to update task counts: %v", err)
-			}
+			drainTaskNumUpdates()
 		}()
 	default:
-		log.Printf("Skipping task count backfill because a previous update is still running")
+		// A worker is already running and will pick up the merged pending
+		// updates on its next drain, so nothing is lost here.
+	}
+}
+
+func drainTaskNumUpdates() {
+	for {
+		pendingTaskNumUpdatesMu.Lock()
+		if len(pendingTaskNumUpdates) == 0 {
+			pendingTaskNumUpdatesMu.Unlock()
+			return
+		}
+		batch := make([]map[string]interface{}, 0, len(pendingTaskNumUpdates))
+		for taskID, tn := range pendingTaskNumUpdates {
+			item := cloneTaskRows([]map[string]interface{}{tn})[0]
+			item["taskId"] = taskID
+			batch = append(batch, item)
+			delete(pendingTaskNumUpdates, taskID)
+		}
+		pendingTaskNumUpdatesMu.Unlock()
+
+		if err := mapper.UpdateJobTaskNumMany(batch); err != nil {
+			log.Printf("Failed to update task counts: %v", err)
+		}
 	}
 }
 

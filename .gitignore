@@ -34,3 +34,6 @@ backend/cmd/server/web/*
 # Test and coverage output
 coverage/
 *.out
+
+# Local Go build cache (used when GOCACHE must live inside the workspace)
+.gocache/

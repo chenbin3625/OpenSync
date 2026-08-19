@@ -20,6 +20,11 @@ type copyTaskWatch struct {
 	transientErrs int
 }
 
+// maxUndonePickups bounds how many watched tasks are picked up from a single
+// undone-list snapshot. The watch set is already bounded by the copy
+// concurrency, so this is a safety valve against pathological task lists.
+const maxUndonePickups = 256
+
 func (watch *copyTaskWatch) closeDone() {
 	watch.closeOnce.Do(func() {
 		close(watch.done)
@@ -153,16 +158,25 @@ func (m *copyTaskMonitor) loop() {
 			return
 		}
 
-		undoneByType := m.fetchUndoneByType(active)
+		// Prefer the bulk "undone" snapshot only when it earns its cost: with a
+		// single watched task a direct per-task info call is cheaper, and even
+		// with several tasks a busy AList host can return a large unrelated
+		// list that we then filter down. fetchUndoneByType already keeps only
+		// the task IDs this job cares about.
+		var undoneByType map[taskItemType]map[string]map[string]interface{}
+		if len(active) > 1 {
+			undoneByType = m.fetchUndoneByType(active)
+		}
 		for _, watch := range active {
 			if m.jt.isBreak() {
 				m.abortWatch(watch, nil)
 				continue
 			}
-			taskInfo, ok := undoneByType[watch.copyType][watch.taskID]
-			if ok {
-				m.applyTaskInfo(watch, taskInfo)
-				continue
+			if undoneByType != nil {
+				if taskInfo, ok := undoneByType[watch.copyType][watch.taskID]; ok {
+					m.applyTaskInfo(watch, taskInfo)
+					continue
+				}
 			}
 			m.pollTaskInfo(watch)
 		}
@@ -197,26 +211,40 @@ func (m *copyTaskMonitor) waitForPollInterval() bool {
 }
 
 func (m *copyTaskMonitor) fetchUndoneByType(active []*copyTaskWatch) map[taskItemType]map[string]map[string]interface{} {
-	needed := make(map[taskItemType]struct{})
+	needed := make(map[taskItemType]map[string]struct{})
 	for _, watch := range active {
-		needed[watch.copyType] = struct{}{}
+		if needed[watch.copyType] == nil {
+			needed[watch.copyType] = make(map[string]struct{})
+		}
+		needed[watch.copyType][watch.taskID] = struct{}{}
 	}
 
 	result := make(map[taskItemType]map[string]map[string]interface{}, len(needed))
 	client := m.jt.copyMonitorClient()
 	ctx := m.jt.context()
-	for copyType := range needed {
+	for copyType, wantedIDs := range needed {
 		tasks, err := client.TaskUndoneListContext(ctx, copyType)
 		if err != nil {
 			continue
 		}
 		byID := make(map[string]map[string]interface{}, len(tasks))
+		picked := 0
 		for _, task := range tasks {
 			id := fmt.Sprintf("%v", task["id"])
 			if id == "" {
 				continue
 			}
+			// Keep only the tasks this job actually watches; everything else
+			// (other jobs, other clients, or a stale task list) is dropped so
+			// a busy AList host cannot make us buffer an unbounded list.
+			if _, wanted := wantedIDs[id]; !wanted {
+				continue
+			}
 			byID[id] = task
+			picked++
+			if picked >= maxUndonePickups {
+				break
+			}
 		}
 		result[copyType] = byID
 	}
