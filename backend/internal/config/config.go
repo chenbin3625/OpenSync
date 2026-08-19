@@ -31,6 +31,8 @@ type ServerConfig struct {
 	// header may be honored when deciding whether to mark the auth cookie
 	// Secure behind a TLS-terminating reverse proxy.
 	TrustedProxies []string
+	// AllowInternalWebhook allows webhook notifications to reach private/LAN IP addresses and HTTP URLs.
+	AllowInternalWebhook bool
 }
 
 // DBConfig holds database configuration
@@ -126,6 +128,7 @@ func GetConfig() *Config {
 		ScanConcurrency: DefaultScanConcurrency,
 		MaxRetries:      DefaultMaxRetries,
 		PasswdStr:       passwdStr,
+		AllowInternalWebhook: true,
 	}
 
 	if _, err := os.Stat("data/config.ini"); err == nil {
@@ -168,6 +171,9 @@ func GetConfig() *Config {
 			if v, ok := opensync["trusted_proxies"]; ok {
 				sCfg.TrustedProxies = parseTrustedProxies(v)
 			}
+			if v, ok := opensync["allow_internal_webhook"]; ok {
+				sCfg.AllowInternalWebhook = boolConfigValue(v, sCfg.AllowInternalWebhook)
+			}
 		}
 	} else {
 		// Read from environment variables
@@ -183,6 +189,7 @@ func GetConfig() *Config {
 		sCfg.ScanConcurrency = envIntConfigValue("OPENSYNC_SCAN_CONCURRENCY", sCfg.ScanConcurrency)
 		sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
 		sCfg.TrustedProxies = parseTrustedProxies(os.Getenv("OPENSYNC_TRUSTED_PROXIES"))
+		sCfg.AllowInternalWebhook = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_WEBHOOK", sCfg.AllowInternalWebhook)
 	}
 
 	sysConfig = &Config{
@@ -341,6 +348,22 @@ func envStringConfigValue(envName string, fallback string) string {
 	return stringConfigValue(os.Getenv(envName), fallback)
 }
 
+func envBoolConfigValue(envName string, fallback bool) bool {
+	value := os.Getenv(envName)
+	if value == "" {
+		return fallback
+	}
+	return boolConfigValue(value, fallback)
+}
+
+func boolConfigValue(value string, fallback bool) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	return value == "1" || value == "true" || value == "yes" || value == "on"
+}
+
 func writeConfigFile(sCfg ServerConfig) error {
 	if err := os.MkdirAll("data", 0755); err != nil {
 		return err
@@ -358,7 +381,8 @@ copy_concurrency=%d
 scan_concurrency=%d
 max_retries=%d
 trusted_proxies=%s
-	`,
+allow_internal_webhook=%t
+`,
 		sCfg.Bind,
 		sCfg.Port,
 		sCfg.Expires,
@@ -371,6 +395,7 @@ trusted_proxies=%s
 		sCfg.ScanConcurrency,
 		sCfg.MaxRetries,
 		strings.Join(sCfg.TrustedProxies, ","),
+		sCfg.AllowInternalWebhook,
 	)
 	tmpFile, err := os.CreateTemp("data", "config.ini.*")
 	if err != nil {

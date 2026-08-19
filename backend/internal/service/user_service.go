@@ -79,6 +79,16 @@ func AddPwdErrorForScope(scope string) {
 	enforcePwdErrorScopeLimitLocked()
 }
 
+// ClearPwdErrorForScope clears any recorded failures for a scope upon successful auth
+func ClearPwdErrorForScope(scope string) {
+	errPwdMu.Lock()
+	defer errPwdMu.Unlock()
+	scope = normalizePwdErrorScope(scope)
+	if errPwd != nil {
+		delete(errPwd, scope)
+	}
+}
+
 func prunePwdErrorsLocked(now int64) {
 	for scope, failures := range errPwd {
 		cleaned := failures[:0]
@@ -242,6 +252,7 @@ func CheckPwdScoped(userID int64, passwd string, userName string, clientScope st
 		AddPwdErrorForScope(scope)
 		panicPublic(msg.PasswdWrong)
 	}
+	ClearPwdErrorForScope(scope)
 	return user
 }
 
@@ -285,6 +296,7 @@ func ResetPasswd(userName string, recoveryKey string, passwd string) string {
 		AddPwdErrorForScope(scope)
 		panicPublic(msg.KeyWrong)
 	}
+	ClearPwdErrorForScope(scope)
 	validatePassword(passwd)
 	newRecoveryKey, newRecoveryHash := newRecoveryKeyHash()
 	hash, err := crypto.HashPassword(passwd)

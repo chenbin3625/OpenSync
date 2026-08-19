@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"opensync/internal/model"
 	"opensync/internal/msg"
 	"opensync/internal/service"
 	"strconv"
@@ -15,18 +16,18 @@ import (
 func StreamJobCurrent(c *gin.Context) {
 	idStr := c.Query("id")
 	if idStr == "" {
-		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": msg.LostPart})
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 	jobID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"code": 400, "msg": msg.LostPart})
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "streaming unsupported"})
+		c.JSON(http.StatusInternalServerError, model.Error("streaming unsupported"))
 		return
 	}
 

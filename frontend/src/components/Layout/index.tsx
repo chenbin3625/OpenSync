@@ -4,7 +4,7 @@ import {
 } from 'antd';
 import {
   BellOutlined, BulbFilled, BulbOutlined, CloudServerOutlined, HomeOutlined,
-  LogoutOutlined, SettingOutlined,
+  LogoutOutlined, SettingOutlined, UserOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../../stores/useStore';
@@ -23,7 +23,7 @@ const menuItems = [
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { theme: themeMode, setTheme, setUserInfo } = useStore();
+  const { theme: themeMode, setTheme, setUserInfo, userInfo } = useStore();
   const selectedKey = '/' + location.pathname.split('/')[1];
 
   const handleMenuClick = (e: { key: string }) => {
@@ -67,7 +67,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           items={menuItems}
           onClick={handleMenuClick}
         />
-        <Space className="app-actions">
+        <Space className="app-actions" size={8}>
+          {userInfo?.userName && (
+            <span className="app-user-badge">
+              <UserOutlined />
+              <span>{userInfo.userName}</span>
+            </span>
+          )}
           <Button
             type="text"
             icon={themeMode === 'dark' ? <BulbFilled /> : <BulbOutlined />}

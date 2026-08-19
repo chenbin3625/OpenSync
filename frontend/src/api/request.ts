@@ -35,7 +35,7 @@ const serializeParams = (params: Record<string, unknown>) => {
 const isApiEnvelope = (data: unknown): data is ApiEnvelope => {
   if (!data || typeof data !== 'object') return false;
   const envelope = data as Partial<ApiEnvelope>;
-  return typeof envelope.code === 'number' && typeof envelope.msg === 'string' && 'data' in envelope;
+  return typeof envelope.code === 'number' && typeof envelope.msg === 'string';
 };
 
 const redirectToLogin = () => {

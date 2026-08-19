@@ -18,8 +18,11 @@ body,
 
 body {
   color: var(--ant-color-text);
-  font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "Avenir Next", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   background: var(--ant-color-bg-layout);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -50,7 +53,9 @@ select {
   padding: 0 20px;
   border-bottom: 1px solid var(--ant-color-border-secondary);
   background: var(--ant-color-bg-container);
-  box-shadow: 0 1px 0 var(--ant-color-border-secondary);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ant-color-text) 3%, transparent);
   line-height: normal;
 }
 
@@ -61,10 +66,11 @@ select {
   flex: 0 0 auto;
   align-items: center;
   gap: 9px;
-  padding-inline: 4px 10px;
+  padding-inline: 6px 12px;
   border-radius: 6px;
   cursor: pointer;
   outline: none;
+  transition: all 0.2s ease;
 }
 
 .app-brand:hover,
@@ -76,12 +82,18 @@ select {
 .app-brand .ant-typography {
   color: inherit;
   white-space: nowrap;
+  letter-spacing: 0.2px;
 }
 
 .app-logo-mark {
   width: 28px;
   height: 28px;
   flex: 0 0 auto;
+  transition: transform 0.2s ease;
+}
+
+.app-brand:hover .app-logo-mark {
+  transform: rotate(15deg) scale(1.05);
 }
 
 .app-top-nav.ant-menu-horizontal {
@@ -97,8 +109,9 @@ select {
 .app-top-nav .ant-menu-submenu {
   display: inline-flex;
   align-items: center;
-  margin-inline: 1px;
+  margin-inline: 2px;
   font-weight: 600;
+  transition: all 0.2s ease;
 }
 
 .app-actions {
@@ -112,12 +125,25 @@ select {
   min-width: 34px;
   place-items: center;
   padding-inline: 0;
+  transition: all 0.2s ease;
 }
 
 .app-actions .ant-btn:last-child {
   display: inline-flex;
   width: auto;
   padding-inline: 10px;
+}
+
+.app-user-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--ant-color-border-secondary);
+  border-radius: 20px;
+  background: var(--ant-color-fill-quaternary);
+  font-size: 13px;
+  color: var(--ant-color-text-secondary);
 }
 
 .app-content {
@@ -137,6 +163,7 @@ select {
 .page-card {
   overflow: hidden;
   background: var(--ant-color-bg-container);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--ant-color-text) 4%, transparent);
 }
 
 .page-card > .ant-card-body {
@@ -214,7 +241,8 @@ select {
 
 .ops-resource-card {
   height: 100%;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  border-radius: 8px;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .ops-resource-grid > .ops-resource-card:only-child {
@@ -224,7 +252,8 @@ select {
 
 .ops-resource-card.ant-card-hoverable:hover {
   border-color: var(--ant-color-primary-border);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--ant-color-text) 8%, transparent);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--ant-color-text) 8%, transparent);
+  transform: translateY(-2px);
 }
 
 .ops-resource-card .ant-card-body {
@@ -233,6 +262,7 @@ select {
 
 .ops-resource-card .ant-card-actions {
   border-top-color: var(--ant-color-border-secondary);
+  background: color-mix(in srgb, var(--ant-color-bg-container) 95%, var(--ant-color-fill-quaternary));
 }
 
 .ops-resource-card-header {
@@ -257,15 +287,20 @@ select {
 
 .ops-resource-icon {
   display: grid;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid var(--ant-color-primary-border);
   border-radius: 8px;
   color: var(--ant-color-primary);
   background: var(--ant-color-primary-bg);
-  font-size: 17px;
+  font-size: 18px;
+  transition: transform 0.2s ease;
+}
+
+.ops-resource-card:hover .ops-resource-icon {
+  transform: scale(1.08);
 }
 
 .ops-resource-name,
@@ -279,6 +314,7 @@ select {
 .ops-resource-name {
   color: var(--ant-color-text);
   font-size: 16px;
+  font-weight: 600;
   line-height: 22px;
 }
 
@@ -295,13 +331,14 @@ select {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border: 1px dashed var(--ant-color-border);
-  border-radius: 8px;
+  border: 1.5px dashed var(--ant-color-border);
+  border-radius: 10px;
   background: var(--ant-color-bg-container);
+  padding: 32px 16px;
 }
 
 .ops-empty-action {
-  margin-top: 14px;
+  margin-top: 16px;
   text-align: center;
 }
 

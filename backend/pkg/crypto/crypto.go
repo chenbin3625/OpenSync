@@ -60,7 +60,7 @@ func IsModernPasswordHash(storedHash string) bool {
 // ReadOrSetFile reads file content, creates with default if not exists
 func ReadOrSetFile(fileName string, defaultVal string, force bool) string {
 	if !force {
-		if data, err := os.ReadFile(fileName); err == nil {
+		if data, err := os.ReadFile(fileName); err == nil && len(strings.TrimSpace(string(data))) > 0 {
 			_ = os.Chmod(fileName, 0600)
 			return string(data)
 		}

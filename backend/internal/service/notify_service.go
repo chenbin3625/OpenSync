@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"opensync/internal/config"
 	"opensync/internal/mapper"
 	"opensync/internal/model"
 	"opensync/internal/msg"
@@ -56,6 +57,9 @@ func ssrfSafeDialContext(dialer *net.Dialer) func(ctx context.Context, network, 
 }
 
 func isBlockedNotifyIP(ip net.IP) bool {
+	if config.GetConfig().Server.AllowInternalWebhook {
+		return ip.IsUnspecified()
+	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
 }
@@ -225,7 +229,7 @@ func resolveNotifyParams(notify map[string]interface{}) (map[string]interface{},
 func validateNotifyParams(method int, params map[string]interface{}) error {
 	switch method {
 	case 0:
-		if err := validateNotifyHTTPSURL(paramString(params, "url", "webhook")); err != nil {
+		if err := validateNotifyWebhookURL(paramString(params, "url", "webhook")); err != nil {
 			return err
 		}
 		return validateWebhookMethod(paramString(params, "method", "httpMethod"))
@@ -258,6 +262,24 @@ func validateWebhookMethod(method string) error {
 	default:
 		return errors.New(msg.NotifyParamInvalid)
 	}
+}
+
+func validateNotifyWebhookURL(rawURL string) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return errors.New(msg.NotifyURLInvalid)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if config.GetConfig().Server.AllowInternalWebhook {
+		if scheme == "http" || scheme == "https" {
+			return nil
+		}
+		return errors.New(msg.NotifyURLInvalid)
+	}
+	if scheme != "https" {
+		return errors.New(msg.NotifyURLInvalid)
+	}
+	return nil
 }
 
 func validateNotifyHTTPSURL(rawURL string) error {

@@ -4,26 +4,29 @@
   place-items: center;
   padding: 32px 18px;
   background: var(--ant-color-bg-layout);
+  background-image: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--ant-color-primary) 8%, transparent) 0%, transparent 65%);
+  position: relative;
 }
 
 .login-card {
-  width: min(400px, 100%);
+  width: min(410px, 100%);
   overflow: hidden;
   border: 1px solid var(--ant-color-border-secondary);
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--ant-color-bg-container);
-  box-shadow: 0 18px 48px color-mix(in srgb, var(--ant-color-text) 9%, transparent);
+  box-shadow: 0 20px 48px color-mix(in srgb, var(--ant-color-text) 8%, transparent);
+  transition: box-shadow 0.3s ease;
 }
 
 .login-card::before {
   content: '';
   display: block;
-  height: 3px;
-  background: var(--ant-color-primary);
+  height: 4px;
+  background: linear-gradient(90deg, var(--ant-color-primary), var(--ant-color-primary-hover));
 }
 
 .login-card .ant-card-body {
-  padding: 30px 34px 24px;
+  padding: 32px 36px 26px;
 }
 
 .login-brand {
@@ -37,9 +40,10 @@
 
 .login-logo {
   display: block;
-  width: 54px;
-  height: 54px;
+  width: 56px;
+  height: 56px;
   margin: 0 auto 12px;
+  filter: drop-shadow(0 4px 8px color-mix(in srgb, var(--ant-color-primary) 25%, transparent));
 }
 
 .login-card .ant-form-item:last-child {
