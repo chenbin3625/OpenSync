@@ -33,6 +33,10 @@ type ServerConfig struct {
 	TrustedProxies []string
 	// AllowInternalWebhook allows webhook notifications to reach private/LAN IP addresses and HTTP URLs.
 	AllowInternalWebhook bool
+	// AllowInternalAlist allows connecting to AList instances on private/LAN
+	// IP addresses (the default deployment is AList on the same LAN/NAS).
+	// Set to false to also reject loopback/private/link-local targets.
+	AllowInternalAlist bool
 }
 
 // DBConfig holds database configuration
@@ -116,19 +120,20 @@ func GetConfig() *Config {
 	dbname := "data/openSync.db"
 
 	sCfg := ServerConfig{
-		Bind:            defaultBind,
-		Port:            defaultPort,
-		Expires:         defaultExpires,
-		LogLevel:        defaultLogLevel,
-		ConsoleLevel:    defaultConsoleLevel,
-		LogSave:         defaultLogSave,
-		TaskSave:        defaultTaskSave,
-		Timeout:         defaultTaskTimeout,
-		CopyConcurrency: DefaultCopyConcurrency,
-		ScanConcurrency: DefaultScanConcurrency,
-		MaxRetries:      DefaultMaxRetries,
-		PasswdStr:       passwdStr,
+		Bind:                 defaultBind,
+		Port:                 defaultPort,
+		Expires:              defaultExpires,
+		LogLevel:             defaultLogLevel,
+		ConsoleLevel:         defaultConsoleLevel,
+		LogSave:              defaultLogSave,
+		TaskSave:             defaultTaskSave,
+		Timeout:              defaultTaskTimeout,
+		CopyConcurrency:      DefaultCopyConcurrency,
+		ScanConcurrency:      DefaultScanConcurrency,
+		MaxRetries:           DefaultMaxRetries,
+		PasswdStr:            passwdStr,
 		AllowInternalWebhook: true,
+		AllowInternalAlist:   true,
 	}
 
 	if _, err := os.Stat("data/config.ini"); err == nil {
@@ -174,6 +179,9 @@ func GetConfig() *Config {
 			if v, ok := opensync["allow_internal_webhook"]; ok {
 				sCfg.AllowInternalWebhook = boolConfigValue(v, sCfg.AllowInternalWebhook)
 			}
+			if v, ok := opensync["allow_internal_alist"]; ok {
+				sCfg.AllowInternalAlist = boolConfigValue(v, sCfg.AllowInternalAlist)
+			}
 		}
 	} else {
 		// Read from environment variables
@@ -190,6 +198,7 @@ func GetConfig() *Config {
 		sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
 		sCfg.TrustedProxies = parseTrustedProxies(os.Getenv("OPENSYNC_TRUSTED_PROXIES"))
 		sCfg.AllowInternalWebhook = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_WEBHOOK", sCfg.AllowInternalWebhook)
+		sCfg.AllowInternalAlist = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_ALIST", sCfg.AllowInternalAlist)
 	}
 
 	sysConfig = &Config{
@@ -382,6 +391,7 @@ scan_concurrency=%d
 max_retries=%d
 trusted_proxies=%s
 allow_internal_webhook=%t
+allow_internal_alist=%t
 `,
 		sCfg.Bind,
 		sCfg.Port,
@@ -396,6 +406,7 @@ allow_internal_webhook=%t
 		sCfg.MaxRetries,
 		strings.Join(sCfg.TrustedProxies, ","),
 		sCfg.AllowInternalWebhook,
+		sCfg.AllowInternalAlist,
 	)
 	tmpFile, err := os.CreateTemp("data", "config.ini.*")
 	if err != nil {

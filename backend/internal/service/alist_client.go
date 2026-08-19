@@ -7,17 +7,38 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"opensync/internal/config"
 	"opensync/internal/msg"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const maxResponseBytes = 10 << 20 // 10MB
-const maxAlistWaitBuckets = 1024
-const alistValidationTimeout = 30 * time.Second
+const (
+	// defaultMaxListResponseBytes is the cap for a single AList list/API
+	// response. Overridden by OPENSYNC_MAX_LIST_BYTES (must be >= 1MB).
+	defaultMaxListResponseBytes = 32 << 20 // 32MB
+	maxAlistWaitBuckets         = 1024
+	alistValidationTimeout      = 30 * time.Second
+)
+
+// maxResponseBytes is the current response-size cap. Kept as a mutable package
+// variable so tests can lower it; production uses loadMaxListResponseBytes().
+var maxResponseBytes = loadMaxListResponseBytes()
+
+func loadMaxListResponseBytes() int64 {
+	if raw := strings.TrimSpace(os.Getenv("OPENSYNC_MAX_LIST_BYTES")); raw != "" {
+		if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n >= (1<<20) {
+			return n
+		}
+	}
+	return defaultMaxListResponseBytes
+}
 
 // AlistClient represents an AList HTTP client
 type AlistClient struct {
@@ -44,18 +65,29 @@ func NewAlistClient(alistURL string, token string, alistID int64) (*AlistClient,
 
 // NewAlistClientContext creates a new AList client and validates it with ctx.
 func NewAlistClientContext(ctx context.Context, alistURL string, token string, alistID int64) (*AlistClient, error) {
+	transport := &http.Transport{
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		MaxConnsPerHost:       32,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
+	if !config.GetConfig().Server.AllowInternalAlist {
+		// Mirror notify's SSRF protection for AList connections. Enabled by
+		// default is NOT harmful here (internal AList is the normal deployment);
+		// operators who run OpenSync on the public internet can turn it on.
+		transport.DialContext = ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second}, func() bool {
+			return config.GetConfig().Server.AllowInternalAlist
+		})
+	}
 	c := &AlistClient{
 		URL:     strings.TrimRight(alistURL, "/"),
 		Token:   token,
 		AlistID: alistID,
 		waits:   make(map[string]time.Time),
 		client: &http.Client{
-			Timeout: 300 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 20,
-				IdleConnTimeout:     90 * time.Second,
-			},
+			Timeout:   300 * time.Second,
+			Transport: transport,
 		},
 	}
 	if err := c.getUserContext(ctx); err != nil {

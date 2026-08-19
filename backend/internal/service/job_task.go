@@ -8,6 +8,7 @@ import (
 	"opensync/internal/config"
 	"opensync/pkg/util"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,17 +46,17 @@ type JobTask struct {
 	CurrentTasks map[int][]map[string]interface{}
 	CurrentMu    sync.RWMutex
 
-	RetrySourceTaskID int64
-	RetryStatuses     []taskStatus
-	FatalMu           sync.Mutex
-	FatalErr          *string
-	PersistMu         sync.Mutex
-	PersistErr        error
-	persistBufMu      sync.Mutex
-	persistBuffer     []JobTaskItem
-	persistFlushMu    sync.Mutex
-	persistFlushScheduled bool
-	copyMonitor       *copyTaskMonitor
+	RetrySourceTaskID         int64
+	RetryStatuses             []taskStatus
+	FatalMu                   sync.Mutex
+	FatalErr                  *string
+	PersistMu                 sync.Mutex
+	PersistErr                error
+	persistBufMu              sync.Mutex
+	persistBuffer             []JobTaskItem
+	persistFlushMu            sync.Mutex
+	persistFlushScheduled     bool
+	copyMonitor               *copyTaskMonitor
 	copyMonitorClientOverride copyItemClient
 }
 
@@ -122,7 +123,12 @@ func (jt *JobTask) handleWorkerPanic(name string, recovered interface{}) {
 }
 
 func workerPanicMessage(name string, recovered interface{}) string {
-	return fmt.Sprintf("%s worker panic: %v", name, recovered)
+	const maxStackCapture = 4096
+	stack := debug.Stack()
+	if len(stack) > maxStackCapture {
+		stack = stack[:maxStackCapture]
+	}
+	return fmt.Sprintf("%s worker panic: %v\n%s", name, recovered, stack)
 }
 
 func (jt *JobTask) recoverWorkerPanic(name string, errTarget *error) {

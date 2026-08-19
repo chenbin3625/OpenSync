@@ -31,14 +31,18 @@ var notifyHTTPClient = &http.Client{
 		IdleConnTimeout:     90 * time.Second,
 		// DialContext intercepts the resolved address to block SSRF attempts
 		// (private/loopback/link-local targets) before any connection is made.
-		DialContext: ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second}),
+		DialContext: ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second}, func() bool {
+			return config.GetConfig().Server.AllowInternalWebhook
+		}),
 	},
 }
 
 // ssrfSafeDialContext wraps a dialer so that connections to non-routable or
 // internal IP ranges are rejected. The control runs after DNS resolution with
 // the resolved IP, which avoids TOCTOU gaps between resolving and dialing.
-func ssrfSafeDialContext(dialer *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+// allowInternal is resolved lazily per dial so the config is only read when a
+// connection is actually made (no package-init side effects).
+func ssrfSafeDialContext(dialer *net.Dialer, allowInternal func() bool) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	dialer.Control = func(network, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
 		if err != nil {
@@ -48,7 +52,7 @@ func ssrfSafeDialContext(dialer *net.Dialer) func(ctx context.Context, network, 
 		if ip == nil {
 			return fmt.Errorf("invalid notify target address: %s", address)
 		}
-		if isBlockedNotifyIP(ip) {
+		if isBlockedIP(ip, allowInternal()) {
 			return fmt.Errorf("notify target %s is not allowed", ip)
 		}
 		return nil
@@ -56,8 +60,8 @@ func ssrfSafeDialContext(dialer *net.Dialer) func(ctx context.Context, network, 
 	return dialer.DialContext
 }
 
-func isBlockedNotifyIP(ip net.IP) bool {
-	if config.GetConfig().Server.AllowInternalWebhook {
+func isBlockedIP(ip net.IP, allowInternal bool) bool {
+	if allowInternal {
 		return ip.IsUnspecified()
 	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # Stage 1: Build frontend
-FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
@@ -56,5 +56,10 @@ ENV OPENSYNC_PORT=8023
 ENV GIN_MODE=release
 EXPOSE 8023
 VOLUME ["/app/data"]
+# The healthcheck runs `./opensync healthcheck`, which performs a lightweight
+# HTTP GET against its own port without touching the data volume, so it works
+# as an unprivileged user too.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["./opensync", "healthcheck"]
 ENTRYPOINT ["./docker-entrypoint"]
 CMD ["./opensync"]

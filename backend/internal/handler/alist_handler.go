@@ -2,8 +2,8 @@ package handler
 
 import (
 	"net/http"
-	"opensync/internal/msg"
 	"opensync/internal/model"
+	"opensync/internal/msg"
 	"opensync/internal/service"
 	"strconv"
 

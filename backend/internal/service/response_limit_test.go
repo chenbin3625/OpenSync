@@ -9,8 +9,14 @@ import (
 )
 
 func TestAlistClientRejectsOversizedResponse(t *testing.T) {
+	// Lower the cap for the test so the oversized body stays small and fast;
+	// maxResponseBytes is a package var whose default comes from the env/32MB.
+	originalMax := maxResponseBytes
+	maxResponseBytes = int64(1 << 20)
+	defer func() { maxResponseBytes = originalMax }()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(strings.Repeat("x", maxResponseBytes+1)))
+		_, _ = w.Write([]byte(strings.Repeat("x", int(maxResponseBytes)+1)))
 	}))
 	defer server.Close()
 

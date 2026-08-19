@@ -1,4 +1,4 @@
-import { useCallback, useState, type Key, type RefObject } from 'react';
+import { useCallback, useRef, useState, type Key, type RefObject } from 'react';
 import type { PathItem, TreeNode } from '../../types';
 import { alistGetPath } from '../../api/alist';
 import { buildPathTreeData, mergeTreeData, parseJobPathList } from './homeUtils';
@@ -37,12 +37,30 @@ async function fetchDirChildren(alistId: number, parentPath: string): Promise<Tr
 
 export function usePathTree(alistId: number | undefined, treeLoadRequestRef: RefObject<number>) {
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
-  const [loadedKeys, setLoadedKeys] = useState<Key[]>([]);
+  const [loadedKeysState, setLoadedKeysState] = useState<Key[]>([]);
+  // Mirrored in a ref so onLoadData can check "already loaded" without
+  // re-creating its identity on every expansion (which churns TreeSelect's
+  // loadData prop and can trigger redundant loads).
+  const loadedKeysRef = useRef<Set<Key>>(new Set());
+  const loadingKeysRef = useRef<Set<Key>>(new Set());
+
+  const setLoadedKeys = useCallback((keys: Key[] | ((prev: Key[]) => Key[])) => {
+    if (typeof keys === 'function') {
+      setLoadedKeysState((prev) => {
+        const next = keys(prev);
+        loadedKeysRef.current = new Set(next);
+        return next;
+      });
+      return;
+    }
+    loadedKeysRef.current = new Set(keys);
+    setLoadedKeysState(keys);
+  }, []);
 
   const initializeTree = useCallback((paths: unknown) => {
     setLoadedKeys([]);
     return buildPathTreeData(parseJobPathList(paths));
-  }, []);
+  }, [setLoadedKeys]);
 
   const loadRoot = useCallback(async (paths: unknown) => {
     const pathTree = initializeTree(paths);
@@ -58,23 +76,30 @@ export function usePathTree(alistId: number | undefined, treeLoadRequestRef: Ref
   }, [alistId, initializeTree, treeLoadRequestRef]);
 
   const onLoadData = useCallback(async (node: TreeNode) => {
-    if (!alistId || loadedKeys.includes(node.value)) return;
-    const requestID = treeLoadRequestRef.current;
-    const children = await fetchDirChildren(alistId, node.value);
-    if (requestID !== treeLoadRequestRef.current) return;
-    setTreeData((prev) => updateTreeChildren(prev, node.value, children));
-    setLoadedKeys((prev) => [...prev, node.value]);
-  }, [alistId, loadedKeys, treeLoadRequestRef]);
+    if (!alistId || loadedKeysRef.current.has(node.value)) return;
+    if (loadingKeysRef.current.has(node.value)) return;
+    loadingKeysRef.current.add(node.value);
+    try {
+      const requestID = treeLoadRequestRef.current;
+      const children = await fetchDirChildren(alistId, node.value);
+      if (requestID !== treeLoadRequestRef.current) return;
+      setLoadedKeysState((prev) => [...prev, node.value]);
+      loadedKeysRef.current.add(node.value);
+      setTreeData((prev) => updateTreeChildren(prev, node.value, children));
+    } finally {
+      loadingKeysRef.current.delete(node.value);
+    }
+  }, [alistId, treeLoadRequestRef]);
 
   const clearTree = useCallback(() => {
     setTreeData([]);
     setLoadedKeys([]);
-  }, []);
+  }, [setLoadedKeys]);
 
   return {
     treeData,
     setTreeData,
-    loadedKeys,
+    loadedKeys: loadedKeysState,
     setLoadedKeys,
     initializeTree,
     loadRoot,
