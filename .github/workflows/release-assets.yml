@@ -6,76 +6,24 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: GitHub release tag to upload assets to
-        required: true
-        default: v1.10.7
-      ref:
-        description: Git ref to build
-        required: true
-        default: v1.10.7
+        description: "Release tag (e.g. v1.10.7, optional)"
+        required: false
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build ${{ matrix.id }}
+  build-and-release:
+    name: Build & Package All Targets
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: linux-amd64
-            goos: linux
-            goarch: amd64
-            goarm: ""
-            archive: tar.gz
-            binary: opensync
-          - id: linux-arm64
-            goos: linux
-            goarch: arm64
-            goarm: ""
-            archive: tar.gz
-            binary: opensync
-          - id: linux-armv7
-            goos: linux
-            goarch: arm
-            goarm: "7"
-            archive: tar.gz
-            binary: opensync
-          - id: darwin-amd64
-            goos: darwin
-            goarch: amd64
-            goarm: ""
-            archive: tar.gz
-            binary: opensync
-          - id: darwin-arm64
-            goos: darwin
-            goarch: arm64
-            goarm: ""
-            archive: tar.gz
-            binary: opensync
-          - id: windows-amd64
-            goos: windows
-            goarch: amd64
-            goarm: ""
-            archive: zip
-            binary: opensync.exe
-          - id: windows-arm64
-            goos: windows
-            goarch: arm64
-            goarm: ""
-            archive: zip
-            binary: opensync.exe
-
     env:
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag || github.ref_name }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -84,61 +32,64 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
-
       - name: Build frontend
         working-directory: frontend
         run: |
           npm ci
           npm run build
 
-      - name: Build and package cross-compiled binary
-        id: package
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Cross-compile and package all targets
         shell: bash
         run: |
           set -euo pipefail
 
           version="${RELEASE_TAG#v}"
-          package_name="opensync_${version}_${{ matrix.id }}"
-          package_dir="dist/$package_name"
-          binary="${{ matrix.binary }}"
+          mkdir -p dist
 
-          mkdir -p "$package_dir"
+          # Format: "OS/ARCH/ARM/FORMAT/BINARY_NAME"
+          targets=(
+            "linux/amd64//tar.gz/opensync"
+            "linux/arm64//tar.gz/opensync"
+            "linux/arm/7/tar.gz/opensync"
+            "darwin/amd64//tar.gz/opensync"
+            "darwin/arm64//tar.gz/opensync"
+            "windows/amd64//zip/opensync.exe"
+            "windows/arm64//zip/opensync.exe"
+          )
 
-          if [ -n "${{ matrix.goarm }}" ]; then
-            export GOARM="${{ matrix.goarm }}"
-          fi
+          for target in "${targets[@]}"; do
+            IFS='/' read -r os arch arm format bin_name <<< "$target"
+            platform_id="${os}-${arch}${arm:+v$arm}"
+            pkg_name="opensync_${version}_${platform_id}"
+            pkg_dir="dist/${pkg_name}"
 
-          CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" \
-            go -C backend build -trimpath -ldflags="-s -w" -o "../$package_dir/$binary" ./cmd/server
+            echo "==> Building ${pkg_name}..."
+            mkdir -p "$pkg_dir"
 
-          cp README.md "$package_dir/README.md"
+            GOOS="$os" GOARCH="$arch" GOARM="$arm" CGO_ENABLED=0 \
+              go -C backend build -trimpath -ldflags="-s -w" -o "../${pkg_dir}/${bin_name}" ./cmd/server
 
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            archive="dist/$package_name.zip"
-            (cd dist && zip -r "$package_name.zip" "$package_name")
-          else
-            archive="dist/$package_name.tar.gz"
-            tar -C dist -czf "$archive" "$package_name"
-          fi
+            cp README.md "${pkg_dir}/README.md"
 
-          checksum="$archive.sha256"
-          (cd dist && shasum -a 256 "$(basename "$archive")" > "$(basename "$checksum")")
+            if [ "$format" = "zip" ]; then
+              (cd dist && zip -rq "${pkg_name}.zip" "${pkg_name}")
+              archive="dist/${pkg_name}.zip"
+            else
+              tar -C dist -czf "dist/${pkg_name}.tar.gz" "${pkg_name}"
+              archive="dist/${pkg_name}.tar.gz"
+            fi
 
-          {
-            echo "asset=$archive"
-            echo "checksum=$checksum"
-          } >> "$GITHUB_OUTPUT"
+            (cd dist && shasum -a 256 "$(basename "$archive")" > "$(basename "$archive").sha256")
+          done
 
       - name: Upload assets to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$RELEASE_TAG" \
-            "${{ steps.package.outputs.asset }}" \
-            "${{ steps.package.outputs.checksum }}" \
-            --clobber
+          gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber
