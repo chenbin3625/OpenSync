@@ -1,0 +1,45 @@
+name: Docker Hub Delete Tags
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Comma-separated tags to delete"
+        required: true
+        default: "1.10.9,1.10.10"
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete Docker Hub tags
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCKERHUB_USERNAME}" ] || [ -z "${DOCKERHUB_TOKEN}" ]; then
+            echo "::error::Missing Docker Hub secrets"
+            exit 1
+          fi
+          TOKEN=$(curl -fsS -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
+            https://hub.docker.com/v2/users/login/ | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+          IFS=',' read -r -a TAG_ARR <<< "$TAGS"
+          for tag in "${TAG_ARR[@]}"; do
+            tag=$(echo "$tag" | xargs)
+            [ -z "$tag" ] && continue
+            code=$(curl -sS -o /tmp/dh-del.txt -w '%{http_code}' -X DELETE \
+              -H "Authorization: JWT ${TOKEN}" \
+              "https://hub.docker.com/v2/repositories/chenbin3625/opensync/tags/${tag}/")
+            echo "delete ${tag}: HTTP ${code}"
+            cat /tmp/dh-del.txt || true
+            echo
+            if [ "$code" != "204" ] && [ "$code" != "200" ] && [ "$code" != "404" ]; then
+              exit 1
+            fi
+          done
