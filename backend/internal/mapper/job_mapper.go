@@ -7,6 +7,7 @@ import (
 	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -407,48 +408,7 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 	}
 
 	baseSQL := fmt.Sprintf("SELECT %s FROM job_task_item %s ORDER BY createTime DESC", jobTaskItemListColumns, where)
-
-	// Manual pagination
-	ps, pn, paginated, err := parsePageParams(params)
-	if err != nil {
-		return nil, err
-	}
-	if !paginated {
-		dataList, err := FetchAllToTable(withDefaultLimit(baseSQL), args...)
-		if err != nil {
-			return nil, err
-		}
-		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM job_task_item %s", where)
-		count, err := FetchFirstVal(countQuery, args...)
-		if err != nil {
-			return nil, err
-		}
-		total := util.ToInt64(count)
-		result := map[string]interface{}{"dataList": dataList, "count": total}
-		if total > int64(len(dataList)) {
-			result["truncated"] = true
-		}
-		return result, nil
-	}
-
-	offset, err := pageOffset(ps, pn)
-	if err != nil {
-		return nil, err
-	}
-
-	dataQuery := baseSQL + fmt.Sprintf(" LIMIT %d OFFSET %d", ps, offset)
-	dataList, err := FetchAllToTable(dataQuery, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM job_task_item %s", where)
-	count, err := FetchFirstVal(countQuery, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{"dataList": dataList, "count": util.ToInt64(count)}, nil
+	return FetchAllToPage(baseSQL, params, args...)
 }
 
 // CountJobTaskItemsByStatuses counts task items matching any of the given statuses.
@@ -484,13 +444,12 @@ func ForEachJobTaskItemsByStatuses(taskID int64, statuses []int, batchSize int, 
 			 WHERE taskId=? AND status IN (%s)
 			   AND (createTime > ? OR (createTime = ? AND id > ?))
 			 ORDER BY createTime ASC, id ASC
-			 LIMIT %d`,
+			 LIMIT ?`,
 			jobTaskItemRuntimeColumns,
 			clause,
-			batchSize,
 		)
 		args := append([]interface{}{taskID}, statusArgs...)
-		args = append(args, lastCreateTime, lastCreateTime, lastID)
+		args = append(args, lastCreateTime, lastCreateTime, lastID, batchSize)
 		items, err := FetchAllToTable(query, args...)
 		if err != nil {
 			return err
@@ -621,9 +580,26 @@ func taskItemKeywordFilter(keyword string) (string, []interface{}) {
 }
 
 func taskItemFTSAvailable() bool {
+	handle := GetDB()
+	ftsAvailability.mu.Lock()
+	defer ftsAvailability.mu.Unlock()
+	if ftsAvailability.known && ftsAvailability.db == handle {
+		return ftsAvailability.ok
+	}
 	var name string
-	err := GetDB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='job_task_item_fts'").Scan(&name)
-	return err == nil && name == "job_task_item_fts"
+	err := handle.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='job_task_item_fts'").Scan(&name)
+	ok := err == nil && name == "job_task_item_fts"
+	ftsAvailability.db = handle
+	ftsAvailability.known = true
+	ftsAvailability.ok = ok
+	return ok
+}
+
+var ftsAvailability struct {
+	mu    sync.Mutex
+	db    *sql.DB
+	known bool
+	ok    bool
 }
 
 func fts5Phrase(s string) string {

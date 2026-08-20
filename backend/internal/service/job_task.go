@@ -47,6 +47,7 @@ type JobTask struct {
 
 	CurrentTasks map[int][]map[string]interface{}
 	CurrentMu    sync.RWMutex
+	lastMeter    transferMeter
 
 	RetrySourceTaskID         int64
 	RetryStatuses             []taskStatus

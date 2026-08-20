@@ -244,35 +244,72 @@ func (jt *JobTask) queueCopyFile(srcPath, dstPath, fileName string, fileSize int
 }
 
 func (jt *JobTask) delFile(path, fileName string, size interface{}) taskStatus {
-	if jt.isBreak() {
+	statuses := jt.delFiles(path, []string{fileName}, []interface{}{size})
+	if len(statuses) == 0 {
 		return taskStatusStopped
 	}
-	isPath := strings.HasSuffix(fileName, "/")
-	status := taskStatusSuccess
-	var errMsg *string
-	createTime := time.Now().Unix()
-
-	name := fileName
-	if isPath {
-		name = fileName[:len(fileName)-1]
-	}
-	scanIntervalT := util.ToInt(jt.Job["scanIntervalT"])
-	err := jt.AlistClient.DeleteFileContext(jt.context(), path, []string{name}, scanIntervalT)
-	if err != nil {
-		status = taskStatusFailed
-		e := err.Error()
-		errMsg = &e
-	}
-
-	var delSize interface{}
-	if !isPath {
-		delSize = size
-	}
-	jt.DelHook(path, fileName, delSize, status, errMsg, boolToTaskItemObject(isPath), createTime)
-	return status
+	return statuses[0]
 }
 
-func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, rootPath string, isSrc bool) (map[string]interface{}, error) {
+func (jt *JobTask) delFiles(path string, fileNames []string, sizes []interface{}) []taskStatus {
+	statuses := make([]taskStatus, len(fileNames))
+	if len(fileNames) == 0 {
+		return statuses
+	}
+	if jt.isBreak() {
+		for i := range statuses {
+			statuses[i] = taskStatusStopped
+		}
+		return statuses
+	}
+
+	apiNames := make([]string, len(fileNames))
+	isPath := make([]bool, len(fileNames))
+	for i, fileName := range fileNames {
+		dir := strings.HasSuffix(fileName, "/")
+		isPath[i] = dir
+		if dir {
+			apiNames[i] = fileName[:len(fileName)-1]
+		} else {
+			apiNames[i] = fileName
+		}
+	}
+
+	scanIntervalT := util.ToInt(jt.Job["scanIntervalT"])
+	err := jt.AlistClient.DeleteFileContext(jt.context(), path, apiNames, scanIntervalT)
+	if err != nil && len(fileNames) > 1 {
+		// AList rejected the batch; fall back to per-file deletes so a single
+		// bad name does not skip the rest of a mirror pass.
+		for i, fileName := range fileNames {
+			var size interface{}
+			if i < len(sizes) {
+				size = sizes[i]
+			}
+			statuses[i] = jt.delFile(path, fileName, size)
+		}
+		return statuses
+	}
+
+	createTime := time.Now().Unix()
+	for i, fileName := range fileNames {
+		status := taskStatusSuccess
+		var errMsg *string
+		if err != nil {
+			status = taskStatusFailed
+			e := err.Error()
+			errMsg = &e
+		}
+		var delSize interface{}
+		if !isPath[i] && i < len(sizes) {
+			delSize = sizes[i]
+		}
+		jt.DelHook(path, fileName, delSize, status, errMsg, boolToTaskItemObject(isPath[i]), createTime)
+		statuses[i] = status
+	}
+	return statuses
+}
+
+func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, rootPath string, isSrc bool) (FileListResult, error) {
 	var useCache int
 	if isSrc && !firstDst {
 		useCache = 1
@@ -296,7 +333,7 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 	}
 	defer jt.releaseScanSlot()
 
-	var result map[string]interface{}
+	var result FileListResult
 	var err error
 	for attempt := 0; attempt <= maxScanListRetries; attempt++ {
 		result, err = jt.AlistClient.FileListApiContext(jt.context(), path, useCache, scanInterval)
@@ -325,7 +362,7 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 
 	// Apply exclude rules
 	if spec != nil && len(result) > 0 {
-		filtered := make(map[string]interface{})
+		filtered := make(FileListResult, len(result))
 		for key, val := range result {
 			checkPath := excludeMatchPath(rootPath, path, key)
 			if !spec.MatchesPath(checkPath) {
@@ -369,8 +406,8 @@ func pathIfTrue(cond bool, path string) string {
 	return ""
 }
 
-func (jt *JobTask) listSrcAndDst(srcPath, dstPath string, spec *ignore.GitIgnore, srcRootPath, dstRootPath string, firstDst bool) (map[string]interface{}, map[string]interface{}, error) {
-	var srcFiles, dstFiles map[string]interface{}
+func (jt *JobTask) listSrcAndDst(srcPath, dstPath string, spec *ignore.GitIgnore, srcRootPath, dstRootPath string, firstDst bool) (FileListResult, FileListResult, error) {
+	var srcFiles, dstFiles FileListResult
 	var srcErr, dstErr error
 
 	var wg sync.WaitGroup
@@ -394,10 +431,10 @@ func (jt *JobTask) listSrcAndDst(srcPath, dstPath string, spec *ignore.GitIgnore
 		return nil, nil, dstErr
 	}
 	if srcFiles == nil {
-		srcFiles = make(map[string]interface{})
+		srcFiles = make(FileListResult)
 	}
 	if dstFiles == nil {
-		dstFiles = make(map[string]interface{})
+		dstFiles = make(FileListResult)
 	}
 	return srcFiles, dstFiles, nil
 }
@@ -518,13 +555,16 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 	}
 
 	if util.ToInt(jt.Job["method"]) == 1 {
+		var extraNames []string
+		var extraSizes []interface{}
 		for _, dstKey := range sortedFileKeys(dstFiles) {
-			dstVal := dstFiles[dstKey]
 			if _, matched := matchedDstKeys[dstKey]; matched {
 				continue
 			}
-			jt.delFile(work.DstPath, dstKey, fileSize(dstVal))
+			extraNames = append(extraNames, dstKey)
+			extraSizes = append(extraSizes, fileSize(dstFiles[dstKey]))
 		}
+		jt.delFiles(work.DstPath, extraNames, extraSizes)
 	}
 	jt.finishScanWork()
 	jt.runChildScanWorks(children, spec)
@@ -598,9 +638,7 @@ func jobAllowsFileSize(job map[string]interface{}, size int64) bool {
 	return true
 }
 
-func fileChanged(srcVal, dstVal interface{}) bool {
-	src := toFileMetadata(srcVal)
-	dst := toFileMetadata(dstVal)
+func fileChanged(src, dst FileMetadata) bool {
 	if src.MD5 != "" && dst.MD5 != "" {
 		return src.MD5 != dst.MD5
 	}
@@ -613,7 +651,7 @@ func fileChanged(srcVal, dstVal interface{}) bool {
 	return false
 }
 
-func sortedFileKeys(files map[string]interface{}) []string {
+func sortedFileKeys(files FileListResult) []string {
 	keys := make([]string, 0, len(files))
 	for key := range files {
 		keys = append(keys, key)
@@ -622,37 +660,6 @@ func sortedFileKeys(files map[string]interface{}) []string {
 	return keys
 }
 
-func fileSize(val interface{}) int64 {
-	return toFileMetadata(val).Size
-}
-
-func toFileMetadata(val interface{}) FileMetadata {
-	switch v := val.(type) {
-	case FileMetadata:
-		v.MD5 = normalizeMD5(v.MD5)
-		return v
-	case *FileMetadata:
-		if v == nil {
-			return FileMetadata{}
-		}
-		metadata := *v
-		metadata.MD5 = normalizeMD5(metadata.MD5)
-		return metadata
-	case map[string]interface{}:
-		md := FileMetadata{Size: util.ToInt64(v["Size"])}
-		if md.Size == 0 {
-			md.Size = util.ToInt64(v["size"])
-		}
-		if raw, ok := v["MD5"]; ok {
-			md.MD5 = normalizeMD5(fmt.Sprintf("%v", raw))
-		}
-		if raw, ok := v["Modified"]; ok {
-			md.Modified = util.ToInt64(raw)
-		} else if raw, ok := v["modified"]; ok {
-			md.Modified = util.ToInt64(raw)
-		}
-		return md
-	default:
-		return FileMetadata{Size: util.ToInt64(val)}
-	}
+func fileSize(meta FileMetadata) int64 {
+	return meta.Size
 }

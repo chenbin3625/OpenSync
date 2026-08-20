@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import './Login.css';
-import { App, Button, Card, Form, Input, Modal, Typography } from 'antd';
+import App from 'antd/es/app';
+import Button from 'antd/es/button';
+import Card from 'antd/es/card';
+import Form from 'antd/es/form';
+import Input from 'antd/es/input';
+import Modal from 'antd/es/modal';
+import Typography from 'antd/es/typography';
 import { UserOutlined, LockOutlined, KeyOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { getInitStatus, initializeUser, login, resetPwd } from '../../api/user';

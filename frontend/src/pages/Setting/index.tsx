@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import {
-  Alert, App, Button, Card, Col, Form, Input, InputNumber, Modal, Row, Space, Tooltip,
-} from 'antd';
+import Alert from 'antd/es/alert';
+import App from 'antd/es/app';
+import Button from 'antd/es/button';
+import Card from 'antd/es/card';
+import Col from 'antd/es/col';
+import Form from 'antd/es/form';
+import Input from 'antd/es/input';
+import InputNumber from 'antd/es/input-number';
+import Modal from 'antd/es/modal';
+import Row from 'antd/es/row';
+import Space from 'antd/es/space';
+import Tooltip from 'antd/es/tooltip';
 import { LockOutlined, QuestionCircleOutlined, SaveOutlined } from '@ant-design/icons';
 import { editPwd } from '../../api/user';
 import { getSystemConfig, updateSystemConfig } from '../../api/system';

@@ -110,6 +110,35 @@ func TestUpdateSystemSettingsPersistsAndUpdatesMemory(t *testing.T) {
 	}
 }
 
+func TestUpdateSystemSettingsPreservesSqliteSync(t *testing.T) {
+	withTempConfigDir(t)
+	if err := os.WriteFile(filepath.Join("data", "config.ini"), []byte(`[opensync]
+expires=7
+sqlite_sync=off
+`), 0644); err != nil {
+		t.Fatalf("WriteFile(config.ini) error: %v", err)
+	}
+	_ = GetConfig()
+
+	settings := GetSystemSettings()
+	settings.TaskSave = 21
+	if err := UpdateSystemSettings(settings); err != nil {
+		t.Fatalf("UpdateSystemSettings() error: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join("data", "config.ini"))
+	if err != nil {
+		t.Fatalf("ReadFile(config.ini) error: %v", err)
+	}
+	text := string(content)
+	if !strings.Contains(text, "sqlite_sync=off") {
+		t.Fatalf("config.ini dropped sqlite_sync:\n%s", text)
+	}
+	if !strings.Contains(text, "task_save=21") {
+		t.Fatalf("config.ini missing updated task_save:\n%s", text)
+	}
+}
+
 func TestUpdateSystemSettingsRejectsScanConcurrencyAboveTwenty(t *testing.T) {
 	withTempConfigDir(t)
 	_ = GetConfig()

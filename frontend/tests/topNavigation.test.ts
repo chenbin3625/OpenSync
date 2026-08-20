@@ -8,4 +8,5 @@ test('primary app menu is rendered as a top horizontal navigation', () => {
   assert.match(layoutSource, /className="app-top-nav"/);
   assert.match(layoutSource, /mode="horizontal"/);
   assert.doesNotMatch(layoutSource, /<Sider\b|<\/Sider>/);
+  assert.match(layoutSource, /useStore\(\(s\) => s\.theme\)/);
 });

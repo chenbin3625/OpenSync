@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (e.g. 1.10.7 or v1.10.7, optional)"
+        description: "Version to publish (e.g. 1.10.10 or v1.10.10, optional)"
         required: false
       repository:
         description: Docker Hub repository

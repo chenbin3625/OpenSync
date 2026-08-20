@@ -1,7 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  Card, Button, Modal, Form, Input, Space, Popconfirm, App, Empty, Typography, Descriptions, Tooltip,
-} from 'antd';
+import Card from 'antd/es/card';
+import Button from 'antd/es/button';
+import Modal from 'antd/es/modal';
+import Form from 'antd/es/form';
+import Input from 'antd/es/input';
+import Space from 'antd/es/space';
+import Popconfirm from 'antd/es/popconfirm';
+import App from 'antd/es/app';
+import Empty from 'antd/es/empty';
+import Typography from 'antd/es/typography';
+import Descriptions from 'antd/es/descriptions';
+import Tooltip from 'antd/es/tooltip';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, CloudServerOutlined, ApiOutlined, ReloadOutlined,
 } from '@ant-design/icons';

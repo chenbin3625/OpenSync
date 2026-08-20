@@ -8,24 +8,24 @@ import (
 
 type dstNameMatchEntry struct {
 	key       string
-	value     interface{}
+	value     FileMetadata
 	ambiguous bool
 }
 
 type dstNameMatchIndex struct {
-	items     map[string]interface{}
+	items     FileListResult
 	canonical map[string]dstNameMatchEntry
 }
 
 type srcNameMatchIndex struct {
-	items     map[string]interface{}
+	items     FileListResult
 	canonical map[string]int
 }
 
-func newDstNameMatchIndex(items map[string]interface{}) dstNameMatchIndex {
+func newDstNameMatchIndex(items FileListResult) dstNameMatchIndex {
 	index := dstNameMatchIndex{
 		items:     items,
-		canonical: make(map[string]dstNameMatchEntry),
+		canonical: make(map[string]dstNameMatchEntry, len(items)),
 	}
 	for key, value := range items {
 		canonicalKey := canonicalFileKey(key)
@@ -40,10 +40,10 @@ func newDstNameMatchIndex(items map[string]interface{}) dstNameMatchIndex {
 	return index
 }
 
-func newSrcNameMatchIndex(items map[string]interface{}) srcNameMatchIndex {
+func newSrcNameMatchIndex(items FileListResult) srcNameMatchIndex {
 	index := srcNameMatchIndex{
 		items:     items,
-		canonical: make(map[string]int),
+		canonical: make(map[string]int, len(items)),
 	}
 	for key := range items {
 		index.canonical[canonicalFileKey(key)]++
@@ -51,20 +51,20 @@ func newSrcNameMatchIndex(items map[string]interface{}) srcNameMatchIndex {
 	return index
 }
 
-func (i dstNameMatchIndex) find(srcKey string, srcIndex srcNameMatchIndex) (string, interface{}, bool) {
+func (i dstNameMatchIndex) find(srcKey string, srcIndex srcNameMatchIndex) (string, FileMetadata, bool) {
 	if value, ok := i.items[srcKey]; ok {
 		return srcKey, value, true
 	}
 	canonicalKey := canonicalFileKey(srcKey)
 	if srcIndex.canonical[canonicalKey] > 1 {
-		return "", nil, false
+		return "", FileMetadata{}, false
 	}
 	entry, ok := i.canonical[canonicalKey]
 	if !ok || entry.ambiguous {
-		return "", nil, false
+		return "", FileMetadata{}, false
 	}
 	if _, sourceOwnsMatchedName := srcIndex.items[entry.key]; sourceOwnsMatchedName {
-		return "", nil, false
+		return "", FileMetadata{}, false
 	}
 	return entry.key, entry.value, true
 }

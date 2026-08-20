@@ -1,17 +1,24 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import './Home.css';
-import { Alert, App, Drawer, Empty, Tabs, Typography } from 'antd';
+import Alert from 'antd/es/alert';
+import App from 'antd/es/app';
+import Drawer from 'antd/es/drawer';
+import Empty from 'antd/es/empty';
+import Spin from 'antd/es/spin';
+import Tabs from 'antd/es/tabs';
+import Typography from 'antd/es/typography';
 import { jobGetJob, jobPut, jobDelete } from '../../api/job';
 import { alistGet } from '../../api/alist';
-import TaskList from './TaskList';
-import TaskDetail from './TaskDetail';
 import HomeSidebar from './HomeSidebar';
 import HomeOverview from './HomeOverview';
-import JobFormDrawer from './JobFormDrawer';
 import type { AlistItem, JobItem } from '../../types';
 import { buildHomeRouteSearch, readHomeRouteState, type HomeRouteState, type HomeTabKey } from './routeState';
 import { formatAlistLabel } from './homeUtils';
+
+const TaskList = lazy(() => import('./TaskList'));
+const TaskDetail = lazy(() => import('./TaskDetail'));
+const JobFormDrawer = lazy(() => import('./JobFormDrawer'));
 
 const PAGE_SIZE = 12;
 
@@ -117,30 +124,42 @@ export default function Home() {
   };
 
   const handleDelete = async (id: number) => {
+    const snapshot = list;
+    const snapshotTotal = total;
+    setList((prev) => prev.filter((item) => item.id !== id));
+    setTotal((prev) => Math.max(0, prev - 1));
     try {
       await jobDelete({ id });
       message.success('删除成功');
       fetchList();
     } catch (err) {
+      setList(snapshot);
+      setTotal(snapshotTotal);
       console.error('job delete failed', err);
     }
   };
 
   const handleToggle = async (job: JobItem) => {
+    const nextEnable = job.enable === 1 ? 0 : 1;
+    setList((prev) => prev.map((item) => (
+      item.id === job.id ? { ...item, enable: nextEnable } : item
+    )));
     try {
       await jobPut({ id: String(job.id), pause: job.enable === 1 });
       message.success('操作成功');
-      fetchList();
     } catch (err) {
+      setList((prev) => prev.map((item) => (
+        item.id === job.id ? { ...item, enable: job.enable } : item
+      )));
       console.error('job toggle failed', err);
     }
   };
 
   const handleRun = async (id: number) => {
+    updateHomeRouteState({ tab: 'realtime', jobId: id });
     try {
       await jobPut({ id: String(id) });
       message.success('已提交执行');
-      fetchList();
     } catch (err) {
       console.error('job run failed', err);
     }
@@ -150,7 +169,6 @@ export default function Home() {
     try {
       await jobPut({});
       message.success('已提交执行所有同步任务');
-      fetchList();
     } catch (err) {
       console.error('job run all failed', err);
     }
@@ -197,7 +215,7 @@ export default function Home() {
           <Tabs
             activeKey={activeJobTab}
             onChange={(key) => updateHomeRouteState({ tab: key as HomeTabKey })}
-            destroyInactiveTabPane={false}
+            destroyInactiveTabPane
             items={[
               {
                 key: 'overview',
@@ -217,26 +235,30 @@ export default function Home() {
                 key: 'realtime',
                 label: '实时任务',
                 children: (
-                  <TaskList
-                    key={`realtime-${selectedJob.id}`}
-                    jobId={String(selectedJob.id)}
-                    view="realtime"
-                    active={activeJobTab === 'realtime'}
-                    onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-                  />
+                  <Suspense fallback={<div className="task-feedback"><Spin size="small" /></div>}>
+                    <TaskList
+                      key={`realtime-${selectedJob.id}`}
+                      jobId={String(selectedJob.id)}
+                      view="realtime"
+                      active
+                      onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+                    />
+                  </Suspense>
                 ),
               },
               {
                 key: 'history',
                 label: '历史任务',
                 children: (
-                  <TaskList
-                    key={`history-${selectedJob.id}`}
-                    jobId={String(selectedJob.id)}
-                    view="history"
-                    active={activeJobTab === 'history'}
-                    onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-                  />
+                  <Suspense fallback={<div className="task-feedback"><Spin size="small" /></div>}>
+                    <TaskList
+                      key={`history-${selectedJob.id}`}
+                      jobId={String(selectedJob.id)}
+                      view="history"
+                      active
+                      onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+                    />
+                  </Suspense>
                 ),
               },
             ]}
@@ -251,13 +273,17 @@ export default function Home() {
         )}
       </main>
 
-      <JobFormDrawer
-        visible={drawerVisible}
-        editingJob={editingJob}
-        alistList={alistList}
-        onClose={() => setDrawerVisible(false)}
-        onSubmit={handleDrawerSubmit}
-      />
+      {drawerVisible && (
+        <Suspense fallback={null}>
+          <JobFormDrawer
+            visible={drawerVisible}
+            editingJob={editingJob}
+            alistList={alistList}
+            onClose={() => setDrawerVisible(false)}
+            onSubmit={handleDrawerSubmit}
+          />
+        </Suspense>
+      )}
 
       <Drawer
         className="task-detail-drawer"
@@ -268,7 +294,11 @@ export default function Home() {
         styles={{ wrapper: { height: '90vh' }, body: { padding: 16 } }}
         destroyOnHidden
       >
-        <TaskDetail key={taskDetailDrawerTaskId} taskId={taskDetailDrawerTaskId} embedded />
+        {taskDetailDrawerTaskId ? (
+          <Suspense fallback={<div className="task-feedback"><Spin size="small" /></div>}>
+            <TaskDetail key={taskDetailDrawerTaskId} taskId={taskDetailDrawerTaskId} embedded />
+          </Suspense>
+        ) : null}
       </Drawer>
     </div>
   );

@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,18 +24,27 @@ import (
 
 const maxNotifyResponseBytes = 1 << 20 // 1MB
 
-var notifyHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
+func newNotifyHTTPTransport() *http.Transport {
+	return &http.Transport{
 		MaxIdleConns:        50,
 		MaxIdleConnsPerHost: 10,
 		IdleConnTimeout:     90 * time.Second,
+		ForceAttemptHTTP2:   true,
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			NextProtos: []string{"h2", "http/1.1"},
+		},
 		// DialContext intercepts the resolved address to block SSRF attempts
 		// (private/loopback/link-local targets) before any connection is made.
 		DialContext: ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second}, func() bool {
 			return config.GetConfig().Server.AllowInternalWebhook
 		}),
-	},
+	}
+}
+
+var notifyHTTPClient = &http.Client{
+	Timeout:   30 * time.Second,
+	Transport: newNotifyHTTPTransport(),
 }
 
 // ssrfSafeDialContext wraps a dialer so that connections to non-routable or

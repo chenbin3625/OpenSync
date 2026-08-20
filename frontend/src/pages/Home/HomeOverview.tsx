@@ -1,6 +1,12 @@
-import {
-  Button, Card, Descriptions, Popconfirm, Space, Switch, Tag, Tooltip, Typography,
-} from 'antd';
+import Button from 'antd/es/button';
+import Card from 'antd/es/card';
+import Descriptions from 'antd/es/descriptions';
+import Popconfirm from 'antd/es/popconfirm';
+import Space from 'antd/es/space';
+import Switch from 'antd/es/switch';
+import Tag from 'antd/es/tag';
+import Tooltip from 'antd/es/tooltip';
+import Typography from 'antd/es/typography';
 import {
   CaretRightOutlined, EditOutlined, DeleteOutlined,
   CheckOutlined, PauseOutlined,

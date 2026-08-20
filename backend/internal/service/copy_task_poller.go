@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"opensync/internal/msg"
-	"opensync/pkg/util"
 	"strings"
 	"sync"
 	"time"
 )
 
 type copyTaskWatch struct {
+	jt            *JobTask
 	ci            *CopyItem
 	taskID        string
 	copyType      taskItemType
@@ -32,7 +32,6 @@ func (watch *copyTaskWatch) closeDone() {
 }
 
 type copyTaskMonitor struct {
-	jt      *JobTask
 	mu      sync.Mutex
 	watches map[string]*copyTaskWatch
 	stopCh  chan struct{}
@@ -43,6 +42,23 @@ type copyTaskMonitor struct {
 	// exited must not enqueue a watch nobody will ever process, otherwise the
 	// copy goroutine blocks forever on <-watch.done and the job stays "doing".
 	stopped bool
+	shared  bool
+	alistID int64
+	refs    int
+}
+
+var copyMonitors = struct {
+	mu      sync.Mutex
+	byAlist map[int64]*copyTaskMonitor
+}{
+	byAlist: make(map[int64]*copyTaskMonitor),
+}
+
+func newCopyTaskMonitor() *copyTaskMonitor {
+	return &copyTaskMonitor{
+		watches: make(map[string]*copyTaskWatch),
+		stopCh:  make(chan struct{}),
+	}
 }
 
 func (jt *JobTask) ensureCopyMonitor() *copyTaskMonitor {
@@ -52,40 +68,61 @@ func (jt *JobTask) ensureCopyMonitor() *copyTaskMonitor {
 	if jt.copyMonitor != nil {
 		return jt.copyMonitor
 	}
-	jt.copyMonitor = &copyTaskMonitor{
-		jt:      jt,
-		watches: make(map[string]*copyTaskWatch),
-		stopCh:  make(chan struct{}),
-	}
+	jt.copyMonitor = acquireCopyMonitor(jt)
 	return jt.copyMonitor
+}
+
+func acquireCopyMonitor(jt *JobTask) *copyTaskMonitor {
+	if jt.copyMonitorClientOverride != nil || jt.AlistClient == nil || jt.AlistClient.AlistID <= 0 {
+		return newCopyTaskMonitor()
+	}
+
+	alistID := jt.AlistClient.AlistID
+	copyMonitors.mu.Lock()
+	defer copyMonitors.mu.Unlock()
+	monitor := copyMonitors.byAlist[alistID]
+	if monitor == nil {
+		monitor = newCopyTaskMonitor()
+		monitor.shared = true
+		monitor.alistID = alistID
+		copyMonitors.byAlist[alistID] = monitor
+	}
+	monitor.refs++
+	return monitor
 }
 
 func (jt *JobTask) waitForRemoteCopyCompletion(ci *CopyItem) {
 	monitor := jt.ensureCopyMonitor()
-	monitor.track(ci)
+	monitor.track(jt, ci)
 }
 
 func (jt *JobTask) stopCopyMonitor() {
 	jt.runtimeMu.Lock()
 	monitor := jt.copyMonitor
+	jt.copyMonitor = nil
 	jt.runtimeMu.Unlock()
 	if monitor == nil {
 		return
 	}
-	monitor.stop()
+	monitor.release(jt)
 }
 
-func (m *copyTaskMonitor) watchKey(taskID string, copyType taskItemType) string {
-	return fmt.Sprintf("%s|%d", taskID, copyType.Int())
+func watchKey(jt *JobTask, taskID string, copyType taskItemType) string {
+	var taskPK int64
+	if jt != nil {
+		taskPK = jt.TaskID
+	}
+	return fmt.Sprintf("%d|%s|%d", taskPK, taskID, copyType.Int())
 }
 
-func (m *copyTaskMonitor) track(ci *CopyItem) {
+func (m *copyTaskMonitor) track(jt *JobTask, ci *CopyItem) {
 	taskID := ci.taskID()
 	if taskID == "" {
 		return
 	}
 
 	watch := &copyTaskWatch{
+		jt:       jt,
 		ci:       ci,
 		taskID:   taskID,
 		copyType: ci.CopyType,
@@ -100,7 +137,7 @@ func (m *copyTaskMonitor) track(ci *CopyItem) {
 		// copy goroutine forever. Abort the remote task ourselves instead.
 		abortSelf = true
 	} else {
-		m.watches[m.watchKey(taskID, ci.CopyType)] = watch
+		m.watches[watchKey(jt, taskID, ci.CopyType)] = watch
 		if !m.started {
 			// Add before releasing m.mu. stop() takes the same lock before
 			// waiting, so it cannot observe a zero WaitGroup and return while
@@ -112,7 +149,7 @@ func (m *copyTaskMonitor) track(ci *CopyItem) {
 	}
 	m.mu.Unlock()
 	if abortSelf {
-		watch.ci.stopRemoteTask(m.jt.copyMonitorClient(), m.jt.context().Err())
+		watch.ci.stopRemoteTask(jt.copyMonitorClient(), jt.context().Err())
 		return
 	}
 
@@ -122,12 +159,12 @@ func (m *copyTaskMonitor) track(ci *CopyItem) {
 
 	select {
 	case <-watch.done:
-	case <-m.jt.context().Done():
+	case <-jt.context().Done():
 		// Task cancelled while waiting for the monitor to process the watch.
 		// Self-abort so the copy goroutine can proceed without waiting for the
 		// loop's next iteration. abortWatch is a no-op if the loop already
 		// took the watch, and closeDone is idempotent.
-		m.abortWatch(watch, m.jt.context().Err())
+		m.abortWatch(watch, jt.context().Err())
 	}
 }
 
@@ -141,18 +178,33 @@ func (m *copyTaskMonitor) stop() {
 	m.wg.Wait()
 }
 
+func (m *copyTaskMonitor) release(jt *JobTask) {
+	m.abortJob(jt)
+	if !m.shared {
+		m.stop()
+		return
+	}
+
+	copyMonitors.mu.Lock()
+	m.refs--
+	stopNow := m.refs <= 0
+	if stopNow && copyMonitors.byAlist[m.alistID] == m {
+		delete(copyMonitors.byAlist, m.alistID)
+	}
+	copyMonitors.mu.Unlock()
+	if stopNow {
+		m.stop()
+	}
+}
+
 func (m *copyTaskMonitor) loop() {
 	defer m.wg.Done()
 	for {
 		select {
 		case <-m.stopCh:
-			m.abortAll(m.jt.context().Err())
+			m.abortAll(context.Canceled)
 			return
 		default:
-		}
-		if m.jt.isBreak() || m.jt.context().Err() != nil {
-			m.abortAll(m.jt.context().Err())
-			return
 		}
 
 		active := m.snapshotWatches()
@@ -166,7 +218,7 @@ func (m *copyTaskMonitor) loop() {
 					default:
 					}
 				}
-				m.abortAll(m.jt.context().Err())
+				m.abortAll(context.Canceled)
 				return
 			case <-timer.C:
 				continue
@@ -174,7 +226,7 @@ func (m *copyTaskMonitor) loop() {
 		}
 
 		if !m.waitForPollInterval() {
-			m.abortAll(m.jt.context().Err())
+			m.abortAll(context.Canceled)
 			return
 		}
 
@@ -182,14 +234,16 @@ func (m *copyTaskMonitor) loop() {
 		// single watched task a direct per-task info call is cheaper, and even
 		// with several tasks a busy AList host can return a large unrelated
 		// list that we then filter down. fetchUndoneByType already keeps only
-		// the task IDs this job cares about.
-		var undoneByType map[taskItemType]map[string]map[string]interface{}
+		// the task IDs this job cares about. Sharing the monitor across jobs
+		// on the same AList means N concurrent syncs issue one undone list
+		// instead of N.
+		var undoneByType map[taskItemType]map[string]alistRemoteTask
 		if len(active) > 1 {
 			undoneByType = m.fetchUndoneByType(active)
 		}
 		for _, watch := range active {
-			if m.jt.isBreak() {
-				m.abortWatch(watch, nil)
+			if watch.jt.isBreak() || watch.jt.context().Err() != nil {
+				m.abortWatch(watch, watch.jt.context().Err())
 				continue
 			}
 			if undoneByType != nil {
@@ -203,7 +257,7 @@ func (m *copyTaskMonitor) loop() {
 
 		select {
 		case <-m.stopCh:
-			m.abortAll(m.jt.context().Err())
+			m.abortAll(context.Canceled)
 			return
 		default:
 		}
@@ -220,13 +274,22 @@ func (m *copyTaskMonitor) snapshotWatches() []*copyTaskWatch {
 	return active
 }
 
+func (m *copyTaskMonitor) anyViewerPresent() bool {
+	now := time.Now().Unix()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, watch := range m.watches {
+		if watch.jt != nil && now-watch.jt.lastWatchingUnix() < 3 {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *copyTaskMonitor) waitForPollInterval() bool {
-	cuTime := time.Now().Unix()
-	var sleepFor time.Duration
-	if cuTime-m.jt.lastWatchingUnix() < 3 {
+	sleepFor := 2930 * time.Millisecond
+	if m.anyViewerPresent() {
 		sleepFor = 610 * time.Millisecond
-	} else {
-		sleepFor = 2930 * time.Millisecond
 	}
 	timer := time.NewTimer(sleepFor)
 	defer timer.Stop()
@@ -235,12 +298,10 @@ func (m *copyTaskMonitor) waitForPollInterval() bool {
 		return true
 	case <-m.stopCh:
 		return false
-	case <-m.jt.context().Done():
-		return false
 	}
 }
 
-func (m *copyTaskMonitor) fetchUndoneByType(active []*copyTaskWatch) map[taskItemType]map[string]map[string]interface{} {
+func (m *copyTaskMonitor) fetchUndoneByType(active []*copyTaskWatch) map[taskItemType]map[string]alistRemoteTask {
 	needed := make(map[taskItemType]map[string]struct{})
 	for _, watch := range active {
 		if needed[watch.copyType] == nil {
@@ -249,45 +310,79 @@ func (m *copyTaskMonitor) fetchUndoneByType(active []*copyTaskWatch) map[taskIte
 		needed[watch.copyType][watch.taskID] = struct{}{}
 	}
 
-	result := make(map[taskItemType]map[string]map[string]interface{}, len(needed))
-	client := m.jt.copyMonitorClient()
-	ctx := m.jt.context()
-	for copyType, wantedIDs := range needed {
-		tasks, err := client.TaskUndoneListContext(ctx, copyType)
-		if err != nil {
-			continue
-		}
-		byID := make(map[string]map[string]interface{}, len(tasks))
-		picked := 0
-		for _, task := range tasks {
-			id := fmt.Sprintf("%v", task["id"])
-			if id == "" {
-				continue
-			}
-			// Keep only the tasks this job actually watches; everything else
-			// (other jobs, other clients, or a stale task list) is dropped so
-			// a busy AList host cannot make us buffer an unbounded list.
-			if _, wanted := wantedIDs[id]; !wanted {
-				continue
-			}
-			byID[id] = task
-			picked++
-			if picked >= maxUndonePickups {
-				break
-			}
-		}
-		result[copyType] = byID
+	result := make(map[taskItemType]map[string]alistRemoteTask, len(needed))
+	if len(active) == 0 {
+		return result
 	}
+	client := active[0].jt.copyMonitorClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if len(needed) == 1 {
+		for copyType, wantedIDs := range needed {
+			if byID := m.loadUndone(ctx, client, copyType, wantedIDs); byID != nil {
+				result[copyType] = byID
+			}
+		}
+		return result
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	for copyType, wantedIDs := range needed {
+		wg.Add(1)
+		go func(copyType taskItemType, wantedIDs map[string]struct{}) {
+			defer wg.Done()
+			byID := m.loadUndone(ctx, client, copyType, wantedIDs)
+			if byID == nil {
+				return
+			}
+			mu.Lock()
+			result[copyType] = byID
+			mu.Unlock()
+		}(copyType, wantedIDs)
+	}
+	wg.Wait()
 	return result
 }
 
-func (m *copyTaskMonitor) applyTaskInfo(watch *copyTaskWatch, taskInfo map[string]interface{}) bool {
-	state := taskStatusFromValue(taskInfo["state"])
-	progress := util.ToFloat64(taskInfo["progress"])
-	errStr := ""
-	if e, ok := taskInfo["error"]; ok && e != nil {
-		errStr = fmt.Sprintf("%v", e)
+func (m *copyTaskMonitor) loadUndone(ctx context.Context, client copyItemClient, copyType taskItemType, wantedIDs map[string]struct{}) map[string]alistRemoteTask {
+	if picker, ok := client.(interface {
+		TaskUndoneByIDsContext(context.Context, taskItemType, map[string]struct{}, int) (map[string]alistRemoteTask, error)
+	}); ok {
+		byID, err := picker.TaskUndoneByIDsContext(ctx, copyType, wantedIDs, maxUndonePickups)
+		if err != nil {
+			return nil
+		}
+		return byID
 	}
+	tasks, err := client.TaskUndoneListContext(ctx, copyType)
+	if err != nil {
+		return nil
+	}
+	byID := make(map[string]alistRemoteTask, len(wantedIDs))
+	picked := 0
+	for _, task := range tasks {
+		id := task.idString()
+		if id == "" {
+			continue
+		}
+		if _, wanted := wantedIDs[id]; !wanted {
+			continue
+		}
+		byID[id] = task
+		picked++
+		if picked >= maxUndonePickups {
+			break
+		}
+	}
+	return byID
+}
+
+func (m *copyTaskMonitor) applyTaskInfo(watch *copyTaskWatch, taskInfo alistRemoteTask) bool {
+	state := taskStatus(taskInfo.State)
+	progress := taskInfo.Progress
+	errStr := taskInfo.Error
 
 	watch.ci.mu.RLock()
 	unchanged := state == watch.ci.Status && progress == watch.ci.Progress
@@ -309,15 +404,15 @@ func (m *copyTaskMonitor) applyTaskInfo(watch *copyTaskWatch, taskInfo map[strin
 }
 
 func (m *copyTaskMonitor) pollTaskInfo(watch *copyTaskWatch) bool {
-	client := m.jt.copyMonitorClient()
-	taskInfo, err := client.TaskInfoContext(m.jt.context(), watch.taskID, watch.copyType)
+	client := watch.jt.copyMonitorClient()
+	taskInfo, err := client.TaskInfoContext(watch.jt.context(), watch.taskID, watch.copyType)
 	if err != nil {
-		if errors.Is(err, context.Canceled) && m.jt.isBreak() {
+		if errors.Is(err, context.Canceled) && watch.jt.isBreak() {
 			return false
 		}
 		eMsg := err.Error()
 		if strings.Contains(eMsg, "404") {
-			exists, verr := watch.ci.verifyDstExists(m.jt, client)
+			exists, verr := watch.ci.verifyDstExists(watch.jt, client)
 			if verr == nil && exists {
 				watch.ci.setProgress(taskStatusSuccess, 100, nil)
 				m.finishWatch(watch)
@@ -349,7 +444,7 @@ func (m *copyTaskMonitor) pollTaskInfo(watch *copyTaskWatch) bool {
 func (m *copyTaskMonitor) takeWatch(watch *copyTaskWatch) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := m.watchKey(watch.taskID, watch.copyType)
+	key := watchKey(watch.jt, watch.taskID, watch.copyType)
 	current, ok := m.watches[key]
 	if !ok || current != watch {
 		return false
@@ -362,8 +457,8 @@ func (m *copyTaskMonitor) finishWatch(watch *copyTaskWatch) {
 	if !m.takeWatch(watch) {
 		return
 	}
-	ctx, cancel := m.jt.cleanupContext()
-	_ = m.jt.copyMonitorClient().TaskDeleteContext(ctx, watch.taskID, watch.copyType)
+	ctx, cancel := watch.jt.cleanupContext()
+	_ = watch.jt.copyMonitorClient().TaskDeleteContext(ctx, watch.taskID, watch.copyType)
 	cancel()
 	watch.closeDone()
 }
@@ -372,8 +467,21 @@ func (m *copyTaskMonitor) abortWatch(watch *copyTaskWatch, cause error) {
 	if !m.takeWatch(watch) {
 		return
 	}
-	watch.ci.stopRemoteTask(m.jt.copyMonitorClient(), cause)
+	watch.ci.stopRemoteTask(watch.jt.copyMonitorClient(), cause)
 	watch.closeDone()
+}
+
+func (m *copyTaskMonitor) abortJob(jt *JobTask) {
+	m.mu.Lock()
+	watches := make([]*copyTaskWatch, 0)
+	for key, watch := range m.watches {
+		if watch.jt == jt {
+			delete(m.watches, key)
+			watches = append(watches, watch)
+		}
+	}
+	m.mu.Unlock()
+	m.stopWatches(watches, jt.context().Err())
 }
 
 func (m *copyTaskMonitor) abortAll(cause error) {
@@ -385,7 +493,10 @@ func (m *copyTaskMonitor) abortAll(cause error) {
 	}
 	m.watches = make(map[string]*copyTaskWatch)
 	m.mu.Unlock()
+	m.stopWatches(watches, cause)
+}
 
+func (m *copyTaskMonitor) stopWatches(watches []*copyTaskWatch, cause error) {
 	// Cancel/delete remote tasks in parallel so shutdown is gated by the
 	// slowest single cleanup (not the sum). closeDone stays after stopRemoteTask
 	// per watch to preserve the existing status-before-unblock ordering.
@@ -394,7 +505,7 @@ func (m *copyTaskMonitor) abortAll(cause error) {
 		wg.Add(1)
 		go func(w *copyTaskWatch) {
 			defer wg.Done()
-			w.ci.stopRemoteTask(m.jt.copyMonitorClient(), cause)
+			w.ci.stopRemoteTask(w.jt.copyMonitorClient(), cause)
 			w.closeDone()
 		}(watch)
 	}

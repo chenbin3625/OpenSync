@@ -200,3 +200,13 @@ func TestSendNotifyRequestDoesNotPanicWithSecretURL(t *testing.T) {
 
 	sendNotifyRequest(client, req)
 }
+
+func TestNotifyHTTPTransportKeepsHTTP2WithCustomDial(t *testing.T) {
+	tr := newNotifyHTTPTransport()
+	if !tr.ForceAttemptHTTP2 {
+		t.Fatal("ForceAttemptHTTP2 = false, want true so SSRF DialContext does not disable h2")
+	}
+	if tr.TLSClientConfig == nil || len(tr.TLSClientConfig.NextProtos) == 0 || tr.TLSClientConfig.NextProtos[0] != "h2" {
+		t.Fatalf("TLS NextProtos = %#v, want h2 first", tr.TLSClientConfig)
+	}
+}

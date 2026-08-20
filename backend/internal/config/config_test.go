@@ -101,3 +101,56 @@ func TestEnvironmentInvalidNumbersKeepDefaultsAndLog(t *testing.T) {
 		t.Fatalf("logs = %q, want invalid env keys to be logged", logs)
 	}
 }
+
+func TestNormalizeSqliteSync(t *testing.T) {
+	tests := []struct {
+		in       string
+		fallback string
+		want     string
+	}{
+		{"normal", "normal", "normal"},
+		{"full", "normal", "full"},
+		{"off", "normal", "off"},
+		{"", "normal", "normal"},
+		{"  NORMAL  ", "full", "normal"},
+		{"slow", "normal", "normal"},
+		{"FULL", "normal", "full"},
+	}
+	for _, tt := range tests {
+		if got := normalizeSqliteSync(tt.in, tt.fallback); got != tt.want {
+			t.Errorf("normalizeSqliteSync(%q, %q) = %q, want %q", tt.in, tt.fallback, got, tt.want)
+		}
+	}
+}
+
+func TestEnvironmentTLSCertPathsEnableTLS(t *testing.T) {
+	oldConfig := sysConfig
+	sysConfig = nil
+	defer func() {
+		sysConfig = oldConfig
+	}()
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir(temp) error: %v", err)
+	}
+	defer os.Chdir(oldWD)
+
+	if err := os.MkdirAll("data", 0755); err != nil {
+		t.Fatalf("MkdirAll(data) error: %v", err)
+	}
+	t.Setenv("OPENSYNC_TLS_CERT", "/certs/fullchain.pem")
+	t.Setenv("OPENSYNC_TLS_KEY", "/certs/privkey.pem")
+
+	cfg := GetConfig()
+	if cfg.Server.TLSCertFile != "/certs/fullchain.pem" || cfg.Server.TLSKeyFile != "/certs/privkey.pem" {
+		t.Fatalf("TLS files = %q %q", cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile)
+	}
+	if !cfg.Server.TLSEnabled() {
+		t.Fatal("TLSEnabled() = false, want true when cert and key are set")
+	}
+}

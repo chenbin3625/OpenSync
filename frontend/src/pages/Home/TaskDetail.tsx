@@ -1,8 +1,16 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import './Home.css';
-import {
-  Button, Card, Empty, Input, Progress, Select, Space, Table, Tag, Tooltip, Typography,
-} from 'antd';
+import Button from 'antd/es/button';
+import Card from 'antd/es/card';
+import Empty from 'antd/es/empty';
+import Input from 'antd/es/input';
+import Progress from 'antd/es/progress';
+import Select from 'antd/es/select';
+import Space from 'antd/es/space';
+import Table from 'antd/es/table';
+import Tag from 'antd/es/tag';
+import Tooltip from 'antd/es/tooltip';
+import Typography from 'antd/es/typography';
 import { ArrowLeftOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { jobGetTaskItem } from '../../api/job';
@@ -15,6 +23,7 @@ import {
   taskItemStatusOptions, taskTypeNames,
 } from './homeUtils';
 import { canPollCurrentDocument } from './pollingVisibility';
+import { detailHasRunningItem, pollIntervalForActiveWork } from './taskRows';
 
 const { Text } = Typography;
 
@@ -136,9 +145,9 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
     if (!taskId) return undefined;
     const pollID = setInterval(() => {
       if (canPollCurrentDocument()) fetchData({ silent: true });
-    }, POLL_INTERVAL_MS);
+    }, pollIntervalForActiveWork(detailHasRunningItem(list), POLL_INTERVAL_MS));
     return () => { clearInterval(pollID); };
-  }, [taskId, fetchData]);
+  }, [taskId, fetchData, list]);
 
   const columns = useMemo(() => [
     {
@@ -328,13 +337,14 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
           columns={columns}
           rowKey="id"
           loading={loading}
-          scroll={{ x: 1410 }}
+          scroll={{ x: 1410, y: pageSize >= 50 ? 560 : undefined }}
+          virtual={pageSize >= 50}
           pagination={{
             current: page,
             pageSize,
             total,
             showSizeChanger: true,
-            pageSizeOptions: ['10', '20', '50', '100'],
+            pageSizeOptions: ['10', '20', '50'],
             onChange: (p, ps) => { setPage(p); setPageSize(ps); },
             showTotal: (t) => `共 ${t} 条`,
           }}

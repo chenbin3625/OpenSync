@@ -14,6 +14,21 @@ export type RealtimeTaskLoadKey = {
 };
 
 const runningHistoryStatuses = new Set([0, 1]);
+const runningTaskItemStatus = 1;
+
+export const IDLE_POLL_INTERVAL_MS = 15000;
+
+export function historyHasActiveTask(rows: Array<{ status: number }>): boolean {
+  return rows.some((row) => runningHistoryStatuses.has(row.status));
+}
+
+export function detailHasRunningItem(rows: Array<{ status: number }>): boolean {
+  return rows.some((row) => row.status === runningTaskItemStatus);
+}
+
+export function pollIntervalForActiveWork(hasActive: boolean, activeMs: number, idleMs = IDLE_POLL_INTERVAL_MS): number {
+  return hasActive ? activeMs : idleMs;
+}
 
 function mergeByKey<T>(
   previous: T[],
@@ -81,6 +96,38 @@ export function mergeTaskItems(previous: TaskItem[], next: TaskItem[]): TaskItem
   return mergeByKey(previous, next, getTaskItemKey, sameTaskItem);
 }
 
+export function applyDoingPatch(previous: TaskItem[], patch: TaskItem[]): TaskItem[] {
+  if (previous.length === 0 || patch.length === 0) return previous;
+
+  const patchByKey = new Map(patch.map((item, index) => [getTaskItemKey(item, index), item]));
+  let changed = false;
+  const next = previous.map((item, index) => {
+    const delta = patchByKey.get(getTaskItemKey(item, index));
+    if (!delta) return item;
+    const merged = { ...item, ...delta };
+    if (sameTaskItem(item, merged)) return item;
+    changed = true;
+    return merged;
+  });
+  return changed ? next : previous;
+}
+
+export function mergeCurrentTaskData(
+  data: CurrentTaskData,
+  previous: CurrentTaskData | null,
+): CurrentTaskData {
+  if (data.doingPatch && previous && getRealtimeTaskIdentity(data) === getRealtimeTaskIdentity(previous)) {
+    return {
+      ...data,
+      doingTask: applyDoingPatch(previous.doingTask || [], data.doingPatch),
+    };
+  }
+  return {
+    ...data,
+    doingTask: data.doingTask || previous?.doingTask || [],
+  };
+}
+
 export function normalizeTaskItemPage(
   data: CurrentTaskData | PageData<TaskItem> | TaskItem[] | null | undefined,
 ): { rows: TaskItem[]; total: number } {
@@ -139,4 +186,58 @@ export function filterRunningTaskRows(history: TaskRecord[]): TaskRecord[] {
 
 export function shouldPollRealtime(view: TaskListView): boolean {
   return view === 'realtime';
+}
+
+type ProgressSnapshot = {
+  duration?: number;
+  doneSize?: number;
+} | null;
+
+export function calcRealtimeProgress(cur: CurrentTaskData, previous: ProgressSnapshot): {
+  remainSize: number;
+  doneSize: number;
+  speed: number;
+  speedAvg: number;
+  remainTime: number;
+} {
+  const sizeMap = cur.size || {};
+  const serverDone = Number(cur.doneSize);
+  const serverRemain = Number(cur.remainSize);
+  let doneSize: number;
+  let remainSize: number;
+  if (Number.isFinite(serverDone) && Number.isFinite(serverRemain)) {
+    doneSize = serverDone;
+    remainSize = Math.max(0, serverRemain);
+  } else {
+    const doingSize = (cur.doingTask || []).reduce((sum, item) => {
+      const progress = Number(item.progress || 0);
+      return sum + (item.fileSize || 0) * progress / 100.0;
+    }, 0);
+    remainSize = Math.max(0, (sizeMap.running || 0) - doingSize + (sizeMap.wait || 0));
+    doneSize = (sizeMap.success || 0) + doingSize;
+  }
+
+  let speed = 0;
+  if (typeof cur.speed === 'number' && Number.isFinite(cur.speed)) {
+    speed = cur.speed;
+  } else if (previous && typeof previous.duration === 'number' && cur.duration !== previous.duration) {
+    speed = (doneSize - (previous.doneSize || 0)) / (cur.duration - previous.duration);
+  }
+
+  let speedAvg = 0;
+  if (typeof cur.speedAvg === 'number' && Number.isFinite(cur.speedAvg)) {
+    speedAvg = cur.speedAvg;
+  } else if (cur.firstSync && cur.duration > 0) {
+    const syncDuration = cur.duration - (cur.firstSync - cur.createTime);
+    if (syncDuration > 0) speedAvg = doneSize / syncDuration;
+  }
+
+  let remainTime = 0;
+  if (typeof cur.remainTime === 'number' && Number.isFinite(cur.remainTime)) {
+    remainTime = cur.remainTime;
+  } else if (speedAvg > 0 && remainSize > 0) {
+    remainTime = Math.ceil(remainSize / speedAvg);
+  }
+
+  return { remainSize, doneSize, speed, speedAvg, remainTime };
 }

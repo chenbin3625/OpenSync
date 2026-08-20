@@ -4,8 +4,17 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/pem"
 	"io"
+	"io/fs"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -19,8 +28,10 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/quic-go/quic-go/http3"
 	_ "modernc.org/sqlite"
 )
 
@@ -118,6 +129,37 @@ func TestGzipCompressionIsAppliedToJSON(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "OpenSync performance payload") {
 		t.Fatalf("decompressed body missing payload: %q", string(body))
+	}
+}
+
+func TestGzipCompressionReusesWriterPool(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(maybeCompress())
+	router.GET("/svr/data", func(c *gin.Context) {
+		c.String(200, strings.Repeat("OpenSync pooled gzip ", 80))
+	})
+
+	for i := 0; i < 8; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/svr/data", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Header().Get("Content-Encoding") != "gzip" {
+			t.Fatalf("iteration %d Content-Encoding = %q, want gzip", i, w.Header().Get("Content-Encoding"))
+		}
+		zr, err := gzip.NewReader(w.Result().Body)
+		if err != nil {
+			t.Fatalf("iteration %d gzip.NewReader error: %v", i, err)
+		}
+		body, err := io.ReadAll(zr)
+		zr.Close()
+		if err != nil {
+			t.Fatalf("iteration %d read gzip body error: %v", i, err)
+		}
+		if !strings.Contains(string(body), "OpenSync pooled gzip") {
+			t.Fatalf("iteration %d decompressed body missing payload", i)
+		}
 	}
 }
 
@@ -221,7 +263,7 @@ func TestIndexHTMLGetsNoCacheHeader(t *testing.T) {
 func TestSecurityHeadersAreApplied(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(securityHeaders())
+	router.Use(securityHeaders(0))
 	router.GET("/", func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})
@@ -238,6 +280,26 @@ func TestSecurityHeadersAreApplied(t *testing.T) {
 	}
 	if got := w.Header().Get("Referrer-Policy"); got != "no-referrer" {
 		t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
+	}
+	if got := w.Header().Get("Alt-Svc"); got != "" {
+		t.Fatalf("Alt-Svc = %q, want empty without TLS", got)
+	}
+}
+
+func TestSecurityHeadersAdvertiseHTTP3WhenEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(securityHeaders(8023))
+	router.GET("/", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	router.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Alt-Svc"); got != `h3=":8023"; ma=86400` {
+		t.Fatalf("Alt-Svc = %q, want HTTP/3 advertisement", got)
 	}
 }
 
@@ -286,6 +348,38 @@ func TestSPAFallbackKeepsAPIAndAssetMissesAs404(t *testing.T) {
 	}
 }
 
+type countingFS struct {
+	inner fs.FS
+	opens int
+}
+
+func (c *countingFS) Open(name string) (fs.File, error) {
+	c.opens++
+	return c.inner.Open(name)
+}
+
+func TestCachedWebFSReadsEachFileOnce(t *testing.T) {
+	source := &countingFS{
+		inner: fstest.MapFS{
+			"index.html": &fstest.MapFile{Data: []byte("<html>cached</html>")},
+		},
+	}
+	cache := newCachedWebFS(source)
+
+	for i := 0; i < 3; i++ {
+		data, err := cache.read("index.html")
+		if err != nil {
+			t.Fatalf("read() error: %v", err)
+		}
+		if string(data) != "<html>cached</html>" {
+			t.Fatalf("read() = %q, want cached html", data)
+		}
+	}
+	if source.opens != 1 {
+		t.Fatalf("Open() called %d times, want 1", source.opens)
+	}
+}
+
 func TestRunHTTPServerReturnsNilWhenContextCancelled(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -300,8 +394,103 @@ func TestRunHTTPServerReturnsNilWhenContextCancelled(t *testing.T) {
 		}),
 	}
 
-	if err := runHTTPServer(ctx, server, ln); err != nil {
+	if err := runHTTPServer(ctx, server, ln, "", ""); err != nil {
 		t.Fatalf("runHTTPServer() error = %v, want nil", err)
+	}
+}
+
+func writeTestTLSFiles(t *testing.T) (certFile, keyFile string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey() error: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{Organization: []string{"OpenSync"}},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("CreateCertificate() error: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("MarshalECPrivateKey() error: %v", err)
+	}
+
+	dir := t.TempDir()
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644); err != nil {
+		t.Fatalf("WriteFile(cert) error: %v", err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
+		t.Fatalf("WriteFile(key) error: %v", err)
+	}
+	return certFile, keyFile
+}
+
+func TestRunHTTPServerServesHTTP3(t *testing.T) {
+	certFile, keyFile := writeTestTLSFiles(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error: %v", err)
+	}
+	addr := ln.Addr().String()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-OpenSync-Proto", r.Proto)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		}),
+		ReadHeaderTimeout: time.Second,
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runHTTPServer(ctx, server, ln, certFile, keyFile)
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	var resp *http.Response
+	transport := &http3.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+			NextProtos:         []string{http3.NextProtoH3},
+		},
+	}
+	defer transport.Close()
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	for time.Now().Before(deadline) {
+		resp, err = client.Get("https://" + addr + "/")
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("HTTP/3 GET error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HTTP/3 status = %d, want 200", resp.StatusCode)
+	}
+	if !strings.HasPrefix(resp.Proto, "HTTP/3") {
+		t.Fatalf("HTTP/3 proto = %q, want HTTP/3", resp.Proto)
+	}
+
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("runHTTPServer() after cancel: %v", err)
 	}
 }
 

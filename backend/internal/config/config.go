@@ -39,11 +39,22 @@ type ServerConfig struct {
 	// IP addresses (the default deployment is AList on the same LAN/NAS).
 	// Set to false to also reject loopback/private/link-local targets.
 	AllowInternalAlist bool
+	// TLSCertFile / TLSKeyFile enable HTTPS (HTTP/1.1 + HTTP/2) and HTTP/3
+	// on the same port. Env-only so web settings saves cannot clobber cert
+	// paths. Empty keeps the NAS-default cleartext HTTP/1.1 listener.
+	TLSCertFile string
+	TLSKeyFile  string
 }
 
 // DBConfig holds database configuration
 type DBConfig struct {
 	DBName string
+	// SqliteSync selects the SQLite synchronous mode: "full" (fsync every
+	// commit, maximum durability), "normal" (WAL-recommended; the database is
+	// still guaranteed never to corrupt, but the most recent transaction may
+	// be lost on abrupt power loss) or "off" (no fsync; fastest, least
+	// durable). Defaults to "normal" for WAL deployments.
+	SqliteSync string
 }
 
 // Config holds all configuration
@@ -74,6 +85,14 @@ const (
 	minTaskTimeout = 0
 	maxTaskTimeout = 8760
 )
+
+const defaultSqliteSync = "normal"
+
+var allowedSqliteSync = map[string]bool{
+	"full":   true,
+	"normal": true,
+	"off":    true,
+}
 
 const (
 	DefaultCopyConcurrency = 5
@@ -152,6 +171,8 @@ func GetConfig() *Config {
 		AllowInternalAlist:   false,
 	}
 
+	sqliteSync := defaultSqliteSync
+
 	configPath := DataPath("config.ini")
 	if _, err := os.Stat(configPath); err == nil {
 		// Read config.ini
@@ -199,6 +220,9 @@ func GetConfig() *Config {
 			if v, ok := opensync["allow_internal_alist"]; ok {
 				sCfg.AllowInternalAlist = boolConfigValue(v, sCfg.AllowInternalAlist)
 			}
+			if v, ok := opensync["sqlite_sync"]; ok {
+				sqliteSync = normalizeSqliteSync(v, sqliteSync)
+			}
 		}
 	}
 
@@ -206,6 +230,8 @@ func GetConfig() *Config {
 	// apply even when a persisted config.ini exists. This prevents container
 	// settings such as trusted proxies or SSRF policy from being silently
 	// ignored after the first web-based settings update.
+	sqliteSync = envStringConfigValue("OPENSYNC_SQLITE_SYNC", sqliteSync)
+	sqliteSync = normalizeSqliteSync(sqliteSync, defaultSqliteSync)
 	sCfg.Bind = envStringConfigValue("OPENSYNC_BIND", sCfg.Bind)
 	sCfg.Port = envIntConfigValue("OPENSYNC_PORT", sCfg.Port)
 	sCfg.Expires = envIntConfigValue("OPENSYNC_EXPIRES", sCfg.Expires)
@@ -222,13 +248,26 @@ func GetConfig() *Config {
 	}
 	sCfg.AllowInternalWebhook = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_WEBHOOK", sCfg.AllowInternalWebhook)
 	sCfg.AllowInternalAlist = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_ALIST", sCfg.AllowInternalAlist)
+	sCfg.TLSCertFile = envStringConfigValue("OPENSYNC_TLS_CERT", sCfg.TLSCertFile)
+	sCfg.TLSKeyFile = envStringConfigValue("OPENSYNC_TLS_KEY", sCfg.TLSKeyFile)
 
 	sysConfig = &Config{
-		DB:     DBConfig{DBName: dbname},
+		DB:     DBConfig{DBName: dbname, SqliteSync: normalizeSqliteSync(sqliteSync, defaultSqliteSync)},
 		Server: sCfg,
 	}
 	clampServerConfig(&sysConfig.Server)
 	return sysConfig
+}
+
+// normalizeSqliteSync canonicalizes a synchronous-mode value to one of
+// "full" / "normal" / "off", falling back to `fallback` for empty or unknown
+// values so a typo in config.ini or env cannot silently break startup.
+func normalizeSqliteSync(value, fallback string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if allowedSqliteSync[normalized] {
+		return normalized
+	}
+	return fallback
 }
 
 // clampServerConfig enforces the same ranges as validateSystemSettings on
@@ -245,6 +284,12 @@ func clampServerConfig(sCfg *ServerConfig) {
 	sCfg.CopyConcurrency = clampInt(sCfg.CopyConcurrency, MinCopyConcurrency, MaxCopyConcurrency, DefaultCopyConcurrency)
 	sCfg.ScanConcurrency = clampInt(sCfg.ScanConcurrency, MinScanConcurrency, MaxScanConcurrency, DefaultScanConcurrency)
 	sCfg.MaxRetries = clampInt(sCfg.MaxRetries, MinMaxRetries, MaxRetryAttempts, DefaultMaxRetries)
+}
+
+// TLSEnabled reports whether both a certificate and key are configured so the
+// process can serve HTTPS and HTTP/3.
+func (s ServerConfig) TLSEnabled() bool {
+	return strings.TrimSpace(s.TLSCertFile) != "" && strings.TrimSpace(s.TLSKeyFile) != ""
 }
 
 func clampInt(value, min, max, fallback int) int {
@@ -336,7 +381,7 @@ func UpdateSystemSettings(settings SystemSettings) error {
 	nextServer.ScanConcurrency = settings.ScanConcurrency
 	nextServer.MaxRetries = settings.MaxRetries
 
-	if err := writeConfigFile(nextServer); err != nil {
+	if err := writeConfigFile(nextServer, cfg.DB.SqliteSync); err != nil {
 		return err
 	}
 	sysConfig = &Config{
@@ -395,7 +440,7 @@ func boolConfigValue(value string, fallback bool) bool {
 	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
-func writeConfigFile(sCfg ServerConfig) error {
+func writeConfigFile(sCfg ServerConfig, sqliteSync string) error {
 	dataDir := DataDir()
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return err
@@ -415,6 +460,7 @@ max_retries=%d
 trusted_proxies=%s
 allow_internal_webhook=%t
 allow_internal_alist=%t
+sqlite_sync=%s
 `,
 		sCfg.Bind,
 		sCfg.Port,
@@ -430,6 +476,7 @@ allow_internal_alist=%t
 		strings.Join(sCfg.TrustedProxies, ","),
 		sCfg.AllowInternalWebhook,
 		sCfg.AllowInternalAlist,
+		normalizeSqliteSync(sqliteSync, defaultSqliteSync),
 	)
 	tmpFile, err := os.CreateTemp(dataDir, "config.ini.*")
 	if err != nil {
