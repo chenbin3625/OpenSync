@@ -140,7 +140,7 @@ test('login page supports first-run web initialization', () => {
   assert.match(userApiSource, /getInitStatus/);
   assert.match(userApiSource, /initializeUser/);
   assert.match(loginSource, /getInitStatus\(\)/);
-  assert.match(loginSource, /initializeUser\(\{ userName: values\.userName, passwd: values\.passwd \}\)/);
+  assert.match(loginSource, /initializeUser\(\{[\s\S]*setupToken/);
   assert.match(loginSource, /confirmPasswd/);
   assert.match(loginSource, /创建管理员账号/);
   assert.match(loginSource, /recoveryKey/);

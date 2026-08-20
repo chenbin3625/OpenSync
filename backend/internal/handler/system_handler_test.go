@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -109,13 +111,21 @@ func TestInitializeReturnsRecoveryKeyOnce(t *testing.T) {
 
 	restoreDB := mapper.SetDBForTest(db)
 	t.Cleanup(restoreDB)
+	dataDir := t.TempDir()
+	t.Setenv("OPENSYNC_DATA_DIR", dataDir)
+	setupToken := "unit-test-setup-token"
+	if err := os.WriteFile(filepath.Join(dataDir, "setup.token"), []byte(setupToken), 0600); err != nil {
+		t.Fatalf("write setup token: %v", err)
+	}
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
+	router.Use(middleware.NoAuthCSRFProtection())
 	router.POST("/svr/noAuth/init", Initialize)
 
-	body := `{"userName":"admin","passwd":"correct-password"}`
+	body := fmt.Sprintf(`{"userName":"admin","passwd":"correct-password","setupToken":%q}`, setupToken)
 	req := httptest.NewRequest(http.MethodPost, "/svr/noAuth/init", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -299,6 +309,7 @@ func performLogin(router http.Handler, remoteAddr, userName, passwd string) *htt
 	body := fmt.Sprintf(`{"userName":%q,"passwd":%q}`, userName, passwd)
 	req := httptest.NewRequest(http.MethodPost, "/svr/noAuth/login", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.RemoteAddr = remoteAddr
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)

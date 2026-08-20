@@ -231,7 +231,13 @@ func CheckPwd(userID int64, passwd string, userName string) map[string]interface
 
 func CheckPwdScoped(userID int64, passwd string, userName string, clientScope string) map[string]interface{} {
 	scope := passwordErrorScope(userID, userName, clientScope)
-	CheckPwdTimeForScope(scope)
+	scopes := []string{scope}
+	if clientScope = strings.TrimSpace(clientScope); clientScope != "" {
+		scopes = append(scopes, "ip|"+clientScope)
+	}
+	for _, checkScope := range scopes {
+		CheckPwdTimeForScope(checkScope)
+	}
 	var user map[string]interface{}
 	var err error
 	if userID > 0 {
@@ -242,17 +248,23 @@ func CheckPwdScoped(userID int64, passwd string, userName string, clientScope st
 	if err != nil {
 		if errors.Is(err, mapper.ErrUserNotFound) {
 			checkDummyPassword(passwd)
-			AddPwdErrorForScope(scope)
+			for _, failureScope := range scopes {
+				AddPwdErrorForScope(failureScope)
+			}
 			panicPublic(msg.PasswdWrong)
 		}
 		panic(err.Error())
 	}
 	storedHash := fmt.Sprintf("%v", user["passwd"])
 	if !crypto.CheckPassword(passwd, storedHash) {
-		AddPwdErrorForScope(scope)
+		for _, failureScope := range scopes {
+			AddPwdErrorForScope(failureScope)
+		}
 		panicPublic(msg.PasswdWrong)
 	}
-	ClearPwdErrorForScope(scope)
+	for _, successScope := range scopes {
+		ClearPwdErrorForScope(successScope)
+	}
 	return user
 }
 

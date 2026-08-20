@@ -18,22 +18,20 @@ func TestParseExcludePatternsSupportsNewlinesAndComments(t *testing.T) {
 	}
 }
 
-func TestParseExcludePatternsKeepsColonCompatibility(t *testing.T) {
+func TestParseExcludePatternsTreatsColonsAsLiteral(t *testing.T) {
 	got := parseExcludePatterns("*.tmp : .git/ : node_modules/")
-	want := []string{"*.tmp", ".git/", "node_modules/"}
+	want := []string{"*.tmp : .git/ : node_modules/"}
 
 	if len(got) != len(want) {
 		t.Fatalf("parseExcludePatterns() length = %d, want %d (%#v)", len(got), len(want), got)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("parseExcludePatterns()[%d] = %q, want %q", i, got[i], want[i])
-		}
+	if got[0] != want[0] {
+		t.Fatalf("parseExcludePatterns()[0] = %q, want %q", got[0], want[0])
 	}
 }
 
 func TestNormalizeExcludeStoresNewlineSeparatedRules(t *testing.T) {
-	got := normalizeExclude("*.tmp : .git/ : node_modules/")
+	got := normalizeExclude("*.tmp\n.git/\nnode_modules/")
 	want := "*.tmp\n.git/\nnode_modules/"
 
 	if got != want {

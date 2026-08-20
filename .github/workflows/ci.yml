@@ -36,6 +36,13 @@ jobs:
         working-directory: backend
         run: go test -v ./...
 
+      - name: Run Backend Race Tests
+        working-directory: backend
+        run: go test -race ./...
+
+      - name: Test Container Entrypoint
+        run: go test docker-entrypoint.go docker-entrypoint_test.go
+
   test-frontend:
     name: Frontend Tests & Build
     runs-on: ubuntu-latest

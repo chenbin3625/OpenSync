@@ -3,6 +3,11 @@ services:
     image: chenbin3625/opensync:latest
     container_name: opensync
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "8023:8023"
     volumes:
@@ -17,4 +22,5 @@ services:
       TMPDIR: /tmp
       OPENSYNC_BIND: 0.0.0.0
       OPENSYNC_PORT: 8023
+      OPENSYNC_ALLOW_INTERNAL_ALIST: "true"
       GIN_MODE: release

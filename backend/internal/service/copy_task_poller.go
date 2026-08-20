@@ -36,8 +36,8 @@ type copyTaskMonitor struct {
 	mu      sync.Mutex
 	watches map[string]*copyTaskWatch
 	stopCh  chan struct{}
-	once    sync.Once
 	wg      sync.WaitGroup
+	started bool
 	// stopped is set under mu once the monitor loop has exited (task broken,
 	// timed out, or shut down). A track() call that arrives after the loop has
 	// exited must not enqueue a watch nobody will ever process, otherwise the
@@ -93,6 +93,7 @@ func (m *copyTaskMonitor) track(ci *CopyItem) {
 	}
 
 	abortSelf := false
+	startLoop := false
 	m.mu.Lock()
 	if m.stopped {
 		// The loop has already exited; enqueuing this watch would block the
@@ -100,6 +101,14 @@ func (m *copyTaskMonitor) track(ci *CopyItem) {
 		abortSelf = true
 	} else {
 		m.watches[m.watchKey(taskID, ci.CopyType)] = watch
+		if !m.started {
+			// Add before releasing m.mu. stop() takes the same lock before
+			// waiting, so it cannot observe a zero WaitGroup and return while
+			// the loop is still about to start.
+			m.started = true
+			m.wg.Add(1)
+			startLoop = true
+		}
 	}
 	m.mu.Unlock()
 	if abortSelf {
@@ -107,10 +116,9 @@ func (m *copyTaskMonitor) track(ci *CopyItem) {
 		return
 	}
 
-	m.once.Do(func() {
-		m.wg.Add(1)
+	if startLoop {
 		go m.loop()
-	})
+	}
 
 	select {
 	case <-watch.done:
@@ -124,13 +132,11 @@ func (m *copyTaskMonitor) track(ci *CopyItem) {
 }
 
 func (m *copyTaskMonitor) stop() {
-	select {
-	case <-m.stopCh:
-	default:
+	m.mu.Lock()
+	if !m.stopped {
+		m.stopped = true
 		close(m.stopCh)
 	}
-	m.mu.Lock()
-	m.stopped = true
 	m.mu.Unlock()
 	m.wg.Wait()
 }
@@ -138,6 +144,12 @@ func (m *copyTaskMonitor) stop() {
 func (m *copyTaskMonitor) loop() {
 	defer m.wg.Done()
 	for {
+		select {
+		case <-m.stopCh:
+			m.abortAll(m.jt.context().Err())
+			return
+		default:
+		}
 		if m.jt.isBreak() || m.jt.context().Err() != nil {
 			m.abortAll(m.jt.context().Err())
 			return
@@ -145,10 +157,18 @@ func (m *copyTaskMonitor) loop() {
 
 		active := m.snapshotWatches()
 		if len(active) == 0 {
+			timer := time.NewTimer(200 * time.Millisecond)
 			select {
 			case <-m.stopCh:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				m.abortAll(m.jt.context().Err())
 				return
-			case <-time.After(200 * time.Millisecond):
+			case <-timer.C:
 				continue
 			}
 		}
@@ -183,6 +203,7 @@ func (m *copyTaskMonitor) loop() {
 
 		select {
 		case <-m.stopCh:
+			m.abortAll(m.jt.context().Err())
 			return
 		default:
 		}
@@ -207,7 +228,16 @@ func (m *copyTaskMonitor) waitForPollInterval() bool {
 	} else {
 		sleepFor = 2930 * time.Millisecond
 	}
-	return m.jt.waitForBreak(sleepFor)
+	timer := time.NewTimer(sleepFor)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-m.stopCh:
+		return false
+	case <-m.jt.context().Done():
+		return false
+	}
 }
 
 func (m *copyTaskMonitor) fetchUndoneByType(active []*copyTaskWatch) map[taskItemType]map[string]map[string]interface{} {
@@ -287,10 +317,17 @@ func (m *copyTaskMonitor) pollTaskInfo(watch *copyTaskWatch) bool {
 		}
 		eMsg := err.Error()
 		if strings.Contains(eMsg, "404") {
-			if exists, verr := watch.ci.verifyDstExists(m.jt, client); verr == nil && exists {
+			exists, verr := watch.ci.verifyDstExists(m.jt, client)
+			if verr == nil && exists {
 				watch.ci.setProgress(taskStatusSuccess, 100, nil)
 				m.finishWatch(watch)
 				return true
+			}
+			if verr != nil {
+				watch.transientErrs++
+				if watch.transientErrs < maxTransientPollErrors {
+					return false
+				}
 			}
 			eMsg = msg.TaskMayDelete
 			watch.ci.setProgress(taskStatusFailed, 0, &eMsg)

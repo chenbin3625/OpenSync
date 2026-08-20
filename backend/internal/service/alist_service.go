@@ -2,10 +2,8 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
-	"net/url"
 	"opensync/internal/mapper"
 	"opensync/internal/msg"
 	"opensync/pkg/util"
@@ -77,10 +75,11 @@ func GetClientByIDContext(ctx context.Context, alistID int64) *AlistClient {
 		panicAlistClientLoadError(err)
 	}
 
+	token := decryptStoredSecret(fmt.Sprintf("%v", alist["token"]))
 	newClient, err := newAlistClientContext(
 		ctx,
 		fmt.Sprintf("%v", alist["url"]),
-		fmt.Sprintf("%v", alist["token"]),
+		token,
 		alistID,
 	)
 	if err != nil {
@@ -177,8 +176,8 @@ func normalizeAlistInput(alist map[string]interface{}) string {
 		}
 	}
 
-	urlStr := strings.TrimRight(fmt.Sprintf("%v", alist["url"]), "/")
-	if err := validateAlistURL(urlStr); err != nil {
+	urlStr, err := normalizeAlistBaseURL(fmt.Sprintf("%v", alist["url"]))
+	if err != nil {
 		panicPublic(err.Error())
 	}
 	alist["url"] = urlStr
@@ -186,15 +185,8 @@ func normalizeAlistInput(alist map[string]interface{}) string {
 }
 
 func validateAlistURL(rawURL string) error {
-	u, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return errors.New(msg.AlistURLInvalid)
-	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme == "http" || scheme == "https" {
-		return nil
-	}
-	return errors.New(msg.AlistURLInvalid)
+	_, err := normalizeAlistBaseURL(rawURL)
+	return err
 }
 
 func normalizeAlistToken(alist map[string]interface{}, required bool) (string, bool) {
@@ -245,7 +237,8 @@ func UpdateClient(alist map[string]interface{}) {
 
 	var tokenPtr *string
 	if hasToken {
-		tokenPtr = &token
+		encrypted := encryptStoredSecret(token)
+		tokenPtr = &encrypted
 	}
 	remarkStr := ""
 	remark, _ := alist["remark"]
@@ -279,8 +272,9 @@ func AddClient(alist map[string]interface{}) {
 		remarkStr = fmt.Sprintf("%v", alist["remark"])
 	}
 
-	newID, err := mapper.AddAlist(remarkStr, urlStr, client.User, token)
+	newID, err := mapper.AddAlist(remarkStr, urlStr, client.User, encryptStoredSecret(token))
 	if err != nil {
+		client.Close()
 		panic(err.Error())
 	}
 

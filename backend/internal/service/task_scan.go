@@ -8,6 +8,7 @@ import (
 	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -449,7 +450,8 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 	dstIndex := newDstNameMatchIndex(dstFiles)
 	srcIndex := newSrcNameMatchIndex(srcFiles)
 	matchedDstKeys := make(map[string]struct{})
-	for key, srcVal := range srcFiles {
+	for _, key := range sortedFileKeys(srcFiles) {
+		srcVal := srcFiles[key]
 		if jt.isBreak() {
 			break
 		}
@@ -516,7 +518,8 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 	}
 
 	if util.ToInt(jt.Job["method"]) == 1 {
-		for dstKey, dstVal := range dstFiles {
+		for _, dstKey := range sortedFileKeys(dstFiles) {
+			dstVal := dstFiles[dstKey]
 			if _, matched := matchedDstKeys[dstKey]; matched {
 				continue
 			}
@@ -557,7 +560,8 @@ func (jt *JobTask) syncWithoutHave(work scanWork, spec *ignore.GitIgnore) {
 	}
 
 	children := make([]scanWork, 0)
-	for key, srcVal := range srcFiles {
+	for _, key := range sortedFileKeys(srcFiles) {
+		srcVal := srcFiles[key]
 		if jt.isBreak() {
 			break
 		}
@@ -600,7 +604,22 @@ func fileChanged(srcVal, dstVal interface{}) bool {
 	if src.MD5 != "" && dst.MD5 != "" {
 		return src.MD5 != dst.MD5
 	}
-	return src.Size != dst.Size
+	if src.Size != dst.Size {
+		return true
+	}
+	if src.Modified != 0 && dst.Modified != 0 {
+		return src.Modified != dst.Modified
+	}
+	return false
+}
+
+func sortedFileKeys(files map[string]interface{}) []string {
+	keys := make([]string, 0, len(files))
+	for key := range files {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func fileSize(val interface{}) int64 {
@@ -619,6 +638,20 @@ func toFileMetadata(val interface{}) FileMetadata {
 		metadata := *v
 		metadata.MD5 = normalizeMD5(metadata.MD5)
 		return metadata
+	case map[string]interface{}:
+		md := FileMetadata{Size: util.ToInt64(v["Size"])}
+		if md.Size == 0 {
+			md.Size = util.ToInt64(v["size"])
+		}
+		if raw, ok := v["MD5"]; ok {
+			md.MD5 = normalizeMD5(fmt.Sprintf("%v", raw))
+		}
+		if raw, ok := v["Modified"]; ok {
+			md.Modified = util.ToInt64(raw)
+		} else if raw, ok := v["modified"]; ok {
+			md.Modified = util.ToInt64(raw)
+		}
+		return md
 	default:
 		return FileMetadata{Size: util.ToInt64(val)}
 	}

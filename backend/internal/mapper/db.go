@@ -28,6 +28,22 @@ const maxPageSize = 500
 const defaultUnpagedLimit = 500
 const sqliteMaxOpenConns = 12
 
+func pageOffset(pageSize, pageNum int) (int64, error) {
+	if pageSize <= 0 || pageNum <= 0 {
+		return 0, errors.New(msg.LostPart)
+	}
+	// Keep the multiplication in int64 and reject values that cannot be
+	// represented by SQLite's signed integer offset instead of allowing an int
+	// overflow to turn a large page number into a negative OFFSET.
+	pageIndex := int64(pageNum) - 1
+	size := int64(pageSize)
+	maxInt64 := int64(^uint64(0) >> 1)
+	if pageIndex > maxInt64/size {
+		return 0, errors.New(msg.LostPart)
+	}
+	return pageIndex * size, nil
+}
+
 // InitDB initializes the database connection
 func InitDB() *sql.DB {
 	once.Do(func() {
@@ -47,6 +63,9 @@ func InitDB() *sql.DB {
 		}
 		if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 			log.Printf("Failed to set sqlite busy_timeout: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+			log.Printf("Failed to enable sqlite foreign keys: %v", err)
 		}
 	})
 	return db
@@ -98,6 +117,7 @@ func sqliteDSN(dbName string) string {
 	pragmas := url.Values{}
 	pragmas.Add("_pragma", "busy_timeout(5000)")
 	pragmas.Add("_pragma", "journal_mode(WAL)")
+	pragmas.Add("_pragma", "foreign_keys(ON)")
 	query := pragmas.Encode()
 	if strings.HasPrefix(dbName, "file:") {
 		sep := "?"
@@ -246,13 +266,21 @@ func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...in
 		if err != nil {
 			return nil, err
 		}
-		return map[string]interface{}{
+		total := util.ToInt64(count)
+		result := map[string]interface{}{
 			"dataList": dataList,
-			"count":    util.ToInt64(count),
-		}, nil
+			"count":    total,
+		}
+		if total > int64(len(dataList)) {
+			result["truncated"] = true
+		}
+		return result, nil
 	}
 
-	offset := (pn - 1) * ps
+	offset, err := pageOffset(ps, pn)
+	if err != nil {
+		return nil, err
+	}
 
 	dataQuery := baseSQL + fmt.Sprintf(" LIMIT %d OFFSET %d", ps, offset)
 	dataList, err := FetchAllToTable(dataQuery, sqlArgs...)
@@ -296,6 +324,11 @@ func parsePageParams(params map[string]interface{}) (pageSize, pageNum int, pagi
 	}
 	if pageSize > maxPageSize {
 		pageSize = maxPageSize
+	}
+	// The offset is emitted as a SQLite integer. Validate the full page
+	// calculation once here so all mapper callers get the same behavior.
+	if _, err := pageOffset(pageSize, pageNum); err != nil {
+		return 0, 0, false, err
 	}
 	return pageSize, pageNum, true, nil
 }

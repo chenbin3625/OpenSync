@@ -170,6 +170,28 @@ func TestGetContextDoesNotSendContentTypeWithoutBody(t *testing.T) {
 	}
 }
 
+func TestAlistRequestURLPreservesConfiguredBasePath(t *testing.T) {
+	client := &AlistClient{URL: "https://alist.example.test/root/"}
+	got, err := client.requestURL("/api/me", map[string]string{"page": "2"})
+	if err != nil {
+		t.Fatalf("requestURL() error: %v", err)
+	}
+	if got != "https://alist.example.test/root/api/me?page=2" {
+		t.Fatalf("requestURL() = %q, want base path and query preserved", got)
+	}
+}
+
+func TestValidateAlistURLRejectsQueryAndFragment(t *testing.T) {
+	for _, raw := range []string{
+		"https://alist.example.test/root?token=secret",
+		"https://alist.example.test/root#fragment",
+	} {
+		if err := validateAlistURL(raw); err == nil {
+			t.Fatalf("validateAlistURL(%q) error = nil, want rejection", raw)
+		}
+	}
+}
+
 func TestTaskUndoneListContextUsesOperationSpecificTaskEndpoint(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

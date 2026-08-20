@@ -73,6 +73,13 @@ func TestParsePageParamsAllowsUnpaginatedRequests(t *testing.T) {
 	}
 }
 
+func TestPageOffsetRejectsIntegerOverflow(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	if _, err := pageOffset(maxPageSize, maxInt); err == nil {
+		t.Fatal("pageOffset() error = nil, want overflow rejection")
+	}
+}
+
 func TestCheckAndAddSQLRejectsUnsafeColumnNames(t *testing.T) {
 	_, _, err := CheckAndAddSQL("UPDATE job SET", []string{"remark; DROP TABLE job;--"}, map[string]interface{}{
 		"id":                        1,

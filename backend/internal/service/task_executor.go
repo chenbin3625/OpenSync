@@ -54,8 +54,7 @@ func (jt *JobTask) stopCopyExecutorIfBroken() bool {
 
 func (jt *JobTask) startAvailableCopyItems() bool {
 	started := false
-	limits := runtimeTaskLimits()
-	for jt.doingLen() < limits.CopyConcurrency {
+	for jt.doingLen() < jt.copyConcurrencyLimit() {
 		if jt.isBreak() {
 			jt.markWaitingAsAborted()
 			break

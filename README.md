@@ -65,7 +65,7 @@ OpenSync 是面向飞牛 fnOS / 飞牛 NAS、普通 NAS 和 Docker 环境的 ALi
 
 ## 自定义 Webhook 通知
 
-在通知配置页新增通知时，选择“自定义Webhook”即可接入支持 HTTPS 回调的消息服务或自动化平台。
+在通知配置页新增通知时，选择“自定义Webhook”即可接入支持 HTTPS 回调的消息服务或自动化平台。需要访问内网目标时，显式设置 `OPENSYNC_ALLOW_INTERNAL_WEBHOOK=true`，但 URL 仍必须使用 HTTPS。
 
 - `URL` 为必填项，必须填写有效的 HTTPS Webhook 地址。
 - `HTTP方法` 支持 `GET`、`POST`、`PUT`，默认使用 `POST`。
@@ -150,6 +150,7 @@ services:
       PGID: ${PGID:-1000}
       OPENSYNC_BIND: 0.0.0.0
       OPENSYNC_PORT: 8023
+      OPENSYNC_ALLOW_INTERNAL_ALIST: "true"
       GIN_MODE: release
 ```
 
@@ -185,13 +186,14 @@ docker run -d \
 
 ## 配置
 
-定时任务时区始终由 `TZ` 控制；当 `data/config.ini` 不存在时，其它启动配置会读取环境变量：
+定时任务时区始终由 `TZ` 控制。环境变量会覆盖 `data/config.ini` 中同名的启动配置，方便容器部署：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `TZ` | `Asia/Shanghai` | 容器和定时任务使用的时区 |
 | `OPENSYNC_BIND` | `0.0.0.0` | HTTP 监听地址 |
 | `OPENSYNC_PORT` | `8023` | HTTP 服务端口 |
+| `OPENSYNC_DATA_DIR` | `data`（容器为 `/app/data`） | 持久化数据库、密钥、配置和日志目录 |
 | `OPENSYNC_EXPIRES` | `7` | 登录有效期，单位天 |
 | `OPENSYNC_LOG_LEVEL` | `1` | 文件日志等级 |
 | `OPENSYNC_CONSOLE_LEVEL` | `2` | 控制台日志等级 |
@@ -201,6 +203,9 @@ docker run -d \
 | `OPENSYNC_COPY_CONCURRENCY` | `5` | 单个任务的复制并发数，范围 `1` 到 `100` |
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | 单个任务的扫描并发数，范围 `1` 到 `20` |
 | `OPENSYNC_MAX_RETRIES` | `2` | 单个复制项失败后的最大自动重试次数，`0` 表示不自动重试 |
+| `OPENSYNC_TRUSTED_PROXIES` | 空 | 允许转发 HTTPS 信息的代理 IP/CIDR，多个值用逗号分隔 |
+| `OPENSYNC_ALLOW_INTERNAL_WEBHOOK` | `false` | 是否允许通知访问内网地址；Webhook URL 仍必须使用 HTTPS |
+| `OPENSYNC_ALLOW_INTERNAL_ALIST` | `false` | 是否允许 AList 位于内网/回环地址；NAS/内网部署通常需要显式开启 |
 | `OPENSYNC_CHOWN` | 自动 | 容器数据目录权限策略：`always` 强制递归修改，`never` 跳过，未设置时仅在目录所有者不匹配时修改 |
 
 如果需要使用配置文件，可以创建或通过系统设置页生成 `data/config.ini`：
@@ -400,7 +405,7 @@ Adjust history retention, task timeout, copy/scan concurrency, and auto-retry co
 
 ## Custom Webhook Notifications
 
-When creating a notification on the config page, choose "Custom Webhook" to integrate an HTTPS-callback messaging service or automation platform.
+When creating a notification on the config page, choose "Custom Webhook" to integrate an HTTPS-callback messaging service or automation platform. For a private/internal target, explicitly set `OPENSYNC_ALLOW_INTERNAL_WEBHOOK=true`; the URL must still use HTTPS.
 
 - `URL` is required and must be a valid HTTPS webhook address.
 - `HTTP method` supports `GET`, `POST`, and `PUT`; defaults to `POST`.
@@ -485,6 +490,7 @@ services:
       PGID: ${PGID:-1000}
       OPENSYNC_BIND: 0.0.0.0
       OPENSYNC_PORT: 8023
+      OPENSYNC_ALLOW_INTERNAL_ALIST: "true"
       GIN_MODE: release
 ```
 
@@ -520,13 +526,14 @@ Do not delete `data/secret.key` when upgrading, otherwise old login cookies and 
 
 ## Configuration
 
-The timezone of scheduled tasks is always controlled by `TZ`; when `data/config.ini` does not exist, other startup settings are read from environment variables:
+The timezone of scheduled tasks is always controlled by `TZ`. Environment variables override same-named startup settings in `data/config.ini`, which makes container deployment predictable:
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `TZ` | `Asia/Shanghai` | Timezone used by the container and scheduled tasks |
 | `OPENSYNC_BIND` | `0.0.0.0` | HTTP listen address |
 | `OPENSYNC_PORT` | `8023` | HTTP service port |
+| `OPENSYNC_DATA_DIR` | `data` (`/app/data` in the container) | Persistent database, secret, config, and log directory |
 | `OPENSYNC_EXPIRES` | `7` | Login validity, in days |
 | `OPENSYNC_LOG_LEVEL` | `1` | File log level |
 | `OPENSYNC_CONSOLE_LEVEL` | `2` | Console log level |
@@ -536,6 +543,9 @@ The timezone of scheduled tasks is always controlled by `TZ`; when `data/config.
 | `OPENSYNC_COPY_CONCURRENCY` | `5` | Copy concurrency per task, range `1` to `100` |
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | Scan concurrency per task, range `1` to `20` |
 | `OPENSYNC_MAX_RETRIES` | `2` | Max auto-retries after a copy item fails, `0` disables auto-retry |
+| `OPENSYNC_TRUSTED_PROXIES` | empty | Proxy IP/CIDR values allowed to provide forwarded HTTPS information, comma-separated |
+| `OPENSYNC_ALLOW_INTERNAL_WEBHOOK` | `false` | Allow notification targets on private/internal IPs; webhook URLs must still use HTTPS |
+| `OPENSYNC_ALLOW_INTERNAL_ALIST` | `false` | Allow AList on private/loopback addresses; normally enable explicitly for NAS/LAN deployments |
 | `OPENSYNC_CHOWN` | auto | Data directory ownership policy: `always` forces a recursive chown, `never` skips it; unset only chowns when the owner does not match |
 
 To use a config file, create one or generate it from the System Settings page:

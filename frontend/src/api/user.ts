@@ -5,11 +5,12 @@ export function login(data: { userName: string; passwd: string }) {
   return request.post('/noAuth/login', data) as Promise<ApiResponse<UserInfo>>;
 }
 
-export function getInitStatus() {
-  return request.get('/noAuth/init') as Promise<ApiResponse<InitStatus>>;
+export function getInitStatus(setupToken?: string) {
+  const params = setupToken ? { setupToken } : undefined;
+  return request.get('/noAuth/init', { params }) as Promise<ApiResponse<InitStatus>>;
 }
 
-export function initializeUser(data: { userName: string; passwd: string }) {
+export function initializeUser(data: { userName: string; passwd: string; setupToken: string }) {
   return request.post('/noAuth/init', data) as Promise<ApiResponse<InitUserInfo>>;
 }
 

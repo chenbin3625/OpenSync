@@ -9,6 +9,7 @@ import (
 )
 
 const progressNotifyDebounce = 400 * time.Millisecond
+const maxProgressSubscribersPerJob = 8
 
 type progressHub struct {
 	mu          sync.Mutex
@@ -23,7 +24,9 @@ var jobProgressHub = &progressHub{
 
 func SubscribeJobProgress(jobID int64) <-chan []byte {
 	ch := make(chan []byte, 1)
-	jobProgressHub.subscribe(jobID, ch)
+	if !jobProgressHub.subscribe(jobID, ch) {
+		return nil
+	}
 	return ch
 }
 
@@ -31,13 +34,17 @@ func UnsubscribeJobProgress(jobID int64, ch <-chan []byte) {
 	jobProgressHub.unsubscribe(jobID, ch)
 }
 
-func (h *progressHub) subscribe(jobID int64, ch chan []byte) {
+func (h *progressHub) subscribe(jobID int64, ch chan []byte) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.subscribers[jobID] == nil {
 		h.subscribers[jobID] = make(map[chan []byte]struct{})
 	}
+	if len(h.subscribers[jobID]) >= maxProgressSubscribersPerJob {
+		return false
+	}
 	h.subscribers[jobID][ch] = struct{}{}
+	return true
 }
 
 func (h *progressHub) unsubscribe(jobID int64, ch <-chan []byte) {

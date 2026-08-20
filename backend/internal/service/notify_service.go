@@ -200,7 +200,7 @@ func resolveNotifyParams(notify map[string]interface{}) (map[string]interface{},
 	if err != nil || existing == nil {
 		return incoming, nil
 	}
-	existingParams, _ := parseNotifyParams(fmt.Sprintf("%v", existing["params"]))
+	existingParams, _ := parseNotifyParams(decryptStoredSecret(fmt.Sprintf("%v", existing["params"])))
 	for _, key := range notifySecretKeys[method] {
 		v, ok := incoming[key]
 		if !ok || v == nil {
@@ -274,12 +274,6 @@ func validateNotifyWebhookURL(rawURL string) error {
 		return errors.New(msg.NotifyURLInvalid)
 	}
 	scheme := strings.ToLower(u.Scheme)
-	if config.GetConfig().Server.AllowInternalWebhook {
-		if scheme == "http" || scheme == "https" {
-			return nil
-		}
-		return errors.New(msg.NotifyURLInvalid)
-	}
 	if scheme != "https" {
 		return errors.New(msg.NotifyURLInvalid)
 	}
@@ -307,6 +301,7 @@ func AddNewNotify(notify map[string]interface{}) {
 	if err := validateNotifyParams(method, params); err != nil {
 		panicPublic(err.Error())
 	}
+	notify["params"] = encryptStoredSecret(fmt.Sprintf("%v", notify["params"]))
 	_, err = mapper.AddNotify(notify)
 	if err != nil {
 		panic(err.Error())
@@ -328,7 +323,7 @@ func EditNotify(notify map[string]interface{}) {
 	if err != nil {
 		panic(err.Error())
 	}
-	notify["params"] = string(out)
+	notify["params"] = encryptStoredSecret(string(out))
 	if err := mapper.EditNotify(notify); err != nil {
 		panic(err.Error())
 	}
@@ -374,7 +369,7 @@ func TestNotify(notify map[string]interface{}) {
 	if err != nil {
 		panic(err.Error())
 	}
-	notify["params"] = string(out)
+	notify["params"] = encryptStoredSecret(string(out))
 	testMsg := msg.NotifyTestMsg
 	sendNotify(notify, "OpenSync Test", testMsg, false)
 }
@@ -455,7 +450,7 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 
 // sendNotify sends a notification via the configured method
 func sendNotify(notify map[string]interface{}, title, content string, needNotSync bool) {
-	paramsStr := fmt.Sprintf("%v", notify["params"])
+	paramsStr := decryptStoredSecret(fmt.Sprintf("%v", notify["params"]))
 	params, err := parseNotifyParams(paramsStr)
 	if err != nil {
 		panic(err.Error())
@@ -536,10 +531,7 @@ func sendNotifyRequestBytes(client *http.Client, req *http.Request) []byte {
 		panic(err.Error())
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		msg := strings.TrimSpace(string(bodyBytes))
-		if msg != "" {
-			log.Printf("notify request failed: status=%s body=%q", resp.Status, msg)
-		}
+		log.Printf("notify request failed: status=%s", resp.Status)
 		panic(fmt.Sprintf("notify request failed: %s", resp.Status))
 	}
 	return bodyBytes
@@ -557,7 +549,7 @@ func notifyProviderError(body []byte, fields ...string) error {
 	for _, field := range fields {
 		if v, ok := m[field]; ok {
 			if code := util.ToInt(v); code != 0 {
-				return fmt.Errorf("notify %s=%d: %s", field, code, strings.TrimSpace(string(body)))
+				return fmt.Errorf("notify %s=%d", field, code)
 			}
 			return nil
 		}
@@ -569,17 +561,27 @@ func doNotifyRequest(client *http.Client, req *http.Request) *http.Response {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Do(req)
-	if err != nil {
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			return resp
+		}
 		// On a redirect error client.Do can return a non-nil resp together
 		// with err; close the body or the underlying connection leaks.
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
-		log.Printf("notify request failed: target=%s error=%s", notifyRequestTarget(req), notifyNetworkError(err))
-		panicPublic(msg.NotifySendFail)
+		lastErr = err
+		log.Printf("notify request attempt %d failed: target=%s error=%s", attempt+1, notifyRequestTarget(req), notifyNetworkError(err))
 	}
-	return resp
+	log.Printf("notify request failed after %d attempts: %v", maxAttempts, lastErr)
+	panicPublic(msg.NotifySendFail)
+	return nil
 }
 
 func notifyRequestTarget(req *http.Request) string {
@@ -777,7 +779,7 @@ func sendWeCom(client *http.Client, params map[string]interface{}, title, conten
 		panic(err.Error())
 	}
 	if tokenResult.ErrCode != 0 {
-		panic(fmt.Sprintf("WeCom token error: %s", strings.TrimSpace(string(tokenBody))))
+		panic(fmt.Sprintf("WeCom token error: errcode=%d", tokenResult.ErrCode))
 	}
 
 	// Send message

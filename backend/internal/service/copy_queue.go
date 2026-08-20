@@ -87,10 +87,17 @@ func (q *copyQueue) snapshotPage(pageSize, pageNum int) ([]*CopyItem, int) {
 	if pageSize <= 0 || pageNum <= 0 {
 		return append([]*CopyItem(nil), active...), count
 	}
-	start := (pageNum - 1) * pageSize
-	if start >= count {
+	pageIndex := int64(pageNum) - 1
+	size := int64(pageSize)
+	maxInt := int64(^uint(0) >> 1)
+	if pageIndex > maxInt/size {
 		return []*CopyItem{}, count
 	}
+	start64 := pageIndex * size
+	if start64 >= int64(count) {
+		return []*CopyItem{}, count
+	}
+	start := int(start64)
 	end := start + pageSize
 	if end > count {
 		end = count

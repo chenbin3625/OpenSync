@@ -216,21 +216,23 @@ func TestCopyItemRetriesFailedCopyBeforeSuccess(t *testing.T) {
 
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/fs/copy" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
 		w.Header().Set("Content-Type", "application/json")
-		if attempts.Add(1) <= 2 {
-			_, _ = w.Write([]byte(`{"code":500,"message":"boom","data":{}}`))
-			return
+		switch r.URL.Path {
+		case "/api/fs/copy":
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			if attempts.Add(1) <= 2 {
+				_, _ = w.Write([]byte(`{"code":500,"message":"boom","data":{}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"tasks":[]}}`))
+		case "/api/fs/get":
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"name":"file.txt"}}`))
+		default:
+			http.NotFound(w, r)
 		}
-		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"tasks":[]}}`))
 	}))
 	defer server.Close()
 

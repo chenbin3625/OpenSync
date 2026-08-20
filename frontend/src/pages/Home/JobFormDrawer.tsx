@@ -30,7 +30,7 @@ const cronFieldRanges: Record<string, [number, number]> = {
   hour: [0, 23],
   day: [1, 31],
   month: [1, 12],
-  day_of_week: [0, 6],
+  day_of_week: [0, 7],
 };
 
 // Validates a single cron field value against its allowed range. Supports the
@@ -102,6 +102,7 @@ export default function JobFormDrawer({
     clearTree: clearSrcTree,
     onLoadData: onLoadSrcData,
     setLoadedKeys: setSrcLoadedKeys,
+    treeError: srcTreeError,
   } = usePathTree(selectedAlistId, treeLoadRequestRef);
   const {
     treeData: dstTreeData,
@@ -109,6 +110,7 @@ export default function JobFormDrawer({
     clearTree: clearDstTree,
     onLoadData: onLoadDstData,
     setLoadedKeys: setDstLoadedKeys,
+    treeError: dstTreeError,
   } = usePathTree(selectedAlistId, treeLoadRequestRef);
 
   useEffect(() => {
@@ -306,7 +308,7 @@ export default function JobFormDrawer({
                 treeNodeFilterProp="title"
                 styles={{ popup: { root: { maxHeight: 300, overflow: 'auto' } } }}
                 suffixIcon={treeLoading ? <Spin size="small" /> : undefined}
-                notFoundContent={selectedAlistId ? '请先展开目录' : '请先选择引擎'}
+                notFoundContent={srcTreeError ? '目录加载失败，请重试' : selectedAlistId ? '请先展开目录' : '请先选择引擎'}
               />
             </Form.Item>
           </Col>
@@ -324,7 +326,7 @@ export default function JobFormDrawer({
                 treeNodeFilterProp="title"
                 styles={{ popup: { root: { maxHeight: 300, overflow: 'auto' } } }}
                 suffixIcon={treeLoading ? <Spin size="small" /> : undefined}
-                notFoundContent={selectedAlistId ? '请先展开目录' : '请先选择引擎'}
+                notFoundContent={dstTreeError ? '目录加载失败，请重试' : selectedAlistId ? '请先展开目录' : '请先选择引擎'}
               />
             </Form.Item>
           </Col>

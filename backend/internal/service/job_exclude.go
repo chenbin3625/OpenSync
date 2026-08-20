@@ -1,6 +1,8 @@
 package service
 
-import "strings"
+import (
+	"strings"
+)
 
 func parseExcludePatterns(exclude string) []string {
 	exclude = strings.TrimSpace(exclude)
@@ -8,12 +10,7 @@ func parseExcludePatterns(exclude string) []string {
 		return nil
 	}
 
-	separator := "\n"
-	if !strings.Contains(exclude, "\n") && strings.Contains(exclude, ":") {
-		separator = ":"
-	}
-
-	parts := strings.Split(exclude, separator)
+	parts := strings.Split(exclude, "\n")
 	patterns := make([]string, 0, len(parts))
 	for _, part := range parts {
 		pattern := strings.TrimSpace(part)

@@ -391,9 +391,10 @@ export default function TaskList({
 
   const fetchList = useCallback(async (showLoading = false) => {
     if (!jobId) return;
-    // Skip while a previous request is still in flight so a poll tick doesn't
-    // cancel the in-flight request (which still runs the DB query server-side).
-    if (listFetchingRef.current) return;
+    // Keep the view responsive when filters/page changes race a slow request.
+    // Abort the stale browser request and let the latest request own the state;
+    // the request ID guard below prevents the old response from winning.
+    if (listFetchingRef.current) listAbortRef.current?.abort();
     listFetchingRef.current = true;
     const controller = new AbortController();
     listAbortRef.current = controller;
@@ -431,7 +432,10 @@ export default function TaskList({
         }
       }
     } finally {
-      listFetchingRef.current = false;
+      if (listAbortRef.current === controller) {
+        listFetchingRef.current = false;
+        listAbortRef.current = null;
+      }
       if (showLoading && loadingRequestID === listLoadingRequestRef.current) {
         setLoading(false);
       }
@@ -554,17 +558,19 @@ export default function TaskList({
               />
             </Tooltip>
           )}
-          <Tooltip title="删除">
-            <Popconfirm title="确认删除此任务？" onConfirm={() => handleDeleteTask(record.id)}>
-              <Button
-                size="small"
-                type="text"
-                danger
-                icon={<DeleteOutlined />}
-                aria-label="删除"
-              />
-            </Popconfirm>
-          </Tooltip>
+          {(record.status !== 0 && record.status !== 1) && (
+            <Tooltip title="删除">
+              <Popconfirm title="确认删除此任务？" onConfirm={() => handleDeleteTask(record.id)}>
+                <Button
+                  size="small"
+                  type="text"
+                  danger
+                  icon={<DeleteOutlined />}
+                  aria-label="删除"
+                />
+              </Popconfirm>
+            </Tooltip>
+          )}
         </Space>
       ),
     },

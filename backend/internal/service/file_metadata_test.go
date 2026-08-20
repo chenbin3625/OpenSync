@@ -11,6 +11,15 @@ func TestFileChangedUsesMD5WhenBothSidesHaveMD5(t *testing.T) {
 	}
 }
 
+func TestFileChangedUsesModifiedWhenMD5Missing(t *testing.T) {
+	src := FileMetadata{Size: 100, Modified: 200}
+	dst := FileMetadata{Size: 100, Modified: 201}
+
+	if !fileChanged(src, dst) {
+		t.Fatalf("fileChanged() = false, want true when size matches but modified differs")
+	}
+}
+
 func TestFileChangedFallsBackToSizeWhenEitherMD5Missing(t *testing.T) {
 	src := FileMetadata{Size: 100, MD5: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	dst := FileMetadata{Size: 100}
