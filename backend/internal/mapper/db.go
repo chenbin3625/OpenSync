@@ -29,6 +29,11 @@ const maxPageSize = 500
 const defaultUnpagedLimit = 500
 const sqliteMaxOpenConns = 12
 
+// pageTotalColumn is injected via COUNT(*) OVER() so list + total share one
+// SQLite round-trip. The name is reserved for mapper pagination and stripped
+// before rows leave FetchAllToPage.
+const pageTotalColumn = "__opensync_page_total"
+
 func pageOffset(pageSize, pageNum int) (int64, error) {
 	if pageSize <= 0 || pageNum <= 0 {
 		return 0, errors.New(msg.LostPart)
@@ -51,7 +56,7 @@ func InitDB() *sql.DB {
 		cfg := config.GetConfig()
 		var err error
 		ensureSQLiteFileMode(cfg.DB.DBName)
-		db, err = sql.Open("sqlite", sqliteDSN(cfg.DB.DBName))
+		db, err = sql.Open("sqlite", sqliteDSN(cfg.DB))
 		if err != nil {
 			log.Fatalf("Failed to open database: %v", err)
 		}
@@ -67,6 +72,20 @@ func InitDB() *sql.DB {
 		}
 		if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
 			log.Printf("Failed to enable sqlite foreign keys: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA temp_store=MEMORY"); err != nil {
+			log.Printf("Failed to set sqlite temp_store: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA cache_size=-16384"); err != nil {
+			log.Printf("Failed to set sqlite cache_size: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA mmap_size=67108864"); err != nil {
+			log.Printf("Failed to set sqlite mmap_size: %v", err)
+		}
+		if mode := normalizeSqliteSync(cfg.DB.SqliteSync); mode != "" {
+			if _, err := db.Exec("PRAGMA synchronous=" + mode); err != nil {
+				log.Printf("Failed to set sqlite synchronous mode: %v", err)
+			}
 		}
 	})
 	dbMu.RLock()
@@ -113,7 +132,20 @@ func sqliteDBPath(dbName string) (string, bool) {
 	return dbName, true
 }
 
-func sqliteDSN(dbName string) string {
+// normalizeSqliteSync keeps the sqlite synchronous mode within the three valid
+// values, returning empty for anything unrecognized so the DSN omits it (the
+// driver default is then used).
+func normalizeSqliteSync(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "full", "normal", "off":
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return ""
+	}
+}
+
+func sqliteDSN(cfg config.DBConfig) string {
+	dbName := cfg.DBName
 	if dbName == ":memory:" {
 		return dbName
 	}
@@ -121,6 +153,16 @@ func sqliteDSN(dbName string) string {
 	pragmas.Add("_pragma", "busy_timeout(5000)")
 	pragmas.Add("_pragma", "journal_mode(WAL)")
 	pragmas.Add("_pragma", "foreign_keys(ON)")
+	pragmas.Add("_pragma", "temp_store(MEMORY)")
+	pragmas.Add("_pragma", "cache_size(-16384)")  // 16 MiB page cache
+	pragmas.Add("_pragma", "mmap_size(67108864)") // 64 MiB mmap; bounds RSS on small NAS boxes
+	// WAL + NORMAL is the default (see config.defaultSqliteSync). FULL fsyncs
+	// every commit and is the dominant I/O cost on NAS disks; OFF is opt-in.
+	// Defensively normalize even though GetConfig already canonicalizes, so a
+	// test or future caller passing a raw value cannot emit a bad PRAGMA.
+	if mode := normalizeSqliteSync(cfg.SqliteSync); mode != "" {
+		pragmas.Add("_pragma", "synchronous("+mode+")")
+	}
 	query := pragmas.Encode()
 	if strings.HasPrefix(dbName, "file:") {
 		sep := "?"
@@ -183,17 +225,19 @@ func FetchAllToTable(query string, args ...interface{}) ([]map[string]interface{
 		return nil, err
 	}
 
-	var results []map[string]interface{}
+	n := len(columns)
+	values := make([]interface{}, n)
+	valuePtrs := make([]interface{}, n)
+	for i := range valuePtrs {
+		valuePtrs[i] = &values[i]
+	}
+
+	results := make([]map[string]interface{}, 0, 16)
 	for rows.Next() {
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
 		if err := rows.Scan(valuePtrs...); err != nil {
 			return nil, err
 		}
-		row := make(map[string]interface{})
+		row := make(map[string]interface{}, n)
 		for i, col := range columns {
 			val := values[i]
 			if b, ok := val.([]byte); ok {
@@ -263,58 +307,102 @@ func ExecuteMany(query string, argsList [][]interface{}) error {
 	return nil
 }
 
-// FetchAllToPage executes a paginated query
+// FetchAllToPage executes a paginated query in a single SQLite round-trip
+// (COUNT(*) OVER() + bound LIMIT/OFFSET). A separate COUNT is only used when
+// the page is empty past the first page, or the SQL cannot take a window
+// (UNION), so list and total stay consistent under WAL writers.
 func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...interface{}) (map[string]interface{}, error) {
 	ps, pn, paginated, err := parsePageParams(params)
 	if err != nil {
 		return nil, err
 	}
 	if !paginated {
-		dataList, err := FetchAllToTable(withDefaultLimit(baseSQL), sqlArgs...)
-		if err != nil {
-			return nil, err
-		}
-		countQuery := "SELECT COUNT(*) FROM (" + stripOrderBy(baseSQL) + ")"
-		count, err := FetchFirstVal(countQuery, sqlArgs...)
-		if err != nil {
-			return nil, err
-		}
-		total := util.ToInt64(count)
-		result := map[string]interface{}{
-			"dataList": dataList,
-			"count":    total,
-		}
-		if total > int64(len(dataList)) {
-			result["truncated"] = true
-		}
-		return result, nil
+		return fetchPage(baseSQL, defaultUnpagedLimit, 0, false, sqlArgs)
 	}
 
 	offset, err := pageOffset(ps, pn)
 	if err != nil {
 		return nil, err
 	}
-
-	dataQuery := baseSQL + fmt.Sprintf(" LIMIT %d OFFSET %d", ps, offset)
-	dataList, err := FetchAllToTable(dataQuery, sqlArgs...)
-	if err != nil {
-		return nil, err
-	}
-
-	countQuery := "SELECT COUNT(*) FROM (" + stripOrderBy(baseSQL) + ")"
-	count, err := FetchFirstVal(countQuery, sqlArgs...)
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{
-		"dataList": dataList,
-		"count":    util.ToInt64(count),
-	}, nil
+	return fetchPage(baseSQL, ps, offset, true, sqlArgs)
 }
 
-func withDefaultLimit(baseSQL string) string {
-	return baseSQL + fmt.Sprintf(" LIMIT %d", defaultUnpagedLimit)
+func fetchPage(baseSQL string, limit int, offset int64, paginated bool, sqlArgs []interface{}) (map[string]interface{}, error) {
+	query, args, _ := pageQuery(baseSQL, limit, offset, paginated, sqlArgs)
+	dataList, err := FetchAllToTable(query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	total, hasTotal := takePageTotal(dataList)
+	if !hasTotal {
+		if len(dataList) == 0 && offset == 0 {
+			total = 0
+		} else {
+			count, err := FetchFirstVal(countQueryFromSelect(baseSQL), sqlArgs...)
+			if err != nil {
+				return nil, err
+			}
+			total = util.ToInt64(count)
+		}
+	}
+
+	result := map[string]interface{}{
+		"dataList": dataList,
+		"count":    total,
+	}
+	if !paginated && total > int64(len(dataList)) {
+		result["truncated"] = true
+	}
+	return result, nil
+}
+
+func pageQuery(baseSQL string, limit int, offset int64, paginated bool, sqlArgs []interface{}) (string, []interface{}, bool) {
+	if canUseWindowCount(baseSQL) {
+		query := withPageTotal(baseSQL)
+		if paginated {
+			return query + " LIMIT ? OFFSET ?", appendSQLArgs(sqlArgs, limit, offset), true
+		}
+		return query + " LIMIT ?", appendSQLArgs(sqlArgs, limit), true
+	}
+	if paginated {
+		return baseSQL + " LIMIT ? OFFSET ?", appendSQLArgs(sqlArgs, limit, offset), false
+	}
+	return baseSQL + " LIMIT ?", appendSQLArgs(sqlArgs, limit), false
+}
+
+func appendSQLArgs(sqlArgs []interface{}, extra ...interface{}) []interface{} {
+	args := make([]interface{}, 0, len(sqlArgs)+len(extra))
+	args = append(args, sqlArgs...)
+	return append(args, extra...)
+}
+
+func canUseWindowCount(baseSQL string) bool {
+	return !strings.Contains(strings.ToUpper(baseSQL), " UNION ")
+}
+
+func withPageTotal(baseSQL string) string {
+	sql := strings.TrimSpace(baseSQL)
+	if len(sql) < 7 || !strings.EqualFold(sql[:6], "SELECT") || sql[6] != ' ' && sql[6] != '\t' && sql[6] != '\n' {
+		return sql
+	}
+	return "SELECT COUNT(*) OVER() AS " + pageTotalColumn + "," + sql[6:]
+}
+
+func takePageTotal(rows []map[string]interface{}) (int64, bool) {
+	if len(rows) == 0 {
+		return 0, false
+	}
+	var total int64
+	ok := false
+	for _, row := range rows {
+		if v, exists := row[pageTotalColumn]; exists {
+			total = util.ToInt64(v)
+			delete(row, pageTotalColumn)
+			ok = true
+		}
+	}
+	return total, ok
 }
 
 func parsePageParams(params map[string]interface{}) (pageSize, pageNum int, paginated bool, err error) {
@@ -422,4 +510,22 @@ func stripOrderBy(sql string) string {
 		return sql
 	}
 	return sql[:idx]
+}
+
+// countQueryFromSelect rewrites `SELECT cols FROM t WHERE ... ORDER BY ...`
+// into `SELECT COUNT(*) FROM t WHERE ...` so SQLite can satisfy the count
+// from covering indexes instead of materializing the select-list subquery.
+func countQueryFromSelect(baseSQL string) string {
+	sql := strings.TrimSpace(stripOrderBy(baseSQL))
+	upper := strings.ToUpper(sql)
+	if strings.Contains(upper, " DISTINCT ") ||
+		strings.Contains(upper, " GROUP BY ") ||
+		strings.Contains(upper, " UNION ") {
+		return "SELECT COUNT(*) FROM (" + sql + ")"
+	}
+	fromIdx := strings.Index(upper, " FROM ")
+	if fromIdx == -1 {
+		return "SELECT COUNT(*) FROM (" + sql + ")"
+	}
+	return "SELECT COUNT(*)" + sql[fromIdx:]
 }

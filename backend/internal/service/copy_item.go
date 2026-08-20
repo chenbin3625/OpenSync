@@ -27,8 +27,8 @@ type copyItemClient interface {
 	MoveFileContext(context.Context, string, string, string) (string, error)
 	TaskCancelContext(context.Context, string, taskItemType) error
 	TaskDeleteContext(context.Context, string, taskItemType) error
-	TaskInfoContext(context.Context, string, taskItemType) (map[string]interface{}, error)
-	TaskUndoneListContext(context.Context, taskItemType) ([]map[string]interface{}, error)
+	TaskInfoContext(context.Context, string, taskItemType) (alistRemoteTask, error)
+	TaskUndoneListContext(context.Context, taskItemType) ([]alistRemoteTask, error)
 	DeleteFileContext(context.Context, string, []string, int) error
 	FileExistsContext(context.Context, string, string) (bool, error)
 }
@@ -153,6 +153,22 @@ func (ci *CopyItem) countableWaitSize() int64 {
 		return 0
 	}
 	return util.ToInt64(ci.FileSize)
+}
+
+func (ci *CopyItem) toStreamItem() streamDoingItem {
+	ci.mu.RLock()
+	defer ci.mu.RUnlock()
+	return streamDoingItem{
+		AlistTaskID: ci.AlistTaskID,
+		FileName:    ci.FileName,
+		SrcPath:     ci.SrcPath,
+		DstPath:     ci.DstPath,
+		FileSize:    util.ToInt64(ci.FileSize),
+		Type:        ci.CopyType.Int(),
+		Status:      ci.Status.Int(),
+		Progress:    ci.Progress,
+		CreateTime:  ci.CreateTime,
+	}
 }
 
 func (ci *CopyItem) ToMap(taskID int64) map[string]interface{} {

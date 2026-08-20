@@ -1,8 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
-import {
-  Button, Space, Drawer, Select, Input, Form, Switch, InputNumber,
-  Row, Col, Divider, TreeSelect, Spin, Tooltip,
-} from 'antd';
+import Button from 'antd/es/button';
+import Space from 'antd/es/space';
+import Drawer from 'antd/es/drawer';
+import Select from 'antd/es/select';
+import Input from 'antd/es/input';
+import Form from 'antd/es/form';
+import Switch from 'antd/es/switch';
+import InputNumber from 'antd/es/input-number';
+import Row from 'antd/es/row';
+import Col from 'antd/es/col';
+import Divider from 'antd/es/divider';
+import TreeSelect from 'antd/es/tree-select';
+import Spin from 'antd/es/spin';
+import Tooltip from 'antd/es/tooltip';
 import { QuestionCircleOutlined } from '@ant-design/icons';
 import { jobPost } from '../../api/job';
 import type { AlistItem, JobFormValues, JobItem, TreeNode } from '../../types';

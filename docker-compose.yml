@@ -10,6 +10,7 @@ services:
       - ALL
     ports:
       - "8023:8023"
+      - "8023:8023/udp"
     volumes:
       - ./data:/app/data
     tmpfs:

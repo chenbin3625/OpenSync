@@ -142,6 +142,7 @@ services:
     restart: unless-stopped
     ports:
       - "8023:8023"
+      - "8023:8023/udp"
     volumes:
       - ./data:/app/data
     environment:
@@ -157,7 +158,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.10.7
+image: chenbin3625/opensync:1.10.10
 ```
 
 ## Docker 命令部署
@@ -167,6 +168,7 @@ docker run -d \
   --name opensync \
   --restart unless-stopped \
   -p 8023:8023 \
+  -p 8023:8023/udp \
   -v opensync-data:/app/data \
   -e TZ=Asia/Shanghai \
   -e OPENSYNC_BIND=0.0.0.0 \
@@ -192,7 +194,10 @@ docker run -d \
 | --- | --- | --- |
 | `TZ` | `Asia/Shanghai` | 容器和定时任务使用的时区 |
 | `OPENSYNC_BIND` | `0.0.0.0` | HTTP 监听地址 |
-| `OPENSYNC_PORT` | `8023` | HTTP 服务端口 |
+| `OPENSYNC_PORT` | `8023` | HTTP 服务端口；启用 TLS 时同一端口同时提供 HTTP/2 与 HTTP/3 |
+| `OPENSYNC_TLS_CERT` | 空 | TLS 证书路径；与 `OPENSYNC_TLS_KEY` 同时设置后启用 HTTPS、HTTP/2 和 HTTP/3 |
+| `OPENSYNC_TLS_KEY` | 空 | TLS 私钥路径，仅通过环境变量配置，网页保存设置不会覆盖 |
+| `OPENSYNC_SQLITE_SYNC` | `normal` | SQLite `synchronous` 模式：`full` / `normal` / `off`。WAL 部署推荐 `normal` |
 | `OPENSYNC_DATA_DIR` | `data`（容器为 `/app/data`） | 持久化数据库、密钥、配置和日志目录 |
 | `OPENSYNC_EXPIRES` | `7` | 登录有效期，单位天 |
 | `OPENSYNC_LOG_LEVEL` | `1` | 文件日志等级 |
@@ -223,6 +228,7 @@ task_timeout=48
 copy_concurrency=5
 scan_concurrency=8
 max_retries=2
+sqlite_sync=normal
 ```
 
 系统设置页可在线调整历史任务保留、任务超时、复制并发、扫描并发和自动重试次数。历史任务会在保存配置时立即清理过期记录，并在每日凌晨 3:00 按保留天数再次清理。端口、日志等级等启动期配置仍建议通过环境变量或配置文件维护。
@@ -235,6 +241,7 @@ docker run -d \
   --name opensync \
   --restart unless-stopped \
   -p 8023:8023 \
+  -p 8023:8023/udp \
   -v opensync-data:/app/data \
   -e TZ=Asia/Shanghai \
   -e OPENSYNC_PORT=8023 \
@@ -304,7 +311,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.10.7`
+- `chenbin3625/opensync:1.10.10`
 - `chenbin3625/opensync:1.10`
 
 镜像支持以下平台：
@@ -482,6 +489,7 @@ services:
     restart: unless-stopped
     ports:
       - "8023:8023"
+      - "8023:8023/udp"
     volumes:
       - ./data:/app/data
     environment:
@@ -497,7 +505,7 @@ services:
 To pin a version, change the image to:
 
 ```yaml
-image: chenbin3625/opensync:1.10.7
+image: chenbin3625/opensync:1.10.10
 ```
 
 ## Docker CLI Deployment
@@ -507,6 +515,7 @@ docker run -d \
   --name opensync \
   --restart unless-stopped \
   -p 8023:8023 \
+  -p 8023:8023/udp \
   -v opensync-data:/app/data \
   -e TZ=Asia/Shanghai \
   -e OPENSYNC_BIND=0.0.0.0 \
@@ -532,7 +541,10 @@ The timezone of scheduled tasks is always controlled by `TZ`. Environment variab
 | --- | --- | --- |
 | `TZ` | `Asia/Shanghai` | Timezone used by the container and scheduled tasks |
 | `OPENSYNC_BIND` | `0.0.0.0` | HTTP listen address |
-| `OPENSYNC_PORT` | `8023` | HTTP service port |
+| `OPENSYNC_PORT` | `8023` | HTTP service port; with TLS this port also serves HTTP/2 and HTTP/3 |
+| `OPENSYNC_TLS_CERT` | empty | TLS certificate path; set together with `OPENSYNC_TLS_KEY` to enable HTTPS, HTTP/2, and HTTP/3 |
+| `OPENSYNC_TLS_KEY` | empty | TLS private key path; env-only so web settings saves cannot clobber it |
+| `OPENSYNC_SQLITE_SYNC` | `normal` | SQLite `synchronous` mode: `full` / `normal` / `off`. `normal` is recommended for WAL |
 | `OPENSYNC_DATA_DIR` | `data` (`/app/data` in the container) | Persistent database, secret, config, and log directory |
 | `OPENSYNC_EXPIRES` | `7` | Login validity, in days |
 | `OPENSYNC_LOG_LEVEL` | `1` | File log level |
@@ -563,6 +575,7 @@ task_timeout=48
 copy_concurrency=5
 scan_concurrency=8
 max_retries=2
+sqlite_sync=normal
 ```
 
 The System Settings page can adjust history retention, task timeout, copy concurrency, scan concurrency, and auto-retry counts online. Expired history records are cleaned immediately when settings are saved and again daily at 3:00 AM based on the retention days. Startup-time settings such as port and log level are still best maintained via environment variables or the config file.
@@ -575,6 +588,7 @@ docker run -d \
   --name opensync \
   --restart unless-stopped \
   -p 8023:8023 \
+  -p 8023:8023/udp \
   -v opensync-data:/app/data \
   -e TZ=Asia/Shanghai \
   -e OPENSYNC_PORT=8023 \
@@ -644,7 +658,7 @@ go test ./...
 OpenSync recommends the Docker Hub images by default:
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.10.7`
+- `chenbin3625/opensync:1.10.10`
 - `chenbin3625/opensync:1.10`
 
 Supported platforms:

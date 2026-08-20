@@ -53,7 +53,9 @@ type copyItemTestClient struct {
 	fileExistsErr error
 	existsCalls   int
 	taskInfoCalls int
-	taskInfoFn    func(call int) (map[string]interface{}, error)
+	taskInfoFn    func(call int) (alistRemoteTask, error)
+	undoneCalls   int
+	undoneTasks   []alistRemoteTask
 }
 
 func (c *copyItemTestClient) CopyFileContext(context.Context, string, string, string) (string, error) {
@@ -76,16 +78,20 @@ func (c *copyItemTestClient) TaskDeleteContext(context.Context, string, taskItem
 	return nil
 }
 
-func (c *copyItemTestClient) TaskInfoContext(context.Context, string, taskItemType) (map[string]interface{}, error) {
+func (c *copyItemTestClient) TaskInfoContext(context.Context, string, taskItemType) (alistRemoteTask, error) {
 	c.taskInfoCalls++
 	if c.taskInfoFn != nil {
 		return c.taskInfoFn(c.taskInfoCalls)
 	}
-	return map[string]interface{}{"state": taskStatusSuccess.Int(), "progress": 100}, nil
+	return alistRemoteTask{State: taskStatusSuccess.Int(), Progress: 100}, nil
 }
 
-func (c *copyItemTestClient) TaskUndoneListContext(context.Context, taskItemType) ([]map[string]interface{}, error) {
-	return []map[string]interface{}{}, nil
+func (c *copyItemTestClient) TaskUndoneListContext(context.Context, taskItemType) ([]alistRemoteTask, error) {
+	c.undoneCalls++
+	if c.undoneTasks != nil {
+		return c.undoneTasks, nil
+	}
+	return []alistRemoteTask{}, nil
 }
 
 func (c *copyItemTestClient) DeleteFileContext(context.Context, string, []string, int) error {

@@ -46,6 +46,7 @@ services:
     restart: unless-stopped
     ports:
       - "8023:8023"
+      - "8023:8023/udp"
     volumes:
       - ./data:/app/data
     environment:
@@ -57,7 +58,7 @@ services:
 ## 镜像标签
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.10.7`
+- `chenbin3625/opensync:1.10.10`
 - `chenbin3625/opensync:1.10`
 
 镜像支持以下平台：

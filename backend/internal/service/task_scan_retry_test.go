@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,9 +38,9 @@ func TestListDirRetriesTransientAListFailures(t *testing.T) {
 	if attempts.Load() != maxScanListRetries+1 {
 		t.Fatalf("list attempts = %d, want %d", attempts.Load(), maxScanListRetries+1)
 	}
-	metadata, ok := files["file.txt"].(FileMetadata)
-	if !ok || metadata.Size != 10 {
-		t.Fatalf("listed file metadata = %#v, want size 10", files["file.txt"])
+	metadata := files["file.txt"]
+	if metadata.Size != 10 {
+		t.Fatalf("listed file metadata = %#v, want size 10", metadata)
 	}
 }
 
@@ -102,4 +104,49 @@ func newScanRetryTestTask(server *httptest.Server) *JobTask {
 	}
 	jt.initRuntime()
 	return jt
+}
+
+func TestDelFilesBatchesMirrorDeletesIntoOneRemoveCall(t *testing.T) {
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	var removeCalls atomic.Int32
+	var names []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/api/fs/remove") {
+			removeCalls.Add(1)
+			var payload struct {
+				Names []string `json:"names"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			names = append([]string(nil), payload.Names...)
+		}
+		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":null}`))
+	}))
+	defer server.Close()
+
+	jt := newScanRetryTestTask(server)
+	statuses := jt.delFiles("/dst/", []string{"a.txt", "b.txt", "old/"}, []interface{}{int64(10), int64(20), int64(0)})
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
+	if removeCalls.Load() != 1 {
+		t.Fatalf("remove calls = %d, want 1", removeCalls.Load())
+	}
+	if len(names) != 3 {
+		t.Fatalf("remove names = %#v, want 3 entries", names)
+	}
+	if len(statuses) != 3 {
+		t.Fatalf("statuses len = %d, want 3", len(statuses))
+	}
+	for i, status := range statuses {
+		if status != taskStatusSuccess {
+			t.Fatalf("statuses[%d] = %v, want success", i, status)
+		}
+	}
+	if len(persisted) != 3 {
+		t.Fatalf("persisted deletes = %d, want 3", len(persisted))
+	}
 }

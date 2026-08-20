@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
-import { ConfigProvider, App as AntApp, theme } from 'antd';
-import zhCN from 'antd/locale/zh_CN';
+import ConfigProvider from 'antd/es/config-provider';
+import AntApp from 'antd/es/app';
+import theme from 'antd/es/theme';
+import zhCN from './locales/zhCN';
 import AppRouter from './router';
 import { getUser } from './api/user';
 import { useStore } from './stores/useStore';

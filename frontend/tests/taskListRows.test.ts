@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  calcRealtimeProgress,
+  detailHasRunningItem,
   filterCurrentTaskFromHistory,
   filterRunningTaskRows,
   getRealtimeTaskIdentity,
   getTaskItemKey,
+  historyHasActiveTask,
+  applyDoingPatch,
+  mergeCurrentTaskData,
   mergeTaskItems,
   mergeTaskRecords,
   normalizeTaskItemPage,
+  pollIntervalForActiveWork,
   shouldResetRealtimeSnapshot,
   shouldReplaceRealtimeRows,
   shouldPollRealtime,
@@ -209,4 +215,117 @@ test('shouldResetRealtimeSnapshot keeps pagination total when only page changes'
     ),
     true,
   );
+});
+
+test('calcRealtimeProgress prefers server-computed transfer totals', () => {
+  const progress = calcRealtimeProgress({
+    taskId: 1,
+    scanFinish: true,
+    doingTask: [{ status: 1, fileSize: 1000, progress: 50 }],
+    createTime: 100,
+    duration: 10,
+    num: { wait: 0, running: 1, success: 0, fail: 0, other: 0 },
+    size: { wait: 0, running: 1000, success: 0, fail: 0, other: 0 },
+    doneSize: 800,
+    remainSize: 200,
+  }, null);
+
+  assert.equal(progress.doneSize, 800);
+  assert.equal(progress.remainSize, 200);
+});
+
+test('calcRealtimeProgress prefers server-computed speed meters', () => {
+  const progress = calcRealtimeProgress({
+    taskId: 1,
+    scanFinish: true,
+    doingTask: [{ status: 1, fileSize: 1000, progress: 50 }],
+    createTime: 100,
+    duration: 10,
+    firstSync: 100,
+    num: { wait: 0, running: 1, success: 0, fail: 0, other: 0 },
+    size: { wait: 0, running: 1000, success: 0, fail: 0, other: 0 },
+    doneSize: 800,
+    remainSize: 200,
+    speed: 40,
+    speedAvg: 80,
+    remainTime: 3,
+  }, { duration: 5, doneSize: 400 });
+
+  assert.equal(progress.speed, 40);
+  assert.equal(progress.speedAvg, 80);
+  assert.equal(progress.remainTime, 3);
+});
+
+test('calcRealtimeProgress falls back to doingTask when server totals are absent', () => {
+  const progress = calcRealtimeProgress({
+    taskId: 1,
+    scanFinish: true,
+    doingTask: [{ status: 1, fileSize: 1000, progress: 50 }],
+    createTime: 100,
+    duration: 10,
+    firstSync: 100,
+    num: { wait: 0, running: 1, success: 0, fail: 0, other: 0 },
+    size: { wait: 0, running: 1000, success: 400, fail: 0, other: 0 },
+  }, { duration: 5, doneSize: 400 });
+
+  assert.equal(progress.doneSize, 900);
+  assert.equal(progress.remainSize, 500);
+  assert.equal(progress.speed, 100);
+});
+
+test('applyDoingPatch keeps unchanged row references and merges progress', () => {
+  const existing: TaskItem[] = [
+    { alistTaskId: 'a', status: 1, fileName: 'a.bin', fileSize: 1000, progress: 10, srcPath: '/s', dstPath: '/d' },
+    { alistTaskId: 'b', status: 1, fileName: 'b.bin', fileSize: 2000, progress: 20, srcPath: '/s', dstPath: '/d' },
+  ];
+  const patched = applyDoingPatch(existing, [{ alistTaskId: 'a', status: 1, progress: 40 }]);
+
+  assert.notEqual(patched[0], existing[0]);
+  assert.equal(patched[0].progress, 40);
+  assert.equal(patched[0].fileName, 'a.bin');
+  assert.equal(patched[1], existing[1]);
+});
+
+test('mergeCurrentTaskData applies doingPatch only for the same running task', () => {
+  const previous = {
+    taskId: 9,
+    scanFinish: true,
+    doingTask: [{ alistTaskId: 'a', status: 1, fileName: 'a.bin', progress: 10 }],
+    createTime: 100,
+    duration: 4,
+    num: { wait: 0, running: 1, success: 0, fail: 0, other: 0 },
+    size: { wait: 0, running: 1000, success: 0, fail: 0, other: 0 },
+    doneSize: 100,
+    remainSize: 900,
+  };
+  const patched = mergeCurrentTaskData({
+    ...previous,
+    duration: 5,
+    doingTask: undefined,
+    doingPatch: [{ alistTaskId: 'a', status: 1, progress: 55 }],
+    doneSize: 550,
+    remainSize: 450,
+  }, previous);
+
+  assert.equal(patched.doingTask?.[0].progress, 55);
+  assert.equal(patched.doingTask?.[0].fileName, 'a.bin');
+  assert.equal(patched.duration, 5);
+
+  const replaced = mergeCurrentTaskData({
+    ...previous,
+    taskId: 10,
+    createTime: 200,
+    doingTask: [{ alistTaskId: 'z', status: 1, fileName: 'z.bin', progress: 1 }],
+    doingPatch: [{ alistTaskId: 'a', status: 1, progress: 99 }],
+  }, previous);
+  assert.equal(replaced.doingTask?.[0].fileName, 'z.bin');
+});
+
+test('history and detail poll intervals slow down when no work is running', () => {
+  assert.equal(historyHasActiveTask([{ status: 2 }, { status: 1 }]), true);
+  assert.equal(historyHasActiveTask([{ status: 2 }, { status: 7 }]), false);
+  assert.equal(detailHasRunningItem([{ status: 1 }, { status: 2 }]), true);
+  assert.equal(detailHasRunningItem([{ status: 2 }, { status: 7 }]), false);
+  assert.equal(pollIntervalForActiveWork(true, 3000), 3000);
+  assert.equal(pollIntervalForActiveWork(false, 3000), 15000);
 });

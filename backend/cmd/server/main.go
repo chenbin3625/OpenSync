@@ -3,6 +3,7 @@ package main
 import (
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"embed"
 	"errors"
 	"flag"
@@ -29,10 +30,25 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/quic-go/quic-go/http3"
 )
 
 //go:embed all:web
 var webFS embed.FS
+
+// gzipWriterPool reuses BestSpeed writers. Level 1 is the right default for
+// already-minified JS/CSS and small JSON APIs: NAS CPUs spend far more time in
+// DefaultCompression (level 6) than they save on the wire, and pooled writers
+// keep per-request allocs off the hot path.
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		w, err := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
+		if err != nil {
+			panic(err)
+		}
+		return w
+	},
+}
 
 // gzipResponseWriter transparently compresses the response body when the
 // client advertises gzip support. Compression only kicks in for bodies we can
@@ -56,6 +72,9 @@ type gzipResponseWriter struct {
 // never mismatches the declared length.
 func (g *gzipResponseWriter) activate() {
 	g.on.Do(func() {
+		w := gzipWriterPool.Get().(*gzip.Writer)
+		w.Reset(g.ResponseWriter)
+		g.gz = w
 		g.Header().Set("Content-Encoding", "gzip")
 		g.Header().Add("Vary", "Accept-Encoding")
 		g.Header().Del("Content-Length")
@@ -105,10 +124,17 @@ func (g *gzipResponseWriter) Pusher() (pusher http.Pusher) {
 	return nil
 }
 
-// closeCompression finalizes the gzip stream after the handler completes.
+// closeCompression finalizes the gzip stream after the handler completes
+// and returns the writer to the pool. Writers that never produced a body are
+// reset without Close() so we do not emit an empty gzip footer.
 func (g *gzipResponseWriter) closeCompression() {
-	if g.wrote {
-		_ = g.gz.Close()
+	if g.gz != nil {
+		if g.wrote {
+			_ = g.gz.Close()
+		}
+		g.gz.Reset(io.Discard)
+		gzipWriterPool.Put(g.gz)
+		g.gz = nil
 	}
 	g.ResponseWriter.Flush()
 }
@@ -152,10 +178,7 @@ func maybeCompress() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		w := &gzipResponseWriter{
-			ResponseWriter: c.Writer,
-			gz:             gzip.NewWriter(c.Writer),
-		}
+		w := &gzipResponseWriter{ResponseWriter: c.Writer}
 		c.Writer = w
 		c.Next()
 		w.closeCompression()
@@ -215,19 +238,69 @@ func maxRequestBodySize(max int64) gin.HandlerFunc {
 	}
 }
 
-func securityHeaders() gin.HandlerFunc {
+func securityHeaders(http3Port int) gin.HandlerFunc {
+	altSvc := ""
+	if http3Port > 0 {
+		altSvc = fmt.Sprintf(`h3=":%d"; ma=86400`, http3Port)
+	}
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
 		c.Header("Referrer-Policy", "no-referrer")
 		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if altSvc != "" {
+			c.Header("Alt-Svc", altSvc)
+		}
 		c.Next()
 	}
 }
 
 func serveWebFile(c *gin.Context, webDist fs.FS, filePath, contentType string) {
-	data, err := fs.ReadFile(webDist, filePath)
+	newCachedWebFS(webDist).serve(c, filePath, contentType)
+}
+
+type cachedWebFS struct {
+	fs    fs.FS
+	mu    sync.RWMutex
+	files map[string][]byte
+}
+
+func newCachedWebFS(webDist fs.FS) *cachedWebFS {
+	return &cachedWebFS{fs: webDist, files: make(map[string][]byte)}
+}
+
+func (cache *cachedWebFS) warm(paths ...string) {
+	for _, filePath := range paths {
+		_, _ = cache.read(filePath)
+	}
+}
+
+func (cache *cachedWebFS) read(filePath string) ([]byte, error) {
+	cache.mu.RLock()
+	data, ok := cache.files[filePath]
+	cache.mu.RUnlock()
+	if ok {
+		return data, nil
+	}
+
+	data, err := fs.ReadFile(cache.fs, filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	cache.mu.Lock()
+	if existing, ok := cache.files[filePath]; ok {
+		cache.mu.Unlock()
+		return existing, nil
+	}
+	cache.files[filePath] = data
+	cache.mu.Unlock()
+	return data, nil
+}
+
+func (cache *cachedWebFS) serve(c *gin.Context, filePath, contentType string) {
+	data, err := cache.read(filePath)
 	if err != nil {
 		c.String(http.StatusNotFound, "Frontend not found")
 		return
@@ -236,6 +309,10 @@ func serveWebFile(c *gin.Context, webDist fs.FS, filePath, contentType string) {
 }
 
 func serveSPAFallback(c *gin.Context, webDist fs.FS) {
+	serveSPAFallbackWithCache(c, newCachedWebFS(webDist))
+}
+
+func serveSPAFallbackWithCache(c *gin.Context, webFiles *cachedWebFS) {
 	requestPath := c.Request.URL.Path
 	if c.Request.Method != http.MethodGet ||
 		requestPath == "/svr" ||
@@ -245,7 +322,7 @@ func serveSPAFallback(c *gin.Context, webDist fs.FS) {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	serveWebFile(c, webDist, "index.html", "text/html; charset=utf-8")
+	webFiles.serve(c, "index.html", "text/html; charset=utf-8")
 }
 
 func main() {
@@ -292,8 +369,15 @@ func runHealthCheckCommand() error {
 	if port == "" {
 		port = "8023"
 	}
+	scheme := "http"
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get("http://127.0.0.1:" + port + "/")
+	if strings.TrimSpace(os.Getenv("OPENSYNC_TLS_CERT")) != "" {
+		scheme = "https"
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
+	resp, err := client.Get(scheme + "://127.0.0.1:" + port + "/")
 	if err != nil {
 		return err
 	}
@@ -355,14 +439,26 @@ func run(parent context.Context) error {
 	stopTaskRetention := service.StartTaskRetentionScheduler()
 	defer stopTaskRetention()
 
-	r := gin.Default()
+	// gin.Default() installs an access logger that serializes every /assets/*
+	// hit to stdout. This binary already recovers panics and the hashed
+	// bundles are the hot path, so skip the logger. ReleaseMode also drops
+	// gin's debug route dumps when GIN_MODE is unset (local binary runs).
+	if os.Getenv("GIN_MODE") == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+	r := gin.New()
 	if err := r.SetTrustedProxies(nil); err != nil {
 		return err
 	}
 
+	http3Port := 0
+	if cfg.Server.TLSEnabled() {
+		http3Port = cfg.Server.Port
+	}
+
 	// Error recovery + Auth middleware
 	r.Use(errorRecovery())
-	r.Use(securityHeaders())
+	r.Use(securityHeaders(http3Port))
 	r.Use(maxRequestBodySize(1 << 20)) // 1MB; config/alist/notify payloads are small JSON
 	r.Use(maybeCompress())
 	r.Use(middleware.CSRFProtection())
@@ -409,6 +505,8 @@ func run(parent context.Context) error {
 	// Serve frontend static files
 	webDist, err := fs.Sub(webFS, "web")
 	if err == nil {
+		webFiles := newCachedWebFS(webDist)
+		webFiles.warm("index.html", "favicon.svg", "icons.svg")
 		if assetsDist, err := fs.Sub(webDist, "assets"); err == nil {
 			// Vite content-hashes every /assets/* bundle, so an immutable,
 			// long-lived Cache-Control is the correct and biggest win: repeat
@@ -418,26 +516,31 @@ func run(parent context.Context) error {
 			assets.StaticFS("", http.FS(assetsDist))
 		}
 		// The SPA shell and icons change on release; always revalidate so the
-		// browser still picks up new asset hashes.
+		// browser still picks up new asset hashes. Body bytes stay in memory
+		// because embed.FS is immutable for the process lifetime.
 		r.GET("/favicon.svg", func(c *gin.Context) {
 			c.Header("Cache-Control", "no-cache")
-			serveWebFile(c, webDist, "favicon.svg", "image/svg+xml")
+			webFiles.serve(c, "favicon.svg", "image/svg+xml")
 		})
 		r.GET("/icons.svg", func(c *gin.Context) {
 			c.Header("Cache-Control", "no-cache")
-			serveWebFile(c, webDist, "icons.svg", "image/svg+xml")
+			webFiles.serve(c, "icons.svg", "image/svg+xml")
 		})
 		r.GET("/", noCacheHTML(), func(c *gin.Context) {
-			serveWebFile(c, webDist, "index.html", "text/html; charset=utf-8")
+			webFiles.serve(c, "index.html", "text/html; charset=utf-8")
 		})
 		r.NoRoute(noCacheHTML(), func(c *gin.Context) {
-			serveSPAFallback(c, webDist)
+			serveSPAFallbackWithCache(c, webFiles)
 		})
 	}
 
 	port := fmt.Sprintf("%d", cfg.Server.Port)
 	addr := net.JoinHostPort(cfg.Server.Bind, port)
-	log.Printf("启动成功_/_Running at http://%s/", addr)
+	if cfg.Server.TLSEnabled() {
+		log.Printf("启动成功_/_Running at https://%s/ (HTTP/2 + HTTP/3)", addr)
+	} else {
+		log.Printf("启动成功_/_Running at http://%s/", addr)
+	}
 
 	server := &http.Server{
 		Addr:              addr,
@@ -455,21 +558,56 @@ func run(parent context.Context) error {
 	signalCtx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	err = runHTTPServer(signalCtx, server, listener)
+	err = runHTTPServer(signalCtx, server, listener, cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	service.ShutdownJobs(shutdownCtx)
 	return err
 }
 
-func runHTTPServer(ctx context.Context, server *http.Server, listener net.Listener) error {
+func runHTTPServer(ctx context.Context, server *http.Server, listener net.Listener, certFile, keyFile string) error {
+	certFile = strings.TrimSpace(certFile)
+	keyFile = strings.TrimSpace(keyFile)
+	tlsEnabled := certFile != "" && keyFile != ""
+
+	var h3 *http3.Server
+	if tlsEnabled {
+		tlsConf, err := loadServerTLSConfig(certFile, keyFile)
+		if err != nil {
+			_ = listener.Close()
+			return err
+		}
+		server.TLSConfig = http12TLSConfig(tlsConf)
+		packet, err := net.ListenPacket("udp", listener.Addr().String())
+		if err != nil {
+			_ = listener.Close()
+			return fmt.Errorf("HTTP/3 listen: %w", err)
+		}
+		h3 = &http3.Server{
+			Handler:   server.Handler,
+			TLSConfig: http3.ConfigureTLSConfig(tlsConf.Clone()),
+		}
+		go func() {
+			if err := h3.Serve(packet); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("HTTP/3 server: %v", err)
+			}
+		}()
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
+		if tlsEnabled {
+			errCh <- server.ServeTLS(listener, certFile, keyFile)
+			return
+		}
 		errCh <- server.Serve(listener)
 	}()
 
 	select {
 	case err := <-errCh:
+		if h3 != nil {
+			_ = h3.Close()
+		}
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
@@ -479,8 +617,14 @@ func runHTTPServer(ctx context.Context, server *http.Server, listener net.Listen
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if h3 != nil {
+		_ = h3.Shutdown(shutdownCtx)
+	}
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		_ = server.Close()
+		if h3 != nil {
+			_ = h3.Close()
+		}
 		return err
 	}
 
@@ -489,4 +633,21 @@ func runHTTPServer(ctx context.Context, server *http.Server, listener net.Listen
 		return nil
 	}
 	return err
+}
+
+func loadServerTLSConfig(certFile, keyFile string) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load TLS certificate: %w", err)
+	}
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{cert},
+	}, nil
+}
+
+func http12TLSConfig(base *tls.Config) *tls.Config {
+	cfg := base.Clone()
+	cfg.NextProtos = []string{"h2", "http/1.1"}
+	return cfg
 }

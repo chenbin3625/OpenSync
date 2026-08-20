@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,11 +19,9 @@ import (
 
 func TestFileListEntryMetadataUsesHashInfoMD5(t *testing.T) {
 	entry := FileListEntry{
-		Name: "video.mkv",
-		Size: 1024,
-		HashInfo: map[string]interface{}{
-			"md5": "ABCDEF0123456789",
-		},
+		Name:     "video.mkv",
+		Size:     1024,
+		HashInfo: json.RawMessage(`{"sha1":"deadbeef","md5":"ABCDEF0123456789"}`),
 	}
 
 	metadata := entry.metadata()
@@ -50,6 +48,54 @@ func TestFileListEntryMetadataParsesHashinfoString(t *testing.T) {
 	}
 	if metadata.MD5 != "00112233445566778899aabbccddeeff" {
 		t.Fatalf("metadata.MD5 = %q, want parsed md5", metadata.MD5)
+	}
+}
+
+func TestMD5FromRawReadsUppercaseKeyWithoutAllocatingHashMap(t *testing.T) {
+	raw := []byte(`{"sha256":"ff","MD5":"00112233445566778899aabbccddeeff"}`)
+	if got := md5FromRaw(raw); got != "00112233445566778899aabbccddeeff" {
+		t.Fatalf("md5FromRaw() = %q, want uppercase-key md5", got)
+	}
+	if got := md5FromRaw([]byte(`null`)); got != "" {
+		t.Fatalf("md5FromRaw(null) = %q, want empty", got)
+	}
+}
+
+func TestFileListApiContextStoresTypedMetadataWithoutEmptyDirMaps(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"clips","is_dir":true,"size":0},{"name":"a.mkv","is_dir":false,"size":4096,"hash_info":{"md5":"Aa"}}],"total":2}}`))
+	}))
+	defer server.Close()
+
+	client := &AlistClient{URL: server.URL, client: server.Client()}
+	files, err := client.FileListApiContext(context.Background(), "/media", 0, 0)
+	if err != nil {
+		t.Fatalf("FileListApiContext() error: %v", err)
+	}
+
+	dir, ok := files["clips/"]
+	if !ok {
+		t.Fatalf("missing directory key clips/, got %#v", files)
+	}
+	if dir != (FileMetadata{}) {
+		t.Fatalf("directory metadata = %#v, want zero value", dir)
+	}
+
+	file := files["a.mkv"]
+	if file.Size != 4096 || file.MD5 != "aa" {
+		t.Fatalf("file metadata = %#v, want size 4096 md5 aa", file)
+	}
+	if _, exists := files["clips"]; exists {
+		t.Fatal("directory stored without trailing slash")
+	}
+
+	paths, err := client.FilePathList(context.Background(), "/media")
+	if err != nil {
+		t.Fatalf("FilePathList() error: %v", err)
+	}
+	if len(paths) != 1 || paths[0]["path"] != "clips" {
+		t.Fatalf("FilePathList() = %#v, want clips", paths)
 	}
 }
 
@@ -210,7 +256,7 @@ func TestTaskUndoneListContextUsesOperationSpecificTaskEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TaskUndoneListContext() error: %v", err)
 	}
-	if len(tasks) != 1 || fmt.Sprintf("%v", tasks[0]["id"]) != "task-1" {
+	if len(tasks) != 1 || tasks[0].idString() != "task-1" {
 		t.Fatalf("tasks = %#v, want one undone task", tasks)
 	}
 	if len(paths) != 1 || paths[0] != "/api/admin/task/copy/undone" {

@@ -1,7 +1,10 @@
 import type React from 'react';
-import {
-  Button, Layout as AntLayout, Menu, Popconfirm, Space, Typography,
-} from 'antd';
+import Button from 'antd/es/button';
+import AntLayout from 'antd/es/layout';
+import Menu from 'antd/es/menu';
+import Popconfirm from 'antd/es/popconfirm';
+import Space from 'antd/es/space';
+import Typography from 'antd/es/typography';
 import {
   BellOutlined, BulbFilled, BulbOutlined, CloudServerOutlined, HomeOutlined,
   LogoutOutlined, SettingOutlined, UserOutlined,
@@ -23,7 +26,10 @@ const menuItems = [
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { theme: themeMode, setTheme, setUserInfo, userInfo } = useStore();
+  const themeMode = useStore((s) => s.theme);
+  const setTheme = useStore((s) => s.setTheme);
+  const setUserInfo = useStore((s) => s.setUserInfo);
+  const userInfo = useStore((s) => s.userInfo);
   const selectedKey = '/' + location.pathname.split('/')[1];
 
   const handleMenuClick = (e: { key: string }) => {

@@ -542,11 +542,11 @@ func (panicCopyItemClient) TaskDeleteContext(context.Context, string, taskItemTy
 	return nil
 }
 
-func (panicCopyItemClient) TaskInfoContext(context.Context, string, taskItemType) (map[string]interface{}, error) {
-	return nil, nil
+func (panicCopyItemClient) TaskInfoContext(context.Context, string, taskItemType) (alistRemoteTask, error) {
+	return alistRemoteTask{}, nil
 }
 
-func (panicCopyItemClient) TaskUndoneListContext(context.Context, taskItemType) ([]map[string]interface{}, error) {
+func (panicCopyItemClient) TaskUndoneListContext(context.Context, taskItemType) ([]alistRemoteTask, error) {
 	return nil, nil
 }
 
@@ -805,20 +805,20 @@ func TestScanProgressTracksDiscoveredAndFinishedDirectories(t *testing.T) {
 
 	jt.beginScanWork(scanWork{})
 	progress := jt.scanProgress()
-	if progress["totalDirs"] != 1 || progress["scannedDirs"] != 0 || progress["remainingDirs"] != 1 {
+	if progress.TotalDirs != 1 || progress.ScannedDirs != 0 || progress.RemainingDirs != 1 {
 		t.Fatalf("scanProgress after root start = %#v, want total=1 scanned=0 remaining=1", progress)
 	}
 
 	children := make([]scanWork, 0)
 	jt.addChildScanWork(&children, scanWork{Mode: scanWorkCompare})
 	progress = jt.scanProgress()
-	if progress["totalDirs"] != 2 || progress["scannedDirs"] != 0 || progress["remainingDirs"] != 2 {
+	if progress.TotalDirs != 2 || progress.ScannedDirs != 0 || progress.RemainingDirs != 2 {
 		t.Fatalf("scanProgress after child discovery = %#v, want total=2 scanned=0 remaining=2", progress)
 	}
 
 	jt.finishScanWork()
 	progress = jt.scanProgress()
-	if progress["totalDirs"] != 2 || progress["scannedDirs"] != 1 || progress["remainingDirs"] != 1 {
+	if progress.TotalDirs != 2 || progress.ScannedDirs != 1 || progress.RemainingDirs != 1 {
 		t.Fatalf("scanProgress after root finish = %#v, want total=2 scanned=1 remaining=1", progress)
 	}
 }
@@ -833,8 +833,8 @@ func TestGetCurrentIncludesTaskIDForTaskActions(t *testing.T) {
 
 	current := jt.GetCurrent()
 
-	if current["taskId"] != int64(123) {
-		t.Fatalf("taskId = %v, want 123", current["taskId"])
+	if current.TaskID != 123 {
+		t.Fatalf("taskId = %v, want 123", current.TaskID)
 	}
 }
 
@@ -859,11 +859,55 @@ func TestGetCurrentDoesNotCacheFinishedTaskLists(t *testing.T) {
 
 	current := jt.GetCurrent()
 
-	if current["doingTask"] == nil {
+	if current.DoingTask == nil {
 		t.Fatalf("doingTask missing from current payload")
+	}
+	if current.DoneSize != 30 {
+		t.Fatalf("doneSize = %d, want 30 from three finished 10-byte files", current.DoneSize)
+	}
+	if current.Scan == nil {
+		t.Fatal("scan missing while ScanFinish is false")
 	}
 	if tasks := jt.CurrentTasks[taskStatusSuccess.Int()]; len(tasks) != 0 {
 		t.Fatalf("cached success task list len = %d, want 0 so polling avoids finished-list snapshots", len(tasks))
+	}
+}
+
+func TestGetCurrentComputesServerDrivenTransferMeters(t *testing.T) {
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	now := time.Now().Unix()
+	jt := &JobTask{
+		TaskID:     7,
+		CreateTime: float64(now - 10),
+		Waiting:    newCopyQueue(),
+	}
+	jt.initRuntime()
+	jt.ScanFinish.Store(true)
+	jt.FirstSync.Store(now - 10)
+	jt.CopyHook("/src/", "/dst/", "done.txt", int64(100), "", taskStatusSuccess, nil, taskItemFile, taskItemTypeCopy, now)
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
+	jt.lastMeter = transferMeter{duration: 5, doneSize: 20}
+
+	current := jt.GetCurrent()
+	if current.Scan != nil {
+		t.Fatalf("scan should be omitted after ScanFinish, got %#v", current.Scan)
+	}
+	if current.DoneSize != 100 {
+		t.Fatalf("doneSize = %d, want 100", current.DoneSize)
+	}
+	if current.Speed <= 0 {
+		t.Fatalf("speed = %v, want positive delta from lastMeter", current.Speed)
+	}
+	if current.SpeedAvg <= 0 {
+		t.Fatalf("speedAvg = %v, want positive from firstSync", current.SpeedAvg)
+	}
+	if current.RemainTime != 0 {
+		t.Fatalf("remainTime = %d, want 0 when remainSize is 0", current.RemainTime)
 	}
 }
 
@@ -972,7 +1016,7 @@ func TestRunChildScanWorksFinishesCountedChildrenAfterBreak(t *testing.T) {
 	jt.runChildScanWorks(children, nil)
 
 	progress := jt.scanProgress()
-	if progress["totalDirs"] != 1 || progress["scannedDirs"] != 1 || progress["remainingDirs"] != 0 {
+	if progress.TotalDirs != 1 || progress.ScannedDirs != 1 || progress.RemainingDirs != 0 {
 		t.Fatalf("scanProgress after break child finish = %#v, want total=1 scanned=1 remaining=0", progress)
 	}
 }

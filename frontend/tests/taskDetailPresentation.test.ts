@@ -18,11 +18,11 @@ test('task detail shows error reasons beside status instead of a separate error 
 });
 
 test('task history list shows task-level error reasons beside status like file-level failures', () => {
-  const taskListSource = readFileSync(new URL('../src/pages/Home/TaskList.tsx', import.meta.url), 'utf8');
-  assert.match(taskListSource, /InfoCircleOutlined/);
-  assert.match(taskListSource, /className="task-status-with-error"/);
-  assert.match(taskListSource, /Tooltip\s+title=\{record\.errMsg\}/);
-  assert.match(taskListSource, /taskStatusColors\[s\] !== 'error'/);
+  const taskHistorySource = readFileSync(new URL('../src/pages/Home/TaskHistoryPanel.tsx', import.meta.url), 'utf8');
+  assert.match(taskHistorySource, /InfoCircleOutlined/);
+  assert.match(taskHistorySource, /className="task-status-with-error"/);
+  assert.match(taskHistorySource, /Tooltip\s+title=\{record\.errMsg\}/);
+  assert.match(taskHistorySource, /taskStatusColors\[s\] !== 'error'/);
 });
 
 test('task detail uses shared explicit task item status metadata', () => {
@@ -36,6 +36,8 @@ test('task detail uses shared explicit task item status metadata', () => {
 test('task detail polling follows document visibility', () => {
   assert.match(taskDetailSource, /canPollCurrentDocument/);
   assert.match(taskDetailSource, /if \(canPollCurrentDocument\(\)\) fetchData\(\{ silent: true \}\)/);
+  assert.match(taskDetailSource, /pollIntervalForActiveWork\(detailHasRunningItem\(list\)/);
+  assert.doesNotMatch(taskDetailSource, /pageSizeOptions: \['10', '20', '50', '100'\]/);
 });
 
 test('task detail silent polling does not toggle table loading state', () => {

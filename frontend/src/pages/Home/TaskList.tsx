@@ -1,30 +1,38 @@
-import { useState, useEffect, useRef, useCallback, useMemo, memo, type ReactNode } from 'react';
-import {
-  App, Button, Card, DatePicker, Empty, Input, Pagination, Popconfirm, Progress,
-  Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography,
-} from 'antd';
+import { useState, useEffect, useRef, useCallback, useMemo, memo, lazy, Suspense, type ReactNode } from 'react';
+import App from 'antd/es/app';
+import Button from 'antd/es/button';
+import Card from 'antd/es/card';
+import Empty from 'antd/es/empty';
+import Pagination from 'antd/es/pagination';
+import Space from 'antd/es/space';
+import Spin from 'antd/es/spin';
+import Tabs from 'antd/es/tabs';
+import Tag from 'antd/es/tag';
+import Tooltip from 'antd/es/tooltip';
+import Typography from 'antd/es/typography';
 import { POLL_INTERVAL_MS } from '../../api/request';
 import EllipsisText from './components/EllipsisText';
 import {
-  DeleteOutlined, EyeOutlined, StopOutlined, RedoOutlined,
-  ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined,
-  ReloadOutlined, InfoCircleOutlined,
+  StopOutlined, ThunderboltOutlined, ClockCircleOutlined, DashboardOutlined, FolderOpenOutlined,
 } from '@ant-design/icons';
 import { jobGetTask, jobDeleteTask, jobTaskAction } from '../../api/job';
-import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import type { CurrentTaskView, TaskItem, TaskRecord } from '../../types';
 import {
   filterCurrentTaskFromHistory,
   filterRunningTaskRows,
   getTaskItemKey,
+  historyHasActiveTask,
   mergeTaskRecords,
+  pollIntervalForActiveWork,
   type TaskListView,
 } from './taskRows';
 import { useRealtimeTask } from './useRealtimeTask';
 import { useRealtimeTaskItems } from './useRealtimeTaskItems';
 import { canPollCurrentDocument } from './pollingVisibility';
-import { displayText, formatSize, taskRecordStatusNames, taskStatusColors, taskTypeNames } from './homeUtils';
+import { displayText, formatSize, taskTypeNames } from './homeUtils';
+
+const TaskHistoryPanel = lazy(() => import('./TaskHistoryPanel'));
 
 const { Text } = Typography;
 
@@ -43,12 +51,42 @@ function formatDuration(seconds: number): string {
   return parts.join(' ');
 }
 
+function formatClock(unix?: number): string {
+  if (!unix) return '--';
+  const date = new Date(unix * 1000);
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
 const TAB_TASK_PAGE_SIZE = 20;
 
-const historyStatusOptions = [2, 3, 4, 5, 6, 7, 8].map((value) => ({
-  value,
-  label: taskRecordStatusNames[value],
-}));
+const LiveDuration = memo(function LiveDuration({
+  createTime,
+  duration,
+}: {
+  createTime?: number;
+  duration: number;
+}) {
+  const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
+
+  useEffect(() => {
+    const tickID = setInterval(() => {
+      if (canPollCurrentDocument()) {
+        setNowTick(Math.floor(Date.now() / 1000));
+      }
+    }, 1000);
+    return () => { clearInterval(tickID); };
+  }, [createTime]);
+
+  const displayDuration = Math.max(
+    duration || 0,
+    createTime ? nowTick - createTime : 0,
+  );
+  return <>{formatDuration(displayDuration)}</>;
+});
+
 const historyCompletedStatuses = [2, 3, 4, 5, 6, 7, 8];
 type HistoryTimeRange = [Dayjs | null, Dayjs | null] | null;
 
@@ -65,7 +103,7 @@ type ProgressMetric = {
   key: string;
   label: string;
   icon?: ReactNode;
-  value: string;
+  value: ReactNode;
 };
 
 function getTaskDisplayName(task: TaskItem): string {
@@ -133,10 +171,18 @@ const RealtimeTaskItems = memo(function RealtimeTaskItems({
                   </Text>
                   <span className="task-progress-file-state">
                     {activeTab === 1 && (
-                      <Progress
-                        percent={Math.round(Number(task.progress || 0))}
-                        size="small"
-                      />
+                      <span
+                        className="task-progress-meter"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(Number(task.progress || 0))}
+                      >
+                        <span
+                          className="task-progress-meter-bar"
+                          style={{ transform: `scaleX(${Math.min(1, Math.max(0, Number(task.progress || 0) / 100))})` }}
+                        />
+                      </span>
                     )}
                     {activeTab === 7 && task.errMsg && (
                       <Tooltip title={task.errMsg}>
@@ -145,7 +191,7 @@ const RealtimeTaskItems = memo(function RealtimeTaskItems({
                     )}
                     {activeTab !== 1 && !(activeTab === 7 && task.errMsg) && (
                       <Text type="secondary">
-                        {task.createTime ? dayjs.unix(task.createTime).format('HH:mm:ss') : '--'}
+                        {formatClock(task.createTime)}
                       </Text>
                     )}
                   </span>
@@ -196,20 +242,15 @@ function RealtimeTaskCard({
   onPageChange: (page: number) => void;
   onTabChange: (status: number) => void;
 }) {
-  const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
   const realtimeTotal = Object.values(currentTask.num || {})
     .reduce((sum, value) => sum + Number(value || 0), 0);
   const scanProgress = currentTask.scan;
-  const displayDuration = Math.max(
-    currentTask.duration || 0,
-    currentTask.createTime ? nowTick - currentTask.createTime : 0,
-  );
   const metrics = useMemo<ProgressMetric[]>(() => [
     {
       key: 'duration',
       label: '耗时',
       icon: <ClockCircleOutlined />,
-      value: formatDuration(displayDuration),
+      value: <LiveDuration createTime={currentTask.createTime} duration={currentTask.duration} />,
     },
     {
       key: 'speedAvg',
@@ -238,16 +279,7 @@ function RealtimeTaskCard({
       label: '剩余',
       value: formatSize(currentTask.remainSize || 0),
     },
-  ], [currentTask.doneSize, currentTask.remainSize, currentTask.remainTime, currentTask.speed, currentTask.speedAvg, displayDuration]);
-
-  useEffect(() => {
-    const tickID = setInterval(() => {
-      if (canPollCurrentDocument()) {
-        setNowTick(Math.floor(Date.now() / 1000));
-      }
-    }, 1000);
-    return () => { clearInterval(tickID); };
-  }, [currentTask.createTime, currentTask.taskId]);
+  ], [currentTask.createTime, currentTask.doneSize, currentTask.duration, currentTask.remainSize, currentTask.remainTime, currentTask.speed, currentTask.speedAvg]);
 
   // 计算各 tab 标签的计数，确保与分页器使用同步数据源，避免 React 状态更新一帧滞后导致不一致
   const getTabCount = (tabKey: number): number => {
@@ -284,7 +316,7 @@ function RealtimeTaskCard({
             任务 #{currentTask.taskId}
           </div>
           <div className="task-progress-hero-meta">
-            <span>开始: {currentTask.createTime ? dayjs.unix(currentTask.createTime).format('HH:mm:ss') : '--'}</span>
+            <span>开始: {formatClock(currentTask.createTime)}</span>
             <span>明细: {realtimeTotal} 条</span>
             <span>已完成: {currentTask.num?.success || 0} 条</span>
             <span>失败: {currentTask.num?.fail || 0} 条</span>
@@ -454,9 +486,9 @@ export default function TaskList({
     if (!showHistory) return undefined;
     const pollID = setInterval(() => {
       if (canPollCurrentDocument()) fetchList(false);
-    }, POLL_INTERVAL_MS);
+    }, pollIntervalForActiveWork(historyHasActiveTask(list), POLL_INTERVAL_MS));
     return () => { clearInterval(pollID); };
-  }, [fetchList, showHistory]);
+  }, [fetchList, list, showHistory]);
   const handleDeleteTask = useCallback(async (taskId: number) => {
     try {
       await jobDeleteTask(taskId);
@@ -500,82 +532,6 @@ export default function TaskList({
     !!historyTimeRange?.[0] ||
     !!historyTimeRange?.[1];
 
-  const columns = useMemo(() => [
-    {
-      title: '状态', dataIndex: 'status', key: 'status', width: 120,
-      render: (s: number, record: TaskRecord) => {
-        const errorReason = typeof record.errMsg === 'string' ? record.errMsg.trim() : '';
-        const statusTag = (
-          <Tag color={taskStatusColors[s]}>{taskRecordStatusNames[s] || s}</Tag>
-        );
-        if (taskStatusColors[s] !== 'error' || !errorReason) {
-          return statusTag;
-        }
-        return (
-          <span className="task-status-with-error">
-            {statusTag}
-            <Tooltip title={record.errMsg}>
-              <InfoCircleOutlined className="task-status-error-tip" aria-label="查看错误原因" />
-            </Tooltip>
-          </span>
-        );
-      },
-    },
-    {
-      title: '开始时间', dataIndex: 'runTime', key: 'runTime',
-      render: (t: number) => t ? dayjs.unix(t).format('YYYY-MM-DD HH:mm:ss') : '-',
-    },
-    {
-      title: '成功', dataIndex: 'successNum', key: 'successNum', width: 80,
-      render: (v: number) => v ?? '-',
-    },
-    {
-      title: '失败', dataIndex: 'failNum', key: 'failNum', width: 80,
-      render: (v: number) => v ?? '-',
-    },
-    { title: '总计', dataIndex: 'allNum', key: 'allNum', width: 80 },
-    {
-      title: '操作', key: 'action', width: 136,
-      render: (_: unknown, record: TaskRecord) => (
-        <Space size={4} wrap>
-          <Tooltip title="详情">
-            <Button
-              size="small"
-              type="text"
-              icon={<EyeOutlined />}
-              aria-label="详情"
-              onClick={() => onTaskDetail?.(record.id)}
-            />
-          </Tooltip>
-          {(record.allNum || 0) > (record.successNum || 0) && (
-            <Tooltip title="重试未完成项">
-              <Button
-                size="small"
-                type="text"
-                icon={<RedoOutlined />}
-                aria-label="重试未完成项"
-                onClick={() => handleTaskAction(record.id, 'retry', '已提交重试')}
-              />
-            </Tooltip>
-          )}
-          {(record.status !== 0 && record.status !== 1) && (
-            <Tooltip title="删除">
-              <Popconfirm title="确认删除此任务？" onConfirm={() => handleDeleteTask(record.id)}>
-                <Button
-                  size="small"
-                  type="text"
-                  danger
-                  icon={<DeleteOutlined />}
-                  aria-label="删除"
-                />
-              </Popconfirm>
-            </Tooltip>
-          )}
-        </Space>
-      ),
-    },
-  ], [handleDeleteTask, handleTaskAction, onTaskDetail]);
-
   const historyList = useMemo(
     () => showRealtime ? filterCurrentTaskFromHistory(list, currentTask) : filterRunningTaskRows(list),
     [currentTask, list, showRealtime],
@@ -604,77 +560,40 @@ export default function TaskList({
     />
   );
 
-  const historyBody = historyError ? (
-    <div className="ops-state-block">
-      <Empty
-        image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description={<Text type="secondary">历史任务加载失败</Text>}
-      />
-      <Button icon={<ReloadOutlined />} className="ops-state-action" onClick={() => fetchList(true)} loading={loading}>
-        重试
-      </Button>
-    </div>
-  ) : historyList.length === 0 && !loading ? (
-    <Empty
-      image={Empty.PRESENTED_IMAGE_SIMPLE}
-      description={<Text type="secondary">暂无历史任务记录，执行完成后将在此显示</Text>}
-    />
-  ) : (
-    <Table
-      dataSource={historyList}
-      columns={columns}
-      rowKey="id"
-      loading={loading}
-      pagination={{
-        current: page,
-        pageSize,
-        total: historyTotal,
-        onChange: (p, ps) => { setPage(p); setPageSize(ps); },
-        showSizeChanger: true,
-        showTotal: (t) => `共 ${t} 条`,
-      }}
-      size="middle"
-    />
-  );
-
   const historyContent = (
-    <div className="task-history-panel">
-      <Space wrap className="task-history-filters">
-        <Input.Search
-          placeholder="任务 ID"
-          allowClear
-          style={{ width: 180 }}
-          value={historyKeywordInput}
-          onChange={(event) => {
-            setHistoryKeywordInput(event.target.value);
-            if (!event.target.value) handleHistoryKeywordSearch('');
-          }}
-          onSearch={handleHistoryKeywordSearch}
-        />
-        <Select
-          placeholder="任务状态"
-          allowClear
-          style={{ width: 140 }}
-          value={historyStatusFilter}
-          onChange={(value) => {
-            setHistoryStatusFilter(value);
-            setPage(1);
-          }}
-          options={historyStatusOptions}
-        />
-        <DatePicker.RangePicker
-          className="task-history-time-range"
-          value={historyTimeRange || undefined}
-          onChange={(value) => {
-            setHistoryTimeRange(value as HistoryTimeRange);
-            setPage(1);
-          }}
-          placeholder={['开始日期', '结束日期']}
-        />
-        <Button onClick={resetHistoryFilters} disabled={!hasHistoryFilters}>重置</Button>
-      </Space>
-      {historyBody}
-    </div>
+    <Suspense fallback={<div className="task-history-panel task-history-panel-pending" />}>
+      <TaskHistoryPanel
+        error={historyError}
+        loading={loading}
+        rows={historyList}
+        total={historyTotal}
+        page={page}
+        pageSize={pageSize}
+        keywordInput={historyKeywordInput}
+        statusFilter={historyStatusFilter}
+        timeRange={historyTimeRange}
+        hasFilters={hasHistoryFilters}
+        onKeywordInputChange={setHistoryKeywordInput}
+        onKeywordSearch={handleHistoryKeywordSearch}
+        onStatusFilterChange={(value) => {
+          setHistoryStatusFilter(value);
+          setPage(1);
+        }}
+        onTimeRangeChange={(value) => {
+          setHistoryTimeRange(value);
+          setPage(1);
+        }}
+        onPageChange={(nextPage, nextSize) => {
+          setPage(nextPage);
+          setPageSize(nextSize);
+        }}
+        onResetFilters={resetHistoryFilters}
+        onRetry={() => fetchList(true)}
+        onTaskDetail={onTaskDetail}
+        onRetryTask={(taskId) => { void handleTaskAction(taskId, 'retry', '已提交重试'); }}
+        onDeleteTask={(taskId) => { void handleDeleteTask(taskId); }}
+      />
+    </Suspense>
   );
 
   return (

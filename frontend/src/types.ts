@@ -145,12 +145,18 @@ export interface CurrentTaskData {
   taskId: number;
   scanFinish: boolean;
   scan?: ScanProgress;
-  doingTask: TaskItem[];
+  doingTask?: TaskItem[];
+  doingPatch?: TaskItem[];
   createTime: number;
   duration: number;
   firstSync?: number | null;
   num: Record<TaskNumKey, number>;
   size: Record<TaskNumKey, number>;
+  doneSize?: number;
+  remainSize?: number;
+  speed?: number;
+  speedAvg?: number;
+  remainTime?: number;
 }
 
 export interface CurrentTaskView extends CurrentTaskData {

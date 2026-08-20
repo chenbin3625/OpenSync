@@ -1,5 +1,12 @@
+import { useMemo } from 'react';
 import { PlusOutlined, PlayCircleOutlined } from '@ant-design/icons';
-import { Button, Empty, Menu, Pagination, Spin, Tag, Typography } from 'antd';
+import Button from 'antd/es/button';
+import Empty from 'antd/es/empty';
+import Menu from 'antd/es/menu';
+import Pagination from 'antd/es/pagination';
+import Spin from 'antd/es/spin';
+import Tag from 'antd/es/tag';
+import Typography from 'antd/es/typography';
 import type { JobItem } from '../../types';
 import { jobStatusColors, statusLabels, methodNames, formatJobPaths, countJobPaths, getJobName, formatSchedule } from './homeUtils';
 
@@ -45,6 +52,14 @@ export default function HomeSidebar({
   list, loading, selectedJobId, total, page, pageSize,
   onAdd, onRunAll, onSelectJob, onClearTaskDetail, setPage,
 }: HomeSidebarProps) {
+  const menuItems = useMemo(
+    () => list.map((job) => ({
+      key: String(job.id),
+      label: renderSidebarJob(job),
+    })),
+    [list],
+  );
+
   return (
     <aside className="sync-manager-sidebar">
       <div className="sync-sidebar-toolbar">
@@ -67,10 +82,7 @@ export default function HomeSidebar({
                 onSelectJob(Number(key));
                 onClearTaskDetail();
               }}
-              items={list.map((job) => ({
-                key: String(job.id),
-                label: renderSidebarJob(job),
-              }))}
+              items={menuItems}
             />
           </Spin>
         )}

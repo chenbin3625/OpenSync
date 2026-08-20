@@ -20,11 +20,11 @@ func TestCanonicalFileNameUnescapesCompatibleEncodings(t *testing.T) {
 }
 
 func TestDstNameMatchIndexRejectsAmbiguousDestinationCanonicalNames(t *testing.T) {
-	dst := map[string]interface{}{
+	dst := FileListResult{
 		"Q%26A.mp4":   FileMetadata{Size: 10},
 		"Q&amp;A.mp4": FileMetadata{Size: 10},
 	}
-	src := newSrcNameMatchIndex(map[string]interface{}{
+	src := newSrcNameMatchIndex(FileListResult{
 		"Q&A.mp4": FileMetadata{Size: 10},
 	})
 
@@ -34,10 +34,10 @@ func TestDstNameMatchIndexRejectsAmbiguousDestinationCanonicalNames(t *testing.T
 }
 
 func TestDstNameMatchIndexRejectsAmbiguousSourceCanonicalNames(t *testing.T) {
-	dst := map[string]interface{}{
+	dst := FileListResult{
 		"Q&amp;A.mp4": FileMetadata{Size: 10},
 	}
-	src := newSrcNameMatchIndex(map[string]interface{}{
+	src := newSrcNameMatchIndex(FileListResult{
 		"Q&A.mp4":   FileMetadata{Size: 10},
 		"Q%26A.mp4": FileMetadata{Size: 10},
 	})

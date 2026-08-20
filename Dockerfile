@@ -54,7 +54,8 @@ ENV PGID=1000
 ENV OPENSYNC_BIND=0.0.0.0
 ENV OPENSYNC_PORT=8023
 ENV GIN_MODE=release
-EXPOSE 8023
+EXPOSE 8023/tcp
+EXPOSE 8023/udp
 VOLUME ["/app/data"]
 # The healthcheck runs `./opensync healthcheck`, which performs a lightweight
 # HTTP GET against its own port without touching the data volume, so it works

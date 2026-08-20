@@ -23,26 +23,23 @@ func newCopyMonitorWatch(client copyItemClient, opts ...func(*CopyItem)) (*copyT
 	for _, opt := range opts {
 		opt(item)
 	}
-	monitor := &copyTaskMonitor{
-		jt:      jt,
-		watches: make(map[string]*copyTaskWatch),
-		stopCh:  make(chan struct{}),
-	}
+	monitor := newCopyTaskMonitor()
 	watch := &copyTaskWatch{
+		jt:       jt,
 		ci:       item,
 		taskID:   "task-1",
 		copyType: taskItemTypeCopy,
 		done:     make(chan struct{}),
 	}
-	monitor.watches[monitor.watchKey(watch.taskID, watch.copyType)] = watch
+	monitor.watches[watchKey(jt, watch.taskID, watch.copyType)] = watch
 	return monitor, watch
 }
 
 func TestCopyMonitorPollTaskInfo404MarksSuccessWhenDstExists(t *testing.T) {
 	client := &copyItemTestClient{
 		fileExists: true,
-		taskInfoFn: func(int) (map[string]interface{}, error) {
-			return nil, errors.New("404 not found")
+		taskInfoFn: func(int) (alistRemoteTask, error) {
+			return alistRemoteTask{}, errors.New("404 not found")
 		},
 	}
 	monitor, watch := newCopyMonitorWatch(client)
@@ -61,8 +58,8 @@ func TestCopyMonitorPollTaskInfo404MarksSuccessWhenDstExists(t *testing.T) {
 func TestCopyMonitorPollTaskInfo404MarksFailedWhenDstMissing(t *testing.T) {
 	client := &copyItemTestClient{
 		fileExists: false,
-		taskInfoFn: func(int) (map[string]interface{}, error) {
-			return nil, errors.New("404 not found")
+		taskInfoFn: func(int) (alistRemoteTask, error) {
+			return alistRemoteTask{}, errors.New("404 not found")
 		},
 	}
 	monitor, watch := newCopyMonitorWatch(client)
@@ -77,11 +74,11 @@ func TestCopyMonitorPollTaskInfo404MarksFailedWhenDstMissing(t *testing.T) {
 
 func TestCopyMonitorPollTaskInfoTransientErrorsRetryThenSucceed(t *testing.T) {
 	client := &copyItemTestClient{
-		taskInfoFn: func(call int) (map[string]interface{}, error) {
+		taskInfoFn: func(call int) (alistRemoteTask, error) {
 			if call < maxTransientPollErrors {
-				return nil, errors.New("connection refused")
+				return alistRemoteTask{}, errors.New("connection refused")
 			}
-			return map[string]interface{}{"state": taskStatusSuccess.Int(), "progress": 100}, nil
+			return alistRemoteTask{State: taskStatusSuccess.Int(), Progress: 100}, nil
 		},
 	}
 	monitor, watch := newCopyMonitorWatch(client)
@@ -104,8 +101,8 @@ func TestCopyMonitorPollTaskInfoTransientErrorsRetryThenSucceed(t *testing.T) {
 
 func TestCopyMonitorPollTaskInfoTransientErrorsExhaustedMarksFailed(t *testing.T) {
 	client := &copyItemTestClient{
-		taskInfoFn: func(int) (map[string]interface{}, error) {
-			return nil, errors.New("connection refused")
+		taskInfoFn: func(int) (alistRemoteTask, error) {
+			return alistRemoteTask{}, errors.New("connection refused")
 		},
 	}
 	monitor, watch := newCopyMonitorWatch(client)
@@ -151,18 +148,15 @@ func TestCopyMonitorAbortAllStopsWhenContextCancelled(t *testing.T) {
 	}
 	item := newCopyItem(jt, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
 	item.setTaskID("copy-task")
-	monitor := &copyTaskMonitor{
-		jt:      jt,
-		watches: make(map[string]*copyTaskWatch),
-		stopCh:  make(chan struct{}),
-	}
+	monitor := newCopyTaskMonitor()
 	watch := &copyTaskWatch{
+		jt:       jt,
 		ci:       item,
 		taskID:   "copy-task",
 		copyType: taskItemTypeCopy,
 		done:     make(chan struct{}),
 	}
-	monitor.watches[monitor.watchKey(watch.taskID, watch.copyType)] = watch
+	monitor.watches[watchKey(jt, watch.taskID, watch.copyType)] = watch
 
 	cancel()
 	monitor.abortAll(ctx.Err())
@@ -178,21 +172,109 @@ func TestCopyMonitorAbortAllStopsWhenContextCancelled(t *testing.T) {
 func TestCopyMonitorTrackAfterStopAbortsWithoutStartingLoop(t *testing.T) {
 	client := &copyItemTestClient{}
 	jt := newCopyMonitorTestJobTask(client)
-	monitor := &copyTaskMonitor{
-		jt:      jt,
-		watches: make(map[string]*copyTaskWatch),
-		stopCh:  make(chan struct{}),
-	}
+	monitor := newCopyTaskMonitor()
 	monitor.stop()
 
 	item := newCopyItem(jt, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
 	item.setTaskID("late-task")
-	monitor.track(item)
+	monitor.track(jt, item)
 
 	if client.cancelCalls != 1 {
 		t.Fatalf("cancelCalls = %d, want 1", client.cancelCalls)
 	}
 	if status := item.status(); status != taskStatusStopped {
 		t.Fatalf("status = %d, want stopped", status)
+	}
+}
+
+func resetCopyMonitorsForTest(t *testing.T) {
+	t.Helper()
+	copyMonitors.mu.Lock()
+	copyMonitors.byAlist = make(map[int64]*copyTaskMonitor)
+	copyMonitors.mu.Unlock()
+	t.Cleanup(func() {
+		copyMonitors.mu.Lock()
+		copyMonitors.byAlist = make(map[int64]*copyTaskMonitor)
+		copyMonitors.mu.Unlock()
+	})
+}
+
+func TestEnsureCopyMonitorSharesByAlistID(t *testing.T) {
+	resetCopyMonitorsForTest(t)
+	shared := &AlistClient{AlistID: 9}
+	a := &JobTask{TaskID: 1, AlistClient: shared}
+	b := &JobTask{TaskID: 2, AlistClient: shared}
+	first := a.ensureCopyMonitor()
+	second := b.ensureCopyMonitor()
+	if first != second {
+		t.Fatal("jobs on the same alist must share a copy monitor")
+	}
+	if !first.shared || first.refs != 2 {
+		t.Fatalf("shared=%v refs=%d, want shared refs=2", first.shared, first.refs)
+	}
+	other := &JobTask{TaskID: 3, AlistClient: &AlistClient{AlistID: 10}}
+	if other.ensureCopyMonitor() == first {
+		t.Fatal("jobs on different alists must not share a copy monitor")
+	}
+}
+
+func TestEnsureCopyMonitorOverrideStaysPrivate(t *testing.T) {
+	resetCopyMonitorsForTest(t)
+	client := &copyItemTestClient{}
+	a := &JobTask{TaskID: 1, copyMonitorClientOverride: client, AlistClient: &AlistClient{AlistID: 9}}
+	b := &JobTask{TaskID: 2, copyMonitorClientOverride: client, AlistClient: &AlistClient{AlistID: 9}}
+	if a.ensureCopyMonitor() == b.ensureCopyMonitor() {
+		t.Fatal("override clients must keep per-task monitors")
+	}
+}
+
+func TestSharedCopyMonitorReleaseStopsOnlyWhenLastJobLeaves(t *testing.T) {
+	resetCopyMonitorsForTest(t)
+	shared := &AlistClient{AlistID: 11}
+	a := &JobTask{TaskID: 1, AlistClient: shared}
+	b := &JobTask{TaskID: 2, AlistClient: shared}
+	monitor := a.ensureCopyMonitor()
+	_ = b.ensureCopyMonitor()
+	a.stopCopyMonitor()
+	copyMonitors.mu.Lock()
+	_, still := copyMonitors.byAlist[11]
+	refs := monitor.refs
+	copyMonitors.mu.Unlock()
+	if !still || refs != 1 {
+		t.Fatalf("after first release registry=%v refs=%d, want still registered refs=1", still, refs)
+	}
+	b.stopCopyMonitor()
+	copyMonitors.mu.Lock()
+	_, still = copyMonitors.byAlist[11]
+	copyMonitors.mu.Unlock()
+	if still {
+		t.Fatal("last release must drop the shared monitor")
+	}
+}
+
+func TestFetchUndoneByTypeIssuesOneListForManyWatches(t *testing.T) {
+	client := &copyItemTestClient{
+		undoneTasks: []alistRemoteTask{
+			{ID: "task-1", State: 1, Progress: 40},
+			{ID: "task-2", State: 1, Progress: 70},
+		},
+	}
+	jobA := newCopyMonitorTestJobTask(client)
+	jobB := newCopyMonitorTestJobTask(client)
+	jobB.TaskID = 2
+	monitor := newCopyTaskMonitor()
+	itemA := newCopyItem(jobA, client, "/src", "/dst", "a.txt", int64(1), taskItemTypeCopy)
+	itemA.setTaskID("task-1")
+	itemB := newCopyItem(jobB, client, "/src", "/dst", "b.txt", int64(1), taskItemTypeCopy)
+	itemB.setTaskID("task-2")
+	result := monitor.fetchUndoneByType([]*copyTaskWatch{
+		{jt: jobA, ci: itemA, taskID: "task-1", copyType: taskItemTypeCopy, done: make(chan struct{})},
+		{jt: jobB, ci: itemB, taskID: "task-2", copyType: taskItemTypeCopy, done: make(chan struct{})},
+	})
+	if client.undoneCalls != 1 {
+		t.Fatalf("undoneCalls = %d, want 1 for two watches of the same type", client.undoneCalls)
+	}
+	if result[taskItemTypeCopy]["task-1"].idString() == "" || result[taskItemTypeCopy]["task-2"].idString() == "" {
+		t.Fatalf("undone snapshot = %#v", result)
 	}
 }

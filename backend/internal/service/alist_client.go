@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"opensync/internal/config"
@@ -25,11 +24,14 @@ const (
 	defaultMaxListResponseBytes = 32 << 20 // 32MB
 	maxUndoneResponseBytes      = 8 << 20  // 8MB; task snapshots should be small
 	maxFileListEntries          = 100000
-	fileListPageSize            = 500
 	maxFileListPages            = 10000
 	maxAlistWaitBuckets         = 1024
 	alistValidationTimeout      = 30 * time.Second
 )
+
+// fileListPageSize is the AList /api/fs/list page size. Mutable in tests so
+// parallel remaining-page fetches can be proven without 500-entry fixtures.
+var fileListPageSize = 500
 
 // maxResponseBytes is the current response-size cap. Kept as a mutable package
 // variable so tests can lower it; production uses loadMaxListResponseBytes().
@@ -73,30 +75,12 @@ func NewAlistClientContext(ctx context.Context, alistURL string, token string, a
 	if err != nil {
 		return nil, err
 	}
-	transport := &http.Transport{
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   20,
-		MaxConnsPerHost:       32,
-		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-	}
-	if !config.GetConfig().Server.AllowInternalAlist {
-		// Mirror notify's SSRF protection for AList connections. Enabled by
-		// default is NOT harmful here (internal AList is the normal deployment);
-		// operators who run OpenSync on the public internet can turn it on.
-		transport.DialContext = ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second}, func() bool {
-			return config.GetConfig().Server.AllowInternalAlist
-		})
-	}
 	c := &AlistClient{
 		URL:     normalizedURL,
 		Token:   token,
 		AlistID: alistID,
 		waits:   make(map[string]time.Time),
-		client: &http.Client{
-			Timeout:   300 * time.Second,
-			Transport: transport,
-		},
+		client:  newAlistHTTPClient(config.GetConfig().Server.AllowInternalAlist),
 	}
 	if err := c.getUserContext(ctx); err != nil {
 		c.Close()
@@ -105,12 +89,16 @@ func NewAlistClientContext(ctx context.Context, alistURL string, token string, a
 	return c, nil
 }
 
-// Close releases idle HTTP connections held by this client.
+// Close releases idle HTTP connections held by this client, including any
+// HTTP/3 UDP sockets created after an Alt-Svc upgrade.
 func (c *AlistClient) Close() {
 	if c == nil || c.client == nil || c.client.Transport == nil {
 		return
 	}
-	if transport, ok := c.client.Transport.(interface{ CloseIdleConnections() }); ok {
+	switch transport := c.client.Transport.(type) {
+	case io.Closer:
+		_ = transport.Close()
+	case interface{ CloseIdleConnections() }:
 		transport.CloseIdleConnections()
 	}
 }
@@ -119,7 +107,7 @@ func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath stri
 	return c.doRequestContextLimit(ctx, method, apiPath, data, params, maxResponseBytes)
 }
 
-func (c *AlistClient) doRequestContextLimit(ctx context.Context, method, apiPath string, data interface{}, params map[string]string, responseLimit int64) (json.RawMessage, error) {
+func (c *AlistClient) startRequest(ctx context.Context, method, apiPath string, data interface{}, params map[string]string) (*http.Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -159,6 +147,14 @@ func (c *AlistClient) doRequestContextLimit(ctx context.Context, method, apiPath
 		}
 		return nil, err
 	}
+	return resp, nil
+}
+
+func (c *AlistClient) doRequestContextLimit(ctx context.Context, method, apiPath string, data interface{}, params map[string]string, responseLimit int64) (json.RawMessage, error) {
+	resp, err := c.startRequest(ctx, method, apiPath, data, params)
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 
 	respBody, err := readAllWithLimit(resp.Body, responseLimit)
@@ -174,18 +170,23 @@ func (c *AlistClient) doRequestContextLimit(ctx context.Context, method, apiPath
 	if err := json.Unmarshal(respBody, &res); err != nil {
 		return nil, err
 	}
+	if err := c.checkAlistCode(res.Code, res.Message); err != nil {
+		return nil, err
+	}
+	return res.Data, nil
+}
 
-	if res.Code == 401 {
+func (c *AlistClient) checkAlistCode(code int, message string) error {
+	if code == 401 {
 		if c.AlistID > 0 {
 			removeCachedAlistClient(c.AlistID)
 		}
-		return nil, errors.New(msg.AlistUnAuth)
+		return errors.New(msg.AlistUnAuth)
 	}
-	if res.Code != 200 {
-		return nil, errors.New(msg.AlistFailCodeReason(res.Code, res.Message))
+	if code != 200 {
+		return errors.New(msg.AlistFailCodeReason(code, message))
 	}
-
-	return res.Data, nil
+	return nil
 }
 
 func normalizeAlistBaseURL(rawURL string) (string, error) {
@@ -333,12 +334,12 @@ func (c *AlistClient) enforceMaxWaitBucketsLocked() {
 
 // FileListResponse represents a file list entry
 type FileListEntry struct {
-	Name     string                 `json:"name"`
-	IsDir    bool                   `json:"is_dir"`
-	Size     int64                  `json:"size"`
-	Modified int64                  `json:"modified"`
-	HashInfo map[string]interface{} `json:"hash_info"`
-	Hashinfo string                 `json:"hashinfo"`
+	Name     string          `json:"name"`
+	IsDir    bool            `json:"is_dir"`
+	Size     int64           `json:"size"`
+	Modified int64           `json:"modified"`
+	HashInfo json.RawMessage `json:"hash_info"`
+	Hashinfo string          `json:"hashinfo"`
 }
 
 // FileMetadata contains lightweight comparison data from AList list results.
@@ -351,42 +352,58 @@ type FileMetadata struct {
 func (e FileListEntry) metadata() FileMetadata {
 	return FileMetadata{
 		Size:     e.Size,
-		MD5:      normalizeMD5(firstMD5(e.HashInfo, e.Hashinfo)),
+		MD5:      md5FromHashFields(e.HashInfo, e.Hashinfo),
 		Modified: e.Modified,
 	}
 }
 
-func firstMD5(hashInfo map[string]interface{}, hashinfo string) string {
-	if md5 := hashValue(hashInfo, "md5"); md5 != "" {
-		return md5
-	}
-	if md5 := hashValue(hashInfo, "MD5"); md5 != "" {
+func md5FromHashFields(hashInfo json.RawMessage, hashinfo string) string {
+	if md5 := md5FromRaw(hashInfo); md5 != "" {
 		return md5
 	}
 	if hashinfo == "" {
 		return ""
 	}
-
-	var parsed map[string]interface{}
-	if err := json.Unmarshal([]byte(hashinfo), &parsed); err == nil {
-		if md5 := hashValue(parsed, "md5"); md5 != "" {
-			return md5
-		}
-		return hashValue(parsed, "MD5")
-	}
-	return ""
+	return md5FromRaw([]byte(hashinfo))
 }
 
-func hashValue(hashInfo map[string]interface{}, key string) string {
-	if hashInfo == nil {
+// md5FromRaw pulls the md5/MD5 string out of a small JSON object without
+// allocating a map[string]interface{} per file. AList list pages are 500
+// entries; the old decoder boxed every hash key on the scan hot path.
+func md5FromRaw(raw []byte) string {
+	if value := jsonQuotedString(raw, `"md5"`); value != "" {
+		return normalizeMD5(value)
+	}
+	return normalizeMD5(jsonQuotedString(raw, `"MD5"`))
+}
+
+func jsonQuotedString(raw []byte, quotedKey string) string {
+	idx := bytes.Index(raw, []byte(quotedKey))
+	if idx < 0 {
 		return ""
 	}
-	value, ok := hashInfo[key]
-	if !ok || value == nil {
+	rest := bytes.TrimSpace(raw[idx+len(quotedKey):])
+	if len(rest) == 0 || rest[0] != ':' {
 		return ""
 	}
-	if s, ok := value.(string); ok {
-		return s
+	rest = bytes.TrimSpace(rest[1:])
+	if len(rest) < 2 || rest[0] != '"' {
+		return ""
+	}
+	rest = rest[1:]
+	end := 0
+	for end < len(rest) {
+		if rest[end] == '\\' {
+			end += 2
+			if end > len(rest) {
+				return ""
+			}
+			continue
+		}
+		if rest[end] == '"' {
+			return string(rest[:end])
+		}
+		end++
 	}
 	return ""
 }
@@ -395,58 +412,11 @@ func normalizeMD5(md5 string) string {
 	return strings.ToLower(strings.TrimSpace(md5))
 }
 
-// FileListResult maps filename -> metadata (for files) or empty map (for dirs)
-// Directories have key ending with "/"
-type FileListResult = map[string]interface{}
-
-func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCache int, scanInterval int) (FileListResult, error) {
-	if err := c.CheckWaitContext(ctx, path, scanInterval); err != nil {
-		return nil, err
-	}
-
-	result := make(FileListResult)
-	readTotal := 0
-	for page := 1; page <= maxFileListPages; page++ {
-		data, err := c.PostContext(ctx, "/api/fs/list", map[string]interface{}{
-			"path":     path,
-			"refresh":  useCache != 1,
-			"page":     page,
-			"per_page": fileListPageSize,
-		}, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		var content struct {
-			Content []FileListEntry `json:"content"`
-			Total   int             `json:"total"`
-		}
-		if err := json.Unmarshal(data, &content); err != nil {
-			return nil, err
-		}
-		readTotal += len(content.Content)
-		for _, item := range content.Content {
-			if item.Name == "" {
-				continue
-			}
-			if item.IsDir {
-				result[item.Name+"/"] = map[string]interface{}{}
-			} else {
-				result[item.Name] = item.metadata()
-			}
-		}
-		if len(result) >= maxFileListEntries {
-			return nil, fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries)
-		}
-		if len(content.Content) == 0 || content.Total <= readTotal || len(content.Content) < fileListPageSize {
-			break
-		}
-		if page == maxFileListPages {
-			return nil, fmt.Errorf("AList directory listing exceeded %d pages", maxFileListPages)
-		}
-	}
-	return result, nil
-}
+// FileListResult maps filename -> comparison metadata.
+// Directories use a key ending with "/" and a zero FileMetadata value so a
+// 10k-entry listing does not allocate 10k empty maps or box every file in
+// interface{}.
+type FileListResult = map[string]FileMetadata
 
 // FilePathList gets subdirectory list for path selector
 func (c *AlistClient) FilePathList(ctx context.Context, path string) ([]map[string]string, error) {
@@ -476,9 +446,7 @@ func (c *AlistClient) FileExistsContext(ctx context.Context, dir, name string) (
 func (c *AlistClient) FileGetContext(ctx context.Context, dir, name string) (bool, error) {
 	dir = strings.TrimRight(strings.TrimSpace(dir), "/")
 	filePath := dir + "/" + strings.TrimSpace(name)
-	_, err := c.PostContext(ctx, "/api/fs/get", map[string]interface{}{
-		"path": filePath,
-	}, nil)
+	_, err := c.PostContext(ctx, "/api/fs/get", alistPathRequest{Path: filePath}, nil)
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "404") || strings.Contains(strings.ToLower(errMsg), "not found") {
@@ -493,9 +461,7 @@ func (c *AlistClient) MkdirContext(ctx context.Context, path string, scanInterva
 	if err := c.CheckWaitContext(ctx, path, scanInterval); err != nil {
 		return err
 	}
-	_, err := c.PostContext(ctx, "/api/fs/mkdir", map[string]interface{}{
-		"path": path,
-	}, nil)
+	_, err := c.PostContext(ctx, "/api/fs/mkdir", alistPathRequest{Path: path}, nil)
 	return err
 }
 
@@ -503,19 +469,16 @@ func (c *AlistClient) DeleteFileContext(ctx context.Context, path string, names 
 	if err := c.CheckWaitContext(ctx, path, scanInterval); err != nil {
 		return err
 	}
-	_, err := c.PostContext(ctx, "/api/fs/remove", map[string]interface{}{
-		"names": names,
-		"dir":   path,
-	}, nil)
+	_, err := c.PostContext(ctx, "/api/fs/remove", alistRemoveRequest{Names: names, Dir: path}, nil)
 	return err
 }
 
 func (c *AlistClient) copyOrMoveFileContext(ctx context.Context, apiPath, srcDir, dstDir, name string) (string, error) {
-	data, err := c.PostContext(ctx, apiPath, map[string]interface{}{
-		"src_dir":   srcDir,
-		"dst_dir":   dstDir,
-		"overwrite": true,
-		"names":     []string{name},
+	data, err := c.PostContext(ctx, apiPath, alistCopyMoveRequest{
+		SrcDir:    srcDir,
+		DstDir:    dstDir,
+		Overwrite: true,
+		Names:     []string{name},
 	}, nil)
 	if err != nil {
 		return "", fmt.Errorf("%s request failed: %w", apiPath, err)
@@ -552,34 +515,6 @@ func alistTaskGroup(copyType taskItemType) string {
 func (c *AlistClient) taskActionContext(ctx context.Context, taskID string, copyType taskItemType, action string) (json.RawMessage, error) {
 	apiPath := fmt.Sprintf("/api/admin/task/%s/%s", alistTaskGroup(copyType), action)
 	return c.PostContext(ctx, apiPath, nil, map[string]string{"tid": taskID})
-}
-
-func (c *AlistClient) TaskUndoneListContext(ctx context.Context, copyType taskItemType) ([]map[string]interface{}, error) {
-	apiPath := fmt.Sprintf("/api/admin/task/%s/undone", alistTaskGroup(copyType))
-	data, err := c.doRequestContextLimit(ctx, http.MethodPost, apiPath, map[string]interface{}{}, nil, maxUndoneResponseBytes)
-	if err != nil {
-		return nil, err
-	}
-	var tasks []map[string]interface{}
-	if err := json.Unmarshal(data, &tasks); err != nil {
-		return nil, err
-	}
-	if tasks == nil {
-		tasks = []map[string]interface{}{}
-	}
-	return tasks, nil
-}
-
-func (c *AlistClient) TaskInfoContext(ctx context.Context, taskID string, copyType taskItemType) (map[string]interface{}, error) {
-	data, err := c.taskActionContext(ctx, taskID, copyType, "info")
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 func (c *AlistClient) TaskDeleteContext(ctx context.Context, taskID string, copyType taskItemType) error {

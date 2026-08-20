@@ -2,23 +2,24 @@ package service
 
 import (
 	"log"
+	"math"
 	"opensync/internal/mapper"
 	"opensync/pkg/util"
 	"sort"
 	"time"
 )
 
-func (jt *JobTask) scanProgress() map[string]int64 {
+func (jt *JobTask) scanProgress() scanProgressPayload {
 	total := jt.ScanTotalDirs.Load()
 	scanned := jt.ScanDoneDirs.Load()
 	remaining := total - scanned
 	if remaining < 0 {
 		remaining = 0
 	}
-	return map[string]int64{
-		"scannedDirs":   scanned,
-		"remainingDirs": remaining,
-		"totalDirs":     total,
+	return scanProgressPayload{
+		ScannedDirs:   scanned,
+		RemainingDirs: remaining,
+		TotalDirs:     total,
 	}
 }
 
@@ -39,56 +40,163 @@ func TouchJobWatching(jobID int64) {
 	}
 }
 
+type scanProgressPayload struct {
+	ScannedDirs   int64 `json:"scannedDirs"`
+	RemainingDirs int64 `json:"remainingDirs"`
+	TotalDirs     int64 `json:"totalDirs"`
+}
+
+type taskNumStats struct {
+	Wait    int `json:"wait"`
+	Running int `json:"running"`
+	Success int `json:"success"`
+	Fail    int `json:"fail"`
+	Other   int `json:"other"`
+}
+
+type taskSizeStats struct {
+	Wait    int64 `json:"wait"`
+	Running int64 `json:"running"`
+	Success int64 `json:"success"`
+	Fail    int64 `json:"fail"`
+	Other   int64 `json:"other"`
+}
+
+type streamDoingItem struct {
+	ID          int64   `json:"id,omitempty"`
+	AlistTaskID string  `json:"alistTaskId,omitempty"`
+	FileName    string  `json:"fileName"`
+	SrcPath     string  `json:"srcPath"`
+	DstPath     string  `json:"dstPath"`
+	FileSize    int64   `json:"fileSize"`
+	Type        int     `json:"type"`
+	Status      int     `json:"status"`
+	Progress    float64 `json:"progress"`
+	CreateTime  int64   `json:"createTime"`
+}
+
+type streamDoingPatch struct {
+	ID          int64   `json:"id,omitempty"`
+	AlistTaskID string  `json:"alistTaskId,omitempty"`
+	Status      int     `json:"status"`
+	Progress    float64 `json:"progress"`
+	FileName    string  `json:"fileName,omitempty"`
+	SrcPath     string  `json:"srcPath,omitempty"`
+	DstPath     string  `json:"dstPath,omitempty"`
+}
+
+// jobCurrentPayload is the live-progress JSON object shared by GET ?current=1
+// and the SSE stream. Typed fields avoid boxing every doing file into
+// map[string]interface{} on the 610ms poller / 400ms SSE debounce path.
+type jobCurrentPayload struct {
+	TaskID     int64                `json:"taskId"`
+	ScanFinish bool                 `json:"scanFinish"`
+	Scan       *scanProgressPayload `json:"scan,omitempty"`
+	DoingTask  []streamDoingItem    `json:"doingTask,omitempty"`
+	DoingPatch []streamDoingPatch   `json:"doingPatch,omitempty"`
+	CreateTime int                  `json:"createTime"`
+	Duration   int                  `json:"duration"`
+	FirstSync  *int                 `json:"firstSync"`
+	Num        taskNumStats         `json:"num"`
+	Size       taskSizeStats        `json:"size"`
+	DoneSize   int64                `json:"doneSize"`
+	RemainSize int64                `json:"remainSize"`
+	Speed      float64              `json:"speed,omitempty"`
+	SpeedAvg   float64              `json:"speedAvg,omitempty"`
+	RemainTime int                  `json:"remainTime,omitempty"`
+}
+
+type transferMeter struct {
+	duration int
+	doneSize int64
+}
+
+func (item streamDoingItem) countableSize() int64 {
+	if taskItemTypeFromValue(item.Type) == taskItemTypeDelete {
+		return 0
+	}
+	return item.FileSize
+}
+
+func (item streamDoingItem) transferredSize() int64 {
+	return int64(float64(item.countableSize()) * item.Progress / 100.0)
+}
+
 // GetCurrent returns real-time task progress
-func (jt *JobTask) GetCurrent() map[string]interface{} {
+func (jt *JobTask) GetCurrent() jobCurrentPayload {
 	jt.initRuntime()
 	jt.touchWatching()
 	now := time.Now().Unix()
 
-	dos := jt.doingTaskMaps()
+	doing := jt.doingStreamItems()
 	waitCount, waitSize := jt.Waiting.stats()
+	successCount, failCount, otherCount, successSize, failSize, otherSize := jt.finishedAggregates()
 
-	jt.CurrentMu.Lock()
-	jt.CurrentTasks = map[int][]map[string]interface{}{
-		taskStatusRunning.Int(): dos,
+	runningSize := int64(0)
+	doingSize := int64(0)
+	for _, item := range doing {
+		runningSize += item.countableSize()
+		doingSize += item.transferredSize()
 	}
-	jt.CurrentMu.Unlock()
 
-	result := map[string]interface{}{
-		"taskId":     jt.TaskID,
-		"scanFinish": jt.ScanFinish.Load(),
-		"scan":       jt.scanProgress(),
-		"doingTask":  dos,
-		"createTime": int(jt.CreateTime),
-		"duration":   int(float64(now) - jt.CreateTime),
-		"firstSync":  nil,
-		"num":        map[string]int{},
-		"size":       map[string]int64{},
+	duration := int(float64(now) - jt.CreateTime)
+	remainSize := runningSize - doingSize + waitSize
+	if remainSize < 0 {
+		remainSize = 0
+	}
+	doneSize := successSize + doingSize
+
+	payload := jobCurrentPayload{
+		TaskID:     jt.TaskID,
+		ScanFinish: jt.ScanFinish.Load(),
+		DoingTask:  doing,
+		CreateTime: int(jt.CreateTime),
+		Duration:   duration,
+		Num: taskNumStats{
+			Wait:    waitCount,
+			Running: len(doing),
+			Success: successCount,
+			Fail:    failCount,
+			Other:   otherCount,
+		},
+		Size: taskSizeStats{
+			Wait:    waitSize,
+			Running: runningSize,
+			Success: successSize,
+			Fail:    failSize,
+			Other:   otherSize,
+		},
+		DoneSize:   doneSize,
+		RemainSize: remainSize,
+	}
+	if !payload.ScanFinish {
+		scan := jt.scanProgress()
+		payload.Scan = &scan
 	}
 	if firstSync := jt.FirstSync.Load(); firstSync > 0 {
-		result["firstSync"] = int(firstSync)
+		value := int(firstSync)
+		payload.FirstSync = &value
+		syncDuration := duration - (value - int(jt.CreateTime))
+		if syncDuration > 0 {
+			payload.SpeedAvg = float64(doneSize) / float64(syncDuration)
+		}
 	}
 
-	numMap := result["num"].(map[string]int)
-	sizeMap := result["size"].(map[string]int64)
-	numMap["wait"] = waitCount
-	sizeMap["wait"] = waitSize
-	numMap["running"] = len(dos)
-	sizeMap["running"] = taskListSize(dos)
-
-	for _, item := range []struct {
-		key    string
-		status taskStatus
-	}{
-		{"success", taskStatusSuccess},
-		{"fail", taskStatusFailed},
-		{"other", taskStatusOther},
-	} {
-		count, size := jt.finishedAggregateForStatus(item.status)
-		numMap[item.key] = count
-		sizeMap[item.key] = size
+	jt.CurrentMu.Lock()
+	if len(jt.CurrentTasks) > 0 {
+		clear(jt.CurrentTasks)
 	}
-	return result
+	prev := jt.lastMeter
+	if prev.duration > 0 && duration != prev.duration {
+		payload.Speed = float64(doneSize-prev.doneSize) / float64(duration-prev.duration)
+	}
+	jt.lastMeter = transferMeter{duration: duration, doneSize: doneSize}
+	jt.CurrentMu.Unlock()
+
+	if payload.SpeedAvg > 0 && remainSize > 0 {
+		payload.RemainTime = int(math.Ceil(float64(remainSize) / payload.SpeedAvg))
+	}
+	return payload
 }
 
 // GetCurrentByStatus returns tasks filtered by status
@@ -161,26 +269,40 @@ func (jt *JobTask) finishedTaskPageFromDB(status, pageSize, pageNum int) map[str
 	result, err := mapper.GetJobTaskItemList(params)
 	if err != nil {
 		log.Printf("Failed to load task items for task %d status %d: %v", jt.TaskID, status, err)
-		panic(err.Error())
+		return map[string]interface{}{
+			"dataList": []map[string]interface{}{},
+			"count":    int64(0),
+		}
 	}
 	return result
 }
 
-func (jt *JobTask) finishedAggregateForStatus(status taskStatus) (int, int64) {
+func (jt *JobTask) finishedAggregates() (successCount, failCount, otherCount int, successSize, failSize, otherSize int64) {
 	jt.FinishMu.Lock()
 	defer jt.FinishMu.Unlock()
-	if status != taskStatusOther {
-		return jt.FinishedCounts[status], jt.FinishedSizes[status]
-	}
-	count := 0
-	size := int64(0)
+	successCount = jt.FinishedCounts[taskStatusSuccess]
+	successSize = jt.FinishedSizes[taskStatusSuccess]
+	failCount = jt.FinishedCounts[taskStatusFailed]
+	failSize = jt.FinishedSizes[taskStatusFailed]
 	for s, c := range jt.FinishedCounts {
 		if isOtherTaskStatus(s) {
-			count += c
-			size += jt.FinishedSizes[s]
+			otherCount += c
+			otherSize += jt.FinishedSizes[s]
 		}
 	}
-	return count, size
+	return
+}
+
+func (jt *JobTask) finishedAggregateForStatus(status taskStatus) (int, int64) {
+	successCount, failCount, otherCount, successSize, failSize, otherSize := jt.finishedAggregates()
+	switch status {
+	case taskStatusSuccess:
+		return successCount, successSize
+	case taskStatusFailed:
+		return failCount, failSize
+	default:
+		return otherCount, otherSize
+	}
 }
 
 func (jt *JobTask) waitingTaskMaps() []map[string]interface{} {
@@ -190,6 +312,17 @@ func (jt *JobTask) waitingTaskMaps() []map[string]interface{} {
 		waits[i] = jt.copyItemToMap(w)
 	}
 	return waits
+}
+
+func (jt *JobTask) doingStreamItems() []streamDoingItem {
+	jt.DoingMu.Lock()
+	defer jt.DoingMu.Unlock()
+
+	doing := make([]streamDoingItem, 0, len(jt.Doing))
+	for _, item := range jt.Doing {
+		doing = append(doing, item.toStreamItem())
+	}
+	return doing
 }
 
 func (jt *JobTask) doingTaskMaps() []map[string]interface{} {
