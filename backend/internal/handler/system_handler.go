@@ -52,7 +52,7 @@ func GetInitStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, model.Success(map[string]interface{}{
-		"initialized":          false,
+		"initialized":        false,
 		"setupTokenRequired": true,
 	}))
 }
