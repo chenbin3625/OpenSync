@@ -15,9 +15,6 @@
     "antd": "^6.4.3",
     "axios": "^1.18.0",
     "dayjs": "^1.11.21",
-    "echarts": "^6.1.0",
-    "echarts-for-react": "^3.0.6",
-    "js-cookie": "^3.0.8",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.16.0",
@@ -25,7 +22,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/js-cookie": "^3.0.6",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

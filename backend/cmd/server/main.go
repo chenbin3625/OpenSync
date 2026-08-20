@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"embed"
 	"errors"
@@ -21,7 +22,9 @@ import (
 	"os/signal"
 	pathpkg "path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,6 +33,156 @@ import (
 
 //go:embed all:web
 var webFS embed.FS
+
+// gzipResponseWriter transparently compresses the response body when the
+// client advertises gzip support. Compression only kicks in for bodies we can
+// meaningfully compress (static assets + JSON API responses); the SSE progress
+// stream is explicitly excluded because EventSource clients cannot recover a
+// burst-compressed stream (it also writes partial frames on every flush).
+//
+// gin's StaticFS (http.FileServer) sets Content-Length and honors Range
+// requests, both incompatible with a transformed body, so the wrapper strips
+// Content-Length (letting net/http switch to chunked encoding) and ranged
+// requests are left uncompressed.
+type gzipResponseWriter struct {
+	gin.ResponseWriter
+	gz    *gzip.Writer
+	on    sync.Once
+	wrote bool
+}
+
+// activate applies the gzip headers exactly once, before the first byte of the
+// body is written, and drops Content-Length so the real body (now smaller)
+// never mismatches the declared length.
+func (g *gzipResponseWriter) activate() {
+	g.on.Do(func() {
+		g.Header().Set("Content-Encoding", "gzip")
+		g.Header().Add("Vary", "Accept-Encoding")
+		g.Header().Del("Content-Length")
+	})
+}
+
+func (g *gzipResponseWriter) WriteHeader(code int) {
+	// Bodyless statuses (204/304/1xx) must not carry Content-Encoding; the
+	// gzip stream is only finalized when an actual body was written.
+	if code >= 200 && code != http.StatusNoContent && code != http.StatusNotModified {
+		g.activate()
+	}
+	g.ResponseWriter.WriteHeader(code)
+}
+
+func (g *gzipResponseWriter) Write(data []byte) (int, error) {
+	g.activate()
+	g.wrote = true
+	return g.gz.Write(data)
+}
+
+func (g *gzipResponseWriter) WriteString(s string) (int, error) {
+	return g.Write([]byte(s))
+}
+
+// Flush flushes the gzip buffer. gin buffers headers/body differently for
+// streaming endpoints, and the SSE endpoint is excluded from compression, so
+// a full flush (rather than buffering until Close) keeps incremental output
+// flowing for any non-SSE streaming response.
+func (g *gzipResponseWriter) Flush() {
+	g.activate()
+	_ = g.gz.Flush()
+	g.ResponseWriter.Flush()
+}
+
+// Unwrap lets Go 1.20+ ResponseController reach the underlying writer for
+// features such as Flush and EnableFullDuplex.
+func (g *gzipResponseWriter) Unwrap() http.ResponseWriter {
+	return g.ResponseWriter
+}
+
+// Pusher forwards HTTP/2 server push when the underlying writer supports it.
+func (g *gzipResponseWriter) Pusher() (pusher http.Pusher) {
+	if p, ok := g.ResponseWriter.(http.Pusher); ok {
+		return p
+	}
+	return nil
+}
+
+// closeCompression finalizes the gzip stream after the handler completes.
+func (g *gzipResponseWriter) closeCompression() {
+	if g.wrote {
+		_ = g.gz.Close()
+	}
+	g.ResponseWriter.Flush()
+}
+
+// acceptsGzip reports whether the request advertises gzip support without an
+// explicit q=0 veto (q values below 0.01 are treated as "not accepted").
+func acceptsGzip(r *http.Request) bool {
+	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		enc := strings.TrimSpace(part)
+		if enc == "" {
+			continue
+		}
+		name, _, _ := strings.Cut(enc, ";")
+		if !strings.EqualFold(strings.TrimSpace(name), "gzip") {
+			continue
+		}
+		for _, param := range strings.Split(enc, ";")[1:] {
+			kv := strings.SplitN(strings.TrimSpace(param), "=", 2)
+			if len(kv) == 2 && strings.EqualFold(kv[0], "q") {
+				if q, err := strconv.ParseFloat(kv[1], 64); err == nil && q <= 0 {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// maybeCompress wraps responses in gzip when the request accepts it and the
+// endpoint is compressible. Static assets and JSON APIs are the main wins.
+func maybeCompress() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// The progress stream must stay raw: EventSource has no gzip support
+		// and partial-frame flushes make a compressed stream unreadable.
+		// Range requests are also left alone: a partial response cannot be
+		// meaningfully gzipped without breaking the HTTP range contract.
+		if c.Request.URL.Path == "/svr/job/stream" ||
+			!acceptsGzip(c.Request) ||
+			c.Request.Header.Get("Range") != "" {
+			c.Next()
+			return
+		}
+		w := &gzipResponseWriter{
+			ResponseWriter: c.Writer,
+			gz:             gzip.NewWriter(c.Writer),
+		}
+		c.Writer = w
+		c.Next()
+		w.closeCompression()
+	}
+}
+
+// cachedStaticFiles sets long-lived "immutable" cache headers for the
+// content-hashed /assets/* bundle emitted by Vite. The file name is a hash of
+// its bytes, so an unchanged URL can never serve stale content — exactly the
+// case where immutable caching is both safe and the biggest load win.
+func cachedStaticFiles() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		c.Next()
+	}
+}
+
+// noCacheHTML keeps the SPA shell (index.html) always fresh so clients pick
+// up new bundle hashes, while the hashed assets themselves stay immutable.
+func noCacheHTML() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache")
+		c.Next()
+	}
+}
 
 // errorRecovery catches panics and returns them as 500 responses
 func errorRecovery() gin.HandlerFunc {
@@ -211,6 +364,7 @@ func run(parent context.Context) error {
 	r.Use(errorRecovery())
 	r.Use(securityHeaders())
 	r.Use(maxRequestBodySize(1 << 20)) // 1MB; config/alist/notify payloads are small JSON
+	r.Use(maybeCompress())
 	r.Use(middleware.CSRFProtection())
 	r.Use(middleware.AuthRequired())
 
@@ -256,18 +410,27 @@ func run(parent context.Context) error {
 	webDist, err := fs.Sub(webFS, "web")
 	if err == nil {
 		if assetsDist, err := fs.Sub(webDist, "assets"); err == nil {
-			r.StaticFS("/assets", http.FS(assetsDist))
+			// Vite content-hashes every /assets/* bundle, so an immutable,
+			// long-lived Cache-Control is the correct and biggest win: repeat
+			// visits never re-download the JS/CSS over the wire.
+			assets := r.Group("/assets")
+			assets.Use(cachedStaticFiles())
+			assets.StaticFS("", http.FS(assetsDist))
 		}
+		// The SPA shell and icons change on release; always revalidate so the
+		// browser still picks up new asset hashes.
 		r.GET("/favicon.svg", func(c *gin.Context) {
+			c.Header("Cache-Control", "no-cache")
 			serveWebFile(c, webDist, "favicon.svg", "image/svg+xml")
 		})
 		r.GET("/icons.svg", func(c *gin.Context) {
+			c.Header("Cache-Control", "no-cache")
 			serveWebFile(c, webDist, "icons.svg", "image/svg+xml")
 		})
-		r.GET("/", func(c *gin.Context) {
+		r.GET("/", noCacheHTML(), func(c *gin.Context) {
 			serveWebFile(c, webDist, "index.html", "text/html; charset=utf-8")
 		})
-		r.NoRoute(func(c *gin.Context) {
+		r.NoRoute(noCacheHTML(), func(c *gin.Context) {
 			serveSPAFallback(c, webDist)
 		})
 	}
