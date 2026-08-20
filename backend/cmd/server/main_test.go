@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +78,143 @@ func TestErrorRecoveryExposesPublicErrorMessage(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "最小文件大小不能大于最大文件大小") {
 		t.Fatalf("response body = %s, want public error message", w.Body.String())
+	}
+}
+
+func TestGzipCompressionIsAppliedToJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(maybeCompress())
+	router.GET("/svr/data", func(c *gin.Context) {
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.String(200, strings.Repeat("OpenSync performance payload ", 500))
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/svr/data", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", got)
+	}
+	if !strings.Contains(w.Header().Get("Vary"), "Accept-Encoding") {
+		t.Fatalf("Vary = %q, want Accept-Encoding", w.Header().Get("Vary"))
+	}
+	if w.Header().Get("Content-Length") != "" {
+		t.Fatalf("Content-Length must be dropped for gzip body, got %q", w.Header().Get("Content-Length"))
+	}
+	zr, err := gzip.NewReader(w.Result().Body)
+	if err != nil {
+		t.Fatalf("gzip.NewReader error: %v", err)
+	}
+	defer zr.Close()
+	body, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("read gzip body error: %v", err)
+	}
+	if !strings.Contains(string(body), "OpenSync performance payload") {
+		t.Fatalf("decompressed body missing payload: %q", string(body))
+	}
+}
+
+func TestGzipCompressionIsNotAppliedWithoutAcceptEncoding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(maybeCompress())
+	router.GET("/svr/plain", func(c *gin.Context) {
+		c.String(200, "plain response")
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/svr/plain", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("Content-Encoding = %q, want empty", w.Header().Get("Content-Encoding"))
+	}
+	if body := w.Body.String(); body != "plain response" {
+		t.Fatalf("body = %q, want uncompressed plain response", body)
+	}
+}
+
+func TestGzipCompressionSkipsSSEStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(maybeCompress())
+	router.GET("/svr/job/stream", func(c *gin.Context) {
+		c.Header("Content-Type", "text/event-stream")
+		c.Writer.WriteString("data: hello\n\n")
+		c.Writer.Flush()
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/svr/job/stream", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("SSE must not be gzipped, got Content-Encoding=%q", w.Header().Get("Content-Encoding"))
+	}
+	if body := w.Body.String(); body != "data: hello\n\n" {
+		t.Fatalf("SSE body = %q, want raw stream", body)
+	}
+}
+
+func TestGzipCompressionSkipsRangeRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(maybeCompress())
+	router.HEAD("/assets/app.js", func(c *gin.Context) {
+		c.Header("Content-Length", "12345")
+		c.Header("Content-Type", "application/javascript")
+		c.Status(http.StatusPartialContent)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Range", "bytes=0-1023")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("range response must not be gzipped, got Content-Encoding=%q", w.Header().Get("Content-Encoding"))
+	}
+}
+
+func TestStaticAssetsGetImmutableCacheHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(cachedStaticFiles())
+	router.GET("/assets/app-hash123.js", func(c *gin.Context) {
+		c.String(200, "bundle")
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/app-hash123.js", nil)
+	router.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("Cache-Control = %q, want immutable", got)
+	}
+}
+
+func TestIndexHTMLGetsNoCacheHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/", noCacheHTML(), func(c *gin.Context) {
+		c.String(200, "<html>OpenSync</html>")
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	router.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("Cache-Control = %q, want no-cache", got)
 	}
 }
 

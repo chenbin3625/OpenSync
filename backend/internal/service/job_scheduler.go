@@ -27,9 +27,22 @@ type Scheduler struct {
 
 // NewScheduler creates a new scheduler
 func NewScheduler() *Scheduler {
-	c := cron.New(cron.WithSeconds(), cron.WithLocation(schedulerLocation()))
+	loc := schedulerLocation()
+	c := cron.New(cron.WithSeconds(), cron.WithLocation(loc))
 	c.Start()
+	logSchedulerTimezone(loc)
 	return &Scheduler{cron: c}
+}
+
+var logSchedulerTimezoneOnce sync.Once
+
+// logSchedulerTimezone logs the scheduler timezone once at first scheduler
+// creation so deployments can confirm cron semantics are correct (TZ vs
+// config timezone); repeated scheduler rebuilds do not spam the log.
+func logSchedulerTimezone(loc *time.Location) {
+	logSchedulerTimezoneOnce.Do(func() {
+		log.Printf("调度时区 / scheduler timezone = %s", loc)
+	})
 }
 
 func schedulerLocation() *time.Location {
