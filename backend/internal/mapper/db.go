@@ -22,6 +22,7 @@ import (
 var (
 	db   *sql.DB
 	once = &sync.Once{}
+	dbMu sync.RWMutex
 )
 
 const maxPageSize = 500
@@ -68,6 +69,8 @@ func InitDB() *sql.DB {
 			log.Printf("Failed to enable sqlite foreign keys: %v", err)
 		}
 	})
+	dbMu.RLock()
+	defer dbMu.RUnlock()
 	return db
 }
 
@@ -131,14 +134,20 @@ func sqliteDSN(dbName string) string {
 
 // GetDB returns the database connection
 func GetDB() *sql.DB {
-	if db == nil {
-		return InitDB()
+	dbMu.RLock()
+	if db != nil {
+		handle := db
+		dbMu.RUnlock()
+		return handle
 	}
-	return db
+	dbMu.RUnlock()
+	return InitDB()
 }
 
 // CloseDB closes the global database handle and allows later reinitialization.
 func CloseDB() error {
+	dbMu.Lock()
+	defer dbMu.Unlock()
 	if db == nil {
 		return nil
 	}
@@ -150,10 +159,14 @@ func CloseDB() error {
 
 // SetDBForTest swaps the package database handle and returns a restore function.
 func SetDBForTest(testDB *sql.DB) func() {
+	dbMu.Lock()
 	oldDB := db
 	db = testDB
+	dbMu.Unlock()
 	return func() {
+		dbMu.Lock()
 		db = oldDB
+		dbMu.Unlock()
 	}
 }
 

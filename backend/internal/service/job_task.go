@@ -58,6 +58,7 @@ type JobTask struct {
 	persistBuffer             []JobTaskItem
 	persistFlushMu            sync.Mutex
 	persistFlushScheduled     bool
+	persistFlushTimer         *time.Timer
 	persistFlushWG            sync.WaitGroup
 	copyMonitor               *copyTaskMonitor
 	copyMonitorClientOverride copyItemClient
