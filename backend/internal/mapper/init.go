@@ -111,7 +111,9 @@ func InitSQL() {
 				log.Fatalf("Failed to initialize database: %v\nSQL: %s", err, stmt)
 			}
 		}
-		ensureIndexes(db)
+		if err := ensureIndexes(db); err != nil {
+			log.Fatalf("Failed to create database indexes: %v", err)
+		}
 
 		log.Printf("Database initialized; waiting for web account setup")
 		return
@@ -129,7 +131,9 @@ func InitSQL() {
 			log.Fatalf("Failed to migrate database from version %d to %d: %v", sqlVersion, currentVersion, err)
 		}
 	}
-	ensureIndexes(db)
+	if err := ensureIndexes(db); err != nil {
+		log.Fatalf("Failed to create database indexes: %v", err)
+	}
 }
 
 func schemaVersion(db *sql.DB) int64 {
@@ -155,7 +159,7 @@ func schemaVersion(db *sql.DB) int64 {
 	return 0
 }
 
-func ensureIndexes(db *sql.DB) {
+func ensureIndexes(db *sql.DB) error {
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_job_task_job_time ON job_task(jobId, createTime DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_status_job ON job_task(status, jobId)",
@@ -169,11 +173,23 @@ func ensureIndexes(db *sql.DB) {
 		// a TOCTOU race. Fresh databases get it via the CREATE TABLE statement.
 		"CREATE UNIQUE INDEX IF NOT EXISTS idx_user_list_username ON user_list(userName)",
 	}
+	var failures []string
 	for _, stmt := range indexes {
 		if _, err := db.Exec(stmt); err != nil {
-			log.Printf("Index creation failed: %v\nSQL: %s", err, stmt)
+			// Older/fixture databases may legitimately omit a table that this
+			// binary does not use in the current operation (for example the CLI
+			// password-reset path only needs user_list). Do not turn that into a
+			// startup failure; unexpected index errors remain fatal to callers.
+			if strings.Contains(strings.ToLower(err.Error()), "no such table") {
+				continue
+			}
+			failures = append(failures, fmt.Sprintf("%v\nSQL: %s", err, stmt))
 		}
 	}
+	if len(failures) > 0 {
+		return fmt.Errorf("index creation failed: %s", strings.Join(failures, "; "))
+	}
+	return nil
 }
 
 func migrationStatements(fromVersion int64) []string {

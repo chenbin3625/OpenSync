@@ -174,3 +174,25 @@ func TestCopyMonitorAbortAllStopsWhenContextCancelled(t *testing.T) {
 		t.Fatalf("cancel/delete calls = %d/%d, want 1/1", client.cancelCalls, client.deleteCalls)
 	}
 }
+
+func TestCopyMonitorTrackAfterStopAbortsWithoutStartingLoop(t *testing.T) {
+	client := &copyItemTestClient{}
+	jt := newCopyMonitorTestJobTask(client)
+	monitor := &copyTaskMonitor{
+		jt:      jt,
+		watches: make(map[string]*copyTaskWatch),
+		stopCh:  make(chan struct{}),
+	}
+	monitor.stop()
+
+	item := newCopyItem(jt, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeCopy)
+	item.setTaskID("late-task")
+	monitor.track(item)
+
+	if client.cancelCalls != 1 {
+		t.Fatalf("cancelCalls = %d, want 1", client.cancelCalls)
+	}
+	if status := item.status(); status != taskStatusStopped {
+		t.Fatalf("status = %d, want stopped", status)
+	}
+}

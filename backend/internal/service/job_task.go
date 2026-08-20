@@ -36,6 +36,8 @@ type JobTask struct {
 	BreakFlag     atomic.Bool
 	scanSem       chan struct{}
 	scanBranchSem chan struct{}
+	taskLimits    taskRuntimeLimits
+	limitsSet     bool
 	ctx           context.Context
 	cancel        context.CancelFunc
 	runtimeMu     sync.Mutex
@@ -56,6 +58,7 @@ type JobTask struct {
 	persistBuffer             []JobTaskItem
 	persistFlushMu            sync.Mutex
 	persistFlushScheduled     bool
+	persistFlushWG            sync.WaitGroup
 	copyMonitor               *copyTaskMonitor
 	copyMonitorClientOverride copyItemClient
 }
@@ -69,6 +72,7 @@ func NewJobTask(taskID int64, jc *JobClient) *JobTask {
 
 func newJobTask(taskID int64, jc *JobClient) *JobTask {
 	job := jc.jobSnapshot()
+	limits := runtimeTaskLimits()
 	jt := &JobTask{
 		TaskID:         taskID,
 		JobClient:      jc,
@@ -79,13 +83,29 @@ func newJobTask(taskID int64, jc *JobClient) *JobTask {
 		Doing:          make(map[int64]*CopyItem),
 		Waiting:        newCopyQueue(),
 		QueueNum:       0,
-		scanSem:        make(chan struct{}, scanConcurrencyLimit()),
-		scanBranchSem:  make(chan struct{}, scanConcurrencyLimit()),
+		scanSem:        make(chan struct{}, limits.ScanConcurrency),
+		scanBranchSem:  make(chan struct{}, limits.ScanConcurrency),
+		taskLimits:     limits,
+		limitsSet:      true,
 		CurrentTasks:   make(map[int][]map[string]interface{}),
 	}
 	jt.ctx, jt.cancel = newTaskContext(config.GetConfig().Server.Timeout)
 	jt.AlistClient = GetClientByIDContext(jt.ctx, util.ToInt64(job["alistId"]))
 	return jt
+}
+
+func (jt *JobTask) maxRetries() int {
+	if jt.limitsSet {
+		return jt.taskLimits.MaxRetries
+	}
+	return runtimeTaskLimits().MaxRetries
+}
+
+func (jt *JobTask) copyConcurrencyLimit() int {
+	if jt.limitsSet {
+		return jt.taskLimits.CopyConcurrency
+	}
+	return runtimeTaskLimits().CopyConcurrency
 }
 
 func newTaskContext(timeoutHours int) (context.Context, context.CancelFunc) {

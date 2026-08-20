@@ -8,6 +8,7 @@ import (
 	"opensync/internal/msg"
 	"opensync/pkg/crypto"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,7 +32,8 @@ type ServerConfig struct {
 	// header may be honored when deciding whether to mark the auth cookie
 	// Secure behind a TLS-terminating reverse proxy.
 	TrustedProxies []string
-	// AllowInternalWebhook allows webhook notifications to reach private/LAN IP addresses and HTTP URLs.
+	// AllowInternalWebhook allows webhook notifications to reach private/LAN IP addresses.
+	// Webhook URLs remain HTTPS-only.
 	AllowInternalWebhook bool
 	// AllowInternalAlist allows connecting to AList instances on private/LAN
 	// IP addresses (the default deployment is AList on the same LAN/NAS).
@@ -98,7 +100,21 @@ type SystemSettings struct {
 
 // GetPasswordStr gets or generates the encryption secret key
 func GetPasswordStr() string {
-	return crypto.ReadOrSetFile("data/secret.key", crypto.GeneratePassword(256), false)
+	return crypto.ReadOrSetFile(DataPath("secret.key"), crypto.GeneratePassword(256), false)
+}
+
+// DataDir returns the persistent runtime data root. The container entrypoint
+// and the application intentionally share this setting so custom volume paths
+// do not split the database, secret key, config, and logs across directories.
+func DataDir() string {
+	if raw := strings.TrimSpace(os.Getenv("OPENSYNC_DATA_DIR")); raw != "" {
+		return filepath.Clean(raw)
+	}
+	return "data"
+}
+
+func DataPath(name string) string {
+	return filepath.Join(DataDir(), name)
 }
 
 // GetConfig returns the global config (singleton)
@@ -117,7 +133,7 @@ func GetConfig() *Config {
 	}
 
 	passwdStr := GetPasswordStr()
-	dbname := "data/openSync.db"
+	dbname := DataPath("openSync.db")
 
 	sCfg := ServerConfig{
 		Bind:                 defaultBind,
@@ -132,13 +148,14 @@ func GetConfig() *Config {
 		ScanConcurrency:      DefaultScanConcurrency,
 		MaxRetries:           DefaultMaxRetries,
 		PasswdStr:            passwdStr,
-		AllowInternalWebhook: true,
-		AllowInternalAlist:   true,
+		AllowInternalWebhook: false,
+		AllowInternalAlist:   false,
 	}
 
-	if _, err := os.Stat("data/config.ini"); err == nil {
+	configPath := DataPath("config.ini")
+	if _, err := os.Stat(configPath); err == nil {
 		// Read config.ini
-		iniMap := readINI("data/config.ini")
+		iniMap := readINI(configPath)
 		if opensync, ok := iniMap["opensync"]; ok {
 			if v, ok := opensync["bind"]; ok {
 				sCfg.Bind = stringConfigValue(v, sCfg.Bind)
@@ -183,23 +200,28 @@ func GetConfig() *Config {
 				sCfg.AllowInternalAlist = boolConfigValue(v, sCfg.AllowInternalAlist)
 			}
 		}
-	} else {
-		// Read from environment variables
-		sCfg.Bind = envStringConfigValue("OPENSYNC_BIND", sCfg.Bind)
-		sCfg.Port = envIntConfigValue("OPENSYNC_PORT", sCfg.Port)
-		sCfg.Expires = envIntConfigValue("OPENSYNC_EXPIRES", sCfg.Expires)
-		sCfg.LogLevel = envIntConfigValue("OPENSYNC_LOG_LEVEL", sCfg.LogLevel)
-		sCfg.ConsoleLevel = envIntConfigValue("OPENSYNC_CONSOLE_LEVEL", sCfg.ConsoleLevel)
-		sCfg.LogSave = envIntConfigValue("OPENSYNC_LOG_SAVE", sCfg.LogSave)
-		sCfg.TaskSave = envIntConfigValue("OPENSYNC_TASK_SAVE", sCfg.TaskSave)
-		sCfg.Timeout = envIntConfigValue("OPENSYNC_TASK_TIMEOUT", sCfg.Timeout)
-		sCfg.CopyConcurrency = envIntConfigValue("OPENSYNC_COPY_CONCURRENCY", sCfg.CopyConcurrency)
-		sCfg.ScanConcurrency = envIntConfigValue("OPENSYNC_SCAN_CONCURRENCY", sCfg.ScanConcurrency)
-		sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
-		sCfg.TrustedProxies = parseTrustedProxies(os.Getenv("OPENSYNC_TRUSTED_PROXIES"))
-		sCfg.AllowInternalWebhook = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_WEBHOOK", sCfg.AllowInternalWebhook)
-		sCfg.AllowInternalAlist = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_ALIST", sCfg.AllowInternalAlist)
 	}
+
+	// Environment variables are explicit deployment overrides and therefore
+	// apply even when a persisted config.ini exists. This prevents container
+	// settings such as trusted proxies or SSRF policy from being silently
+	// ignored after the first web-based settings update.
+	sCfg.Bind = envStringConfigValue("OPENSYNC_BIND", sCfg.Bind)
+	sCfg.Port = envIntConfigValue("OPENSYNC_PORT", sCfg.Port)
+	sCfg.Expires = envIntConfigValue("OPENSYNC_EXPIRES", sCfg.Expires)
+	sCfg.LogLevel = envIntConfigValue("OPENSYNC_LOG_LEVEL", sCfg.LogLevel)
+	sCfg.ConsoleLevel = envIntConfigValue("OPENSYNC_CONSOLE_LEVEL", sCfg.ConsoleLevel)
+	sCfg.LogSave = envIntConfigValue("OPENSYNC_LOG_SAVE", sCfg.LogSave)
+	sCfg.TaskSave = envIntConfigValue("OPENSYNC_TASK_SAVE", sCfg.TaskSave)
+	sCfg.Timeout = envIntConfigValue("OPENSYNC_TASK_TIMEOUT", sCfg.Timeout)
+	sCfg.CopyConcurrency = envIntConfigValue("OPENSYNC_COPY_CONCURRENCY", sCfg.CopyConcurrency)
+	sCfg.ScanConcurrency = envIntConfigValue("OPENSYNC_SCAN_CONCURRENCY", sCfg.ScanConcurrency)
+	sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
+	if raw := strings.TrimSpace(os.Getenv("OPENSYNC_TRUSTED_PROXIES")); raw != "" {
+		sCfg.TrustedProxies = parseTrustedProxies(raw)
+	}
+	sCfg.AllowInternalWebhook = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_WEBHOOK", sCfg.AllowInternalWebhook)
+	sCfg.AllowInternalAlist = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_ALIST", sCfg.AllowInternalAlist)
 
 	sysConfig = &Config{
 		DB:     DBConfig{DBName: dbname},
@@ -374,7 +396,8 @@ func boolConfigValue(value string, fallback bool) bool {
 }
 
 func writeConfigFile(sCfg ServerConfig) error {
-	if err := os.MkdirAll("data", 0755); err != nil {
+	dataDir := DataDir()
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return err
 	}
 	content := fmt.Sprintf(`[opensync]
@@ -408,7 +431,7 @@ allow_internal_alist=%t
 		sCfg.AllowInternalWebhook,
 		sCfg.AllowInternalAlist,
 	)
-	tmpFile, err := os.CreateTemp("data", "config.ini.*")
+	tmpFile, err := os.CreateTemp(dataDir, "config.ini.*")
 	if err != nil {
 		return err
 	}
@@ -431,7 +454,7 @@ allow_internal_alist=%t
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpName, "data/config.ini"); err != nil {
+	if err := os.Rename(tmpName, DataPath("config.ini")); err != nil {
 		return err
 	}
 	cleanup = false

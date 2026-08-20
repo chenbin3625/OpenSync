@@ -66,6 +66,7 @@ const service = axios.create({
   timeout: 90000,
   headers: {
     'Content-Type': 'application/json;charset=utf-8',
+    'X-Requested-With': 'XMLHttpRequest',
   },
   paramsSerializer: {
     serialize: serializeParams,

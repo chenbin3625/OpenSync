@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	pathpkg "path"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -66,6 +67,8 @@ func securityHeaders() gin.HandlerFunc {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
 		c.Header("Referrer-Policy", "no-referrer")
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		c.Next()
 	}
 }
@@ -158,13 +161,18 @@ func runResetPasswordCommand(userName string, stdout io.Writer) (err error) {
 	_ = config.GetConfig()
 	mapper.InitSQL()
 	newPassword, newRecoveryKey := service.ResetPasswdForCLI(userName)
-	fmt.Fprintf(stdout, "用户: %s\n新密码: %s\n恢复密钥: %s\n", strings.TrimSpace(userName), newPassword, newRecoveryKey)
+	credPath := config.DataPath("reset-credentials.txt")
+	content := fmt.Sprintf("用户: %s\n新密码: %s\n恢复密钥: %s\n", strings.TrimSpace(userName), newPassword, newRecoveryKey)
+	if writeErr := os.WriteFile(credPath, []byte(content), 0600); writeErr != nil {
+		return writeErr
+	}
+	fmt.Fprintf(stdout, "凭证已写入 %s\n", credPath)
 	return nil
 }
 
 func run(parent context.Context) error {
 	// Create data directories
-	if err := os.MkdirAll("data/log", 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(config.DataDir(), "log"), 0755); err != nil {
 		return err
 	}
 
@@ -185,6 +193,10 @@ func run(parent context.Context) error {
 	// Update abnormal tasks on startup
 	mapper.UpdateAbnormalTasks()
 
+	if !service.IsInitialized() {
+		config.EnsureSetupToken()
+	}
+
 	// Initialize jobs
 	service.InitJobs()
 	stopTaskRetention := service.StartTaskRetentionScheduler()
@@ -199,10 +211,12 @@ func run(parent context.Context) error {
 	r.Use(errorRecovery())
 	r.Use(securityHeaders())
 	r.Use(maxRequestBodySize(1 << 20)) // 1MB; config/alist/notify payloads are small JSON
+	r.Use(middleware.CSRFProtection())
 	r.Use(middleware.AuthRequired())
 
 	// System routes (no auth needed)
 	noAuth := r.Group("/svr/noAuth")
+	noAuth.Use(middleware.NoAuthCSRFProtection())
 	{
 		noAuth.GET("/init", handler.GetInitStatus)
 		noAuth.POST("/init", handler.Initialize)
@@ -263,8 +277,12 @@ func run(parent context.Context) error {
 	log.Printf("启动成功_/_Running at http://%s/", addr)
 
 	server := &http.Server{
-		Addr:    addr,
-		Handler: r,
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    32 << 10,
 	}
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {

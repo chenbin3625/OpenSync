@@ -25,6 +25,10 @@ func (copyItemTestRuntime) waitForBreak(time.Duration) bool {
 	return true
 }
 
+func (copyItemTestRuntime) maxRetries() int {
+	return runtimeTaskLimits().MaxRetries
+}
+
 func (copyItemTestRuntime) jobConfig() map[string]interface{} {
 	return map[string]interface{}{}
 }
@@ -95,7 +99,7 @@ func (c *copyItemTestClient) FileExistsContext(context.Context, string, string) 
 }
 
 func TestCopyItemUsesMoveAPIForMoveItems(t *testing.T) {
-	client := &copyItemTestClient{}
+	client := &copyItemTestClient{fileExists: true}
 	item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeMove)
 
 	item.DoIt()

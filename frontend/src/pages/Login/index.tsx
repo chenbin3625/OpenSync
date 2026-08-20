@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import './Login.css';
 import { App, Button, Card, Form, Input, Modal, Typography } from 'antd';
 import { UserOutlined, LockOutlined, KeyOutlined } from '@ant-design/icons';
@@ -15,20 +15,31 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [checkingInit, setCheckingInit] = useState(true);
   const [initialized, setInitialized] = useState(true);
+  const [setupTokenRequired, setSetupTokenRequired] = useState(false);
+  const [canSetup, setCanSetup] = useState(false);
   const [resetVisible, setResetVisible] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [form] = Form.useForm();
   const [resetForm] = Form.useForm();
+
+  const applyInitStatus = useCallback((data: { initialized: boolean; setupTokenRequired?: boolean }) => {
+    setInitialized(data.initialized);
+    if (data.initialized) {
+      setSetupTokenRequired(false);
+      setCanSetup(false);
+      return;
+    }
+    setSetupTokenRequired(!!data.setupTokenRequired);
+    setCanSetup(!data.setupTokenRequired);
+    form.resetFields(['userName', 'passwd', 'confirmPasswd']);
+  }, [form]);
 
   useEffect(() => {
     let active = true;
     getInitStatus()
       .then((res) => {
         if (!active) return;
-        setInitialized(res.data.initialized);
-        if (!res.data.initialized) {
-          form.resetFields();
-        }
+        applyInitStatus(res.data);
       })
       .catch(() => {
         // Error handled by interceptor
@@ -39,9 +50,29 @@ export default function Login() {
     return () => {
       active = false;
     };
-  }, [form]);
+  }, [applyInitStatus]);
 
-  const handleLogin = async (values: { userName: string; passwd: string; confirmPasswd?: string }) => {
+  const handleSetupTokenBlur = async () => {
+    const token = String(form.getFieldValue('setupToken') || '').trim();
+    if (!token) {
+      setCanSetup(false);
+      setSetupTokenRequired(true);
+      return;
+    }
+    try {
+      const res = await getInitStatus(token);
+      applyInitStatus(res.data);
+    } catch {
+      setCanSetup(false);
+    }
+  };
+
+  const handleLogin = async (values: {
+    userName: string;
+    passwd: string;
+    confirmPasswd?: string;
+    setupToken?: string;
+  }) => {
     setLoading(true);
     try {
       if (initialized) {
@@ -53,7 +84,17 @@ export default function Login() {
         return;
       }
 
-      const res = await initializeUser({ userName: values.userName, passwd: values.passwd });
+      const setupToken = String(values.setupToken || '').trim();
+      if (!setupToken) {
+        message.error('请输入 setup token（见服务器日志中的 OpenSync setup token）');
+        return;
+      }
+
+      const res = await initializeUser({
+        userName: values.userName,
+        passwd: values.passwd,
+        setupToken,
+      });
       const { recoveryKey, ...userInfo } = res.data;
       setUserInfo(userInfo);
       setAuthChecked(true);
@@ -90,6 +131,8 @@ export default function Login() {
     }
   };
 
+  const showSetupForm = !initialized;
+
   return (
     <div className="login-page">
       <Card className="login-card">
@@ -100,13 +143,31 @@ export default function Login() {
         </div>
 
         <Form form={form} onFinish={handleLogin} layout="vertical" size="large">
+          {showSetupForm && (
+            <>
+              <Form.Item
+                name="setupToken"
+                rules={[{ required: true, message: '请输入 setup token' }]}
+                extra={setupTokenRequired ? '首次部署时，setup token 会写入服务器日志（OpenSync setup token）' : undefined}
+              >
+                <Input.Password
+                  prefix={<KeyOutlined />}
+                  placeholder="Setup Token"
+                  onBlur={handleSetupTokenBlur}
+                />
+              </Form.Item>
+              {!canSetup && setupTokenRequired && (
+                <Text type="secondary">验证 setup token 后可创建管理员账号。</Text>
+              )}
+            </>
+          )}
           <Form.Item name="userName" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input prefix={<UserOutlined />} placeholder="用户名" />
+            <Input prefix={<UserOutlined />} placeholder="用户名" disabled={showSetupForm && !canSetup} />
           </Form.Item>
           <Form.Item name="passwd" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="密码" />
+            <Input.Password prefix={<LockOutlined />} placeholder="密码" disabled={showSetupForm && !canSetup} />
           </Form.Item>
-          {!initialized && (
+          {showSetupForm && (
             <Form.Item
               name="confirmPasswd"
               dependencies={['passwd']}
@@ -122,11 +183,17 @@ export default function Login() {
                 }),
               ]}
             >
-              <Input.Password prefix={<LockOutlined />} placeholder="确认密码" />
+              <Input.Password prefix={<LockOutlined />} placeholder="确认密码" disabled={!canSetup} />
             </Form.Item>
           )}
           <Form.Item>
-            <Button type="primary" htmlType="submit" loading={checkingInit || loading} block>
+            <Button
+              type="primary"
+              htmlType="submit"
+              loading={checkingInit || loading}
+              block
+              disabled={showSetupForm && !canSetup}
+            >
               {initialized ? '登录' : '创建管理员账号'}
             </Button>
           </Form.Item>

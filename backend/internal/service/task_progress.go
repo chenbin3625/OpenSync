@@ -115,10 +115,15 @@ func (jt *JobTask) GetCurrentByStatusPage(status, pageSize, pageNum int) map[str
 	tasks := jt.currentTasksForStatus(status)
 	count := len(tasks)
 	if pageSize > 0 && pageNum > 0 {
-		start := (pageNum - 1) * pageSize
-		if start >= count {
+		pageIndex := int64(pageNum) - 1
+		size := int64(pageSize)
+		maxInt := int64(^uint(0) >> 1)
+		if pageIndex > maxInt/size {
+			tasks = []map[string]interface{}{}
+		} else if start64 := pageIndex * size; start64 >= int64(count) {
 			tasks = []map[string]interface{}{}
 		} else {
+			start := int(start64)
 			end := start + pageSize
 			if end > count {
 				end = count
@@ -156,10 +161,7 @@ func (jt *JobTask) finishedTaskPageFromDB(status, pageSize, pageNum int) map[str
 	result, err := mapper.GetJobTaskItemList(params)
 	if err != nil {
 		log.Printf("Failed to load task items for task %d status %d: %v", jt.TaskID, status, err)
-		return map[string]interface{}{
-			"dataList": []map[string]interface{}{},
-			"count":    0,
-		}
+		panic(err.Error())
 	}
 	return result
 }

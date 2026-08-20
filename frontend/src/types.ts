@@ -21,6 +21,7 @@ export interface InitUserInfo extends UserInfo {
 
 export interface InitStatus {
   initialized: boolean;
+  setupTokenRequired?: boolean;
 }
 
 export interface SystemSettings {

@@ -14,6 +14,7 @@ type copyItemRuntime interface {
 	cleanupContext() (context.Context, context.CancelFunc)
 	isBreak() bool
 	waitForBreak(time.Duration) bool
+	maxRetries() int
 	jobConfig() map[string]interface{}
 	lastWatchingUnix() int64
 	finishCopyItem(*CopyItem)
@@ -168,7 +169,7 @@ func (ci *CopyItem) ToMap(taskID int64) map[string]interface{} {
 func (ci *CopyItem) DoIt() {
 	runtime := ci.copyRuntime()
 	client := ci.copyClient()
-	maxRetries := runtimeTaskLimits().MaxRetries
+	maxRetries := runtime.maxRetries()
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if runtime.isBreak() {
 			ci.setStatus(taskStatusStopped)
@@ -196,7 +197,31 @@ func (ci *CopyItem) DoIt() {
 
 		ci.setTaskID(taskID)
 		if taskID == "" {
-			ci.setProgress(taskStatusSuccess, 100, nil)
+			exists, verr := ci.verifyDstExists(runtime, client)
+			if verr != nil {
+				if attempt < maxRetries {
+					ci.setRetrying(verr)
+					if completed := runtime.waitForBreak(copyRetryDelay(attempt)); !completed {
+						ci.setStatus(taskStatusStopped)
+						break
+					}
+					continue
+				}
+				ci.setFailure(verr)
+				break
+			}
+			if exists {
+				ci.setProgress(taskStatusSuccess, 100, nil)
+			} else if attempt < maxRetries {
+				ci.setRetrying(errors.New("copy completed without task id but destination missing"))
+				if completed := runtime.waitForBreak(copyRetryDelay(attempt)); !completed {
+					ci.setStatus(taskStatusStopped)
+					break
+				}
+				continue
+			} else {
+				ci.setFailure(errors.New("copy completed without task id but destination missing"))
+			}
 		} else if ci.status() != taskStatusStopped {
 			runtime.waitForRemoteCopyCompletion(ci)
 		}

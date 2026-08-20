@@ -6,10 +6,28 @@ import (
 )
 
 func (jt *JobTask) persistRemainingTaskItems() error {
-	if err := jt.flushPersistBuffer(); err != nil {
-		return err
+	jt.drainScheduledPersistFlush()
+	for {
+		if err := jt.flushPersistBuffer(); err != nil {
+			return err
+		}
+		jt.persistBufMu.Lock()
+		empty := len(jt.persistBuffer) == 0
+		jt.persistBufMu.Unlock()
+		if empty {
+			break
+		}
 	}
+	jt.persistFlushWG.Wait()
 	return jt.taskPersistenceError()
+}
+
+func (jt *JobTask) drainScheduledPersistFlush() {
+	jt.persistFlushMu.Lock()
+	jt.persistFlushScheduled = false
+	jt.persistFlushMu.Unlock()
+	_ = jt.flushPersistBuffer()
+	jt.persistFlushWG.Wait()
 }
 
 func (jt *JobTask) appendFinish(item JobTaskItem) {
@@ -75,6 +93,9 @@ func (jt *JobTask) flushPersistBuffer() error {
 	items := append([]JobTaskItem(nil), jt.persistBuffer...)
 	jt.persistBuffer = jt.persistBuffer[:0]
 	jt.persistBufMu.Unlock()
+
+	jt.persistFlushWG.Add(1)
+	defer jt.persistFlushWG.Done()
 
 	if err := persistJobTaskItems(jobTaskItemsToMaps(items)); err != nil {
 		jt.persistBufMu.Lock()

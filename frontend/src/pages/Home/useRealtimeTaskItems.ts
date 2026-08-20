@@ -121,12 +121,10 @@ export function useRealtimeTaskItems({
     if (!changedView && lastFetchAtRef.current != null && now - lastFetchAtRef.current < pollIntervalMs) {
       return;
     }
-    // Skip the whole run while a request is still in flight: the in-flight
-    // request completes and updates state instead of being cancelled, and the
-    // next push/tick (changedView stays true) fetches any new view. Guarding
-    // here — before any state mutation — avoids clearing the view and leaving
-    // a stuck loading spinner when a tab/page switch races a slow fetch.
-    if (tabFetchingRef.current) return;
+    // A changed tab/page/task must win immediately. Abort the stale browser
+    // request; requestRef and the finally guard below prevent its completion
+    // from clearing loading state owned by the newer request.
+    if (tabFetchingRef.current) abortRef.current?.abort();
     lastFetchKeyRef.current = fetchKey;
     lastFetchAtRef.current = now;
 
@@ -162,8 +160,8 @@ export function useRealtimeTaskItems({
           if (resetSnapshot) setTabTaskTotal(0);
         }
       } finally {
-        tabFetchingRef.current = false;
         if (requestID === requestRef.current) {
+          tabFetchingRef.current = false;
           setTabLoading(false);
         }
       }

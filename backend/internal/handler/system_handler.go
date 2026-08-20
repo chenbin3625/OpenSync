@@ -35,22 +35,47 @@ func Login(c *gin.Context) {
 
 // GetInitStatus handles GET /svr/noAuth/init
 func GetInitStatus(c *gin.Context) {
-	c.JSON(http.StatusOK, model.Success(map[string]bool{
-		"initialized": service.IsInitialized(),
+	if service.IsInitialized() {
+		c.JSON(http.StatusOK, model.Success(map[string]bool{
+			"initialized": true,
+		}))
+		return
+	}
+	token := strings.TrimSpace(c.Query("setupToken"))
+	if token == "" {
+		token = strings.TrimSpace(c.GetHeader("X-Setup-Token"))
+	}
+	if config.ValidateSetupToken(token) {
+		c.JSON(http.StatusOK, model.Success(map[string]bool{
+			"initialized": false,
+		}))
+		return
+	}
+	c.JSON(http.StatusOK, model.Success(map[string]interface{}{
+		"initialized":          false,
+		"setupTokenRequired": true,
 	}))
 }
 
 // Initialize handles POST /svr/noAuth/init
 func Initialize(c *gin.Context) {
 	var req struct {
-		UserName string `json:"userName" form:"userName"`
-		Passwd   string `json:"passwd" form:"passwd"`
+		UserName   string `json:"userName" form:"userName"`
+		Passwd     string `json:"passwd" form:"passwd"`
+		SetupToken string `json:"setupToken" form:"setupToken"`
 	}
 	if err := c.ShouldBind(&req); err != nil {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
+	if !service.IsInitialized() {
+		if !config.ValidateSetupToken(req.SetupToken) {
+			c.JSON(http.StatusOK, model.Error(msg.SetupTokenInvalid))
+			return
+		}
+	}
 	user, recoveryKey := service.InitializeUser(req.UserName, req.Passwd)
+	config.RemoveSetupToken()
 	middleware.SetAuthCookie(c, user)
 	userReturn := map[string]interface{}{
 		"id":          user["id"],

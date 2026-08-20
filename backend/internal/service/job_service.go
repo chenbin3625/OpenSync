@@ -265,6 +265,10 @@ func EditJobClient(job map[string]interface{}) {
 	ValidateJobInput(job)
 	client := GetJobClientByID(jobID)
 	oldJob := client.jobSnapshot()
+	oldScheduler := client.schedulerSnapshot()
+	if oldScheduler != nil {
+		oldScheduler.Stop()
+	}
 	nextScheduler := NewScheduler()
 	dbUpdated := false
 	defer func() {
@@ -289,10 +293,7 @@ func EditJobClient(job map[string]interface{}) {
 		panic(err.Error())
 	}
 	dbUpdated = true
-	oldScheduler := client.replaceJobConfig(job, nextScheduler)
-	if oldScheduler != nil {
-		oldScheduler.Stop()
-	}
+	client.replaceJobConfig(job, nextScheduler)
 }
 
 // DoAllJobManual executes all enabled jobs manually
@@ -421,7 +422,7 @@ func GetJobCurrent(jobID int64, params map[string]interface{}) interface{} {
 		if pageSize > 0 && pageNum > 0 {
 			return taskClient.GetCurrentByStatusPage(statusInt, pageSize, pageNum)
 		}
-		return taskClient.GetCurrentByStatus(statusInt)
+		return taskClient.GetCurrentByStatusPage(statusInt, 500, 1)
 	}
 	return nil
 }
@@ -554,7 +555,13 @@ func drainTaskNumUpdates() {
 		pendingTaskNumUpdatesMu.Lock()
 		if len(pendingTaskNumUpdates) == 0 {
 			pendingTaskNumUpdatesMu.Unlock()
-			return
+			pendingTaskNumUpdatesMu.Lock()
+			stillEmpty := len(pendingTaskNumUpdates) == 0
+			pendingTaskNumUpdatesMu.Unlock()
+			if stillEmpty {
+				return
+			}
+			continue
 		}
 		batch := make([]map[string]interface{}, 0, len(pendingTaskNumUpdates))
 		for taskID, tn := range pendingTaskNumUpdates {
@@ -581,7 +588,21 @@ func GetTaskItemList(req map[string]interface{}) map[string]interface{} {
 
 // RemoveTask deletes a task
 func RemoveTask(taskID int64) {
+	if isTaskCurrentlyRunning(taskID) {
+		panicPublic(msg.TaskRunningCannotDelete)
+	}
 	if err := mapper.DeleteJobTaskByTaskID(taskID); err != nil {
 		panic(err.Error())
 	}
+}
+
+func isTaskCurrentlyRunning(taskID int64) bool {
+	jobClientListMu.RLock()
+	defer jobClientListMu.RUnlock()
+	for _, client := range jobClientList {
+		if client.isCurrentTask(taskID) {
+			return true
+		}
+	}
+	return false
 }

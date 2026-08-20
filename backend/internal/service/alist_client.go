@@ -23,6 +23,10 @@ const (
 	// defaultMaxListResponseBytes is the cap for a single AList list/API
 	// response. Overridden by OPENSYNC_MAX_LIST_BYTES (must be >= 1MB).
 	defaultMaxListResponseBytes = 32 << 20 // 32MB
+	maxUndoneResponseBytes      = 8 << 20  // 8MB; task snapshots should be small
+	maxFileListEntries          = 100000
+	fileListPageSize            = 500
+	maxFileListPages            = 10000
 	maxAlistWaitBuckets         = 1024
 	alistValidationTimeout      = 30 * time.Second
 )
@@ -65,6 +69,10 @@ func NewAlistClient(alistURL string, token string, alistID int64) (*AlistClient,
 
 // NewAlistClientContext creates a new AList client and validates it with ctx.
 func NewAlistClientContext(ctx context.Context, alistURL string, token string, alistID int64) (*AlistClient, error) {
+	normalizedURL, err := normalizeAlistBaseURL(alistURL)
+	if err != nil {
+		return nil, err
+	}
 	transport := &http.Transport{
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   20,
@@ -81,7 +89,7 @@ func NewAlistClientContext(ctx context.Context, alistURL string, token string, a
 		})
 	}
 	c := &AlistClient{
-		URL:     strings.TrimRight(alistURL, "/"),
+		URL:     normalizedURL,
 		Token:   token,
 		AlistID: alistID,
 		waits:   make(map[string]time.Time),
@@ -108,6 +116,10 @@ func (c *AlistClient) Close() {
 }
 
 func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath string, data interface{}, params map[string]string) (json.RawMessage, error) {
+	return c.doRequestContextLimit(ctx, method, apiPath, data, params, maxResponseBytes)
+}
+
+func (c *AlistClient) doRequestContextLimit(ctx context.Context, method, apiPath string, data interface{}, params map[string]string, responseLimit int64) (json.RawMessage, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -121,13 +133,9 @@ func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath stri
 		body = bytes.NewReader(jsonData)
 	}
 
-	reqURL := c.URL + apiPath
-	if len(params) > 0 {
-		q := url.Values{}
-		for k, v := range params {
-			q.Set(k, v)
-		}
-		reqURL += "?" + q.Encode()
+	reqURL, err := c.requestURL(apiPath, params)
+	if err != nil {
+		return nil, errors.New(msg.AddressIncorrect)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
@@ -153,7 +161,7 @@ func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath stri
 	}
 	defer resp.Body.Close()
 
-	respBody, err := readAllWithLimit(resp.Body, maxResponseBytes)
+	respBody, err := readAllWithLimit(resp.Body, responseLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +176,9 @@ func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath stri
 	}
 
 	if res.Code == 401 {
+		if c.AlistID > 0 {
+			removeCachedAlistClient(c.AlistID)
+		}
 		return nil, errors.New(msg.AlistUnAuth)
 	}
 	if res.Code != 200 {
@@ -175,6 +186,45 @@ func (c *AlistClient) doRequestContext(ctx context.Context, method, apiPath stri
 	}
 
 	return res.Data, nil
+}
+
+func normalizeAlistBaseURL(rawURL string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New(msg.AlistURLInvalid)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", errors.New(msg.AlistURLInvalid)
+	}
+	u.Scheme = scheme
+	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawPath = ""
+	return u.String(), nil
+}
+
+func (c *AlistClient) requestURL(apiPath string, params map[string]string) (string, error) {
+	base, err := url.Parse(c.URL)
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return "", errors.New(msg.AddressIncorrect)
+	}
+	endpoint, err := url.Parse(apiPath)
+	if err != nil || endpoint.IsAbs() || endpoint.Host != "" {
+		return "", errors.New(msg.AddressIncorrect)
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/" + strings.TrimLeft(endpoint.Path, "/")
+	base.RawPath = ""
+	query := base.Query()
+	for key, value := range endpoint.Query() {
+		for _, item := range value {
+			query.Add(key, item)
+		}
+	}
+	for key, value := range params {
+		query.Set(key, value)
+	}
+	base.RawQuery = query.Encode()
+	return base.String(), nil
 }
 
 func (c *AlistClient) PostContext(ctx context.Context, apiPath string, data interface{}, params map[string]string) (json.RawMessage, error) {
@@ -286,20 +336,23 @@ type FileListEntry struct {
 	Name     string                 `json:"name"`
 	IsDir    bool                   `json:"is_dir"`
 	Size     int64                  `json:"size"`
+	Modified int64                  `json:"modified"`
 	HashInfo map[string]interface{} `json:"hash_info"`
 	Hashinfo string                 `json:"hashinfo"`
 }
 
 // FileMetadata contains lightweight comparison data from AList list results.
 type FileMetadata struct {
-	Size int64
-	MD5  string
+	Size     int64
+	MD5      string
+	Modified int64
 }
 
 func (e FileListEntry) metadata() FileMetadata {
 	return FileMetadata{
-		Size: e.Size,
-		MD5:  normalizeMD5(firstMD5(e.HashInfo, e.Hashinfo)),
+		Size:     e.Size,
+		MD5:      normalizeMD5(firstMD5(e.HashInfo, e.Hashinfo)),
+		Modified: e.Modified,
 	}
 }
 
@@ -351,29 +404,45 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 		return nil, err
 	}
 
-	data, err := c.PostContext(ctx, "/api/fs/list", map[string]interface{}{
-		"path":    path,
-		"refresh": useCache != 1,
-	}, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var content struct {
-		Content []FileListEntry `json:"content"`
-	}
-	if err := json.Unmarshal(data, &content); err != nil {
-		return nil, err
-	}
-
 	result := make(FileListResult)
-	if content.Content != nil {
+	readTotal := 0
+	for page := 1; page <= maxFileListPages; page++ {
+		data, err := c.PostContext(ctx, "/api/fs/list", map[string]interface{}{
+			"path":     path,
+			"refresh":  useCache != 1,
+			"page":     page,
+			"per_page": fileListPageSize,
+		}, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		var content struct {
+			Content []FileListEntry `json:"content"`
+			Total   int             `json:"total"`
+		}
+		if err := json.Unmarshal(data, &content); err != nil {
+			return nil, err
+		}
+		readTotal += len(content.Content)
 		for _, item := range content.Content {
+			if item.Name == "" {
+				continue
+			}
 			if item.IsDir {
 				result[item.Name+"/"] = map[string]interface{}{}
 			} else {
 				result[item.Name] = item.metadata()
 			}
+		}
+		if len(result) >= maxFileListEntries {
+			return nil, fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries)
+		}
+		if len(content.Content) == 0 || content.Total <= readTotal || len(content.Content) < fileListPageSize {
+			break
+		}
+		if page == maxFileListPages {
+			return nil, fmt.Errorf("AList directory listing exceeded %d pages", maxFileListPages)
 		}
 	}
 	return result, nil
@@ -399,15 +468,25 @@ func (c *AlistClient) FilePathList(ctx context.Context, path string) ([]map[stri
 }
 
 // FileExistsContext reports whether a direct child named `name` exists in `dir`.
-// It forces a fresh listing (no cache, no per-path throttle) so the result reflects
-// the storage's current state; intended for one-off verification, not polling.
 func (c *AlistClient) FileExistsContext(ctx context.Context, dir, name string) (bool, error) {
-	files, err := c.FileListApiContext(ctx, dir, 0, 0)
+	return c.FileGetContext(ctx, dir, name)
+}
+
+// FileGetContext checks a single file via /api/fs/get (cheaper than listing the directory).
+func (c *AlistClient) FileGetContext(ctx context.Context, dir, name string) (bool, error) {
+	dir = strings.TrimRight(strings.TrimSpace(dir), "/")
+	filePath := dir + "/" + strings.TrimSpace(name)
+	_, err := c.PostContext(ctx, "/api/fs/get", map[string]interface{}{
+		"path": filePath,
+	}, nil)
 	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "404") || strings.Contains(strings.ToLower(errMsg), "not found") {
+			return false, nil
+		}
 		return false, err
 	}
-	_, exists := files[name]
-	return exists, nil
+	return true, nil
 }
 
 func (c *AlistClient) MkdirContext(ctx context.Context, path string, scanInterval int) error {
@@ -477,7 +556,7 @@ func (c *AlistClient) taskActionContext(ctx context.Context, taskID string, copy
 
 func (c *AlistClient) TaskUndoneListContext(ctx context.Context, copyType taskItemType) ([]map[string]interface{}, error) {
 	apiPath := fmt.Sprintf("/api/admin/task/%s/undone", alistTaskGroup(copyType))
-	data, err := c.PostContext(ctx, apiPath, map[string]interface{}{}, nil)
+	data, err := c.doRequestContextLimit(ctx, http.MethodPost, apiPath, map[string]interface{}{}, nil, maxUndoneResponseBytes)
 	if err != nil {
 		return nil, err
 	}

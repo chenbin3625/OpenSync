@@ -18,6 +18,7 @@ type JobClient struct {
 	Scheduler      *Scheduler
 	JobDoing       bool
 	CurrentJobTask *JobTask
+	pendingAbort   bool
 	mu             sync.Mutex
 	stateCh        chan struct{}
 }
@@ -46,10 +47,29 @@ func (jc *JobClient) isBusy() bool {
 }
 
 func (jc *JobClient) markDone() {
+	jc.releaseDoing(nil)
+}
+
+func (jc *JobClient) releaseDoing(task *JobTask) {
 	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	if task != nil && jc.CurrentJobTask != nil && jc.CurrentJobTask != task {
+		return
+	}
 	jc.JobDoing = false
 	jc.signalStateChangeLocked()
-	jc.mu.Unlock()
+}
+
+func (jc *JobClient) consumePendingAbort() bool {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	if !jc.pendingAbort {
+		return false
+	}
+	jc.pendingAbort = false
+	jc.JobDoing = false
+	jc.signalStateChangeLocked()
+	return true
 }
 
 func (jc *JobClient) setCurrentTask(task *JobTask) {
@@ -288,7 +308,7 @@ func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatu
 	taskID := int64(0)
 	defer func() {
 		if r := recover(); r != nil {
-			jc.markDone()
+			jc.releaseDoing(nil)
 			jc.clearCurrentTask(nil)
 			errMsg := fmt.Sprintf("%v", r)
 			log.Printf("Job execution error: %s", errMsg)
@@ -304,7 +324,10 @@ func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatu
 		// tryMarkDoing already set JobDoing=true; the async task.Start() below
 		// is never reached on this path, so we must clear it here or the job is
 		// permanently stuck "doing" (cannot rerun/delete without a restart).
-		jc.markDone()
+		jc.releaseDoing(nil)
+		return
+	}
+	if jc.consumePendingAbort() {
 		return
 	}
 
@@ -318,7 +341,13 @@ func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatu
 		if err := UpdateJobTaskStatusSimple(taskID, taskStatusStopped, nil); err != nil {
 			log.Printf("Failed to mark disabled task %d as stopped: %v", taskID, err)
 		}
-		jc.markDone()
+		jc.releaseDoing(nil)
+		return
+	}
+	if jc.consumePendingAbort() {
+		if err := UpdateJobTaskStatusSimple(taskID, taskStatusStopped, nil); err != nil {
+			log.Printf("Failed to mark aborted task %d as stopped: %v", taskID, err)
+		}
 		return
 	}
 	task := newJobTask(taskID, jc)
@@ -401,7 +430,20 @@ func (jc *JobClient) ResumeJob() {
 func (jc *JobClient) AbortJob() {
 	if task := jc.currentTask(); task != nil {
 		task.requestBreak()
+		return
 	}
+	jc.mu.Lock()
+	if jc.JobDoing {
+		jc.pendingAbort = true
+	}
+	jc.mu.Unlock()
+}
+
+func (jc *JobClient) isCurrentTask(taskID int64) bool {
+	if task := jc.currentTask(); task != nil && task.TaskID == taskID {
+		return true
+	}
+	return false
 }
 
 // StopJob stops the job (for disable or delete)

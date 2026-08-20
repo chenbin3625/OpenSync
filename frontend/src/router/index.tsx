@@ -14,7 +14,7 @@ function AuthGuard({ children }: { children: ReactNode }) {
   const userInfo = useStore((s) => s.userInfo);
   const authChecked = useStore((s) => s.authChecked);
   if (!authChecked) {
-    return null;
+    return <div style={{ padding: 32, textAlign: 'center' }}>正在检查登录状态…</div>;
   }
   if (!userInfo) {
     return <Navigate to="/login" replace />;
@@ -26,7 +26,7 @@ function ReverseAuthGuard({ children }: { children: ReactNode }) {
   const userInfo = useStore((s) => s.userInfo);
   const authChecked = useStore((s) => s.authChecked);
   if (!authChecked) {
-    return null;
+    return <div style={{ padding: 32, textAlign: 'center' }}>正在检查登录状态…</div>;
   }
   if (userInfo) {
     return <Navigate to="/home" replace />;
@@ -37,7 +37,7 @@ function ReverseAuthGuard({ children }: { children: ReactNode }) {
 export default function AppRouter() {
   return (
     <BrowserRouter>
-      <Suspense fallback={null}>
+      <Suspense fallback={<div style={{ padding: 32, textAlign: 'center' }}>页面加载中…</div>}>
         <Routes>
           <Route path="/login" element={<ReverseAuthGuard><Login /></ReverseAuthGuard>} />
           <Route path="/" element={<Navigate to="/home" replace />} />

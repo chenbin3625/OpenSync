@@ -11,6 +11,8 @@ import (
 	"opensync/internal/mapper"
 	"opensync/internal/model"
 	"opensync/pkg/crypto"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -197,6 +199,8 @@ func TestRunCLIResetPasswordUpdatesStoredCredentials(t *testing.T) {
 
 	restoreDB := mapper.SetDBForTest(db)
 	t.Cleanup(restoreDB)
+	dataDir := t.TempDir()
+	t.Setenv("OPENSYNC_DATA_DIR", dataDir)
 	oldConfig := config.GetConfig()
 	config.SetConfigForTest(&config.Config{
 		Server: config.ServerConfig{PasswdStr: "test-cookie-secret"},
@@ -217,9 +221,17 @@ func TestRunCLIResetPasswordUpdatesStoredCredentials(t *testing.T) {
 	if strings.Contains(output, "secret.key") {
 		t.Fatalf("CLI output exposed secret.key: %s", output)
 	}
+	if !strings.Contains(output, "reset-credentials.txt") {
+		t.Fatalf("CLI output missing credential file path: %s", output)
+	}
+	credBytes, err := os.ReadFile(filepath.Join(dataDir, "reset-credentials.txt"))
+	if err != nil {
+		t.Fatalf("read credential file: %v", err)
+	}
+	credOutput := string(credBytes)
 
-	newPassword := matchFirstGroup(t, output, `新密码:\s+(\S+)`)
-	newRecoveryKey := matchFirstGroup(t, output, `恢复密钥:\s+(\S+)`)
+	newPassword := matchFirstGroup(t, credOutput, `新密码:\s+(\S+)`)
+	newRecoveryKey := matchFirstGroup(t, credOutput, `恢复密钥:\s+(\S+)`)
 	if newPassword == "" || newRecoveryKey == "" {
 		t.Fatalf("CLI output missing generated credentials: %s", output)
 	}

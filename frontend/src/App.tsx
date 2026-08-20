@@ -5,6 +5,7 @@ import AppRouter from './router';
 import { getUser } from './api/user';
 import { useStore } from './stores/useStore';
 import { setMessageInstance } from './api/messageHolder';
+import AppErrorBoundary from './components/AppErrorBoundary';
 import './index.css';
 
 function MessageInitializer() {
@@ -126,7 +127,9 @@ function App() {
     >
       <AntApp>
         <MessageInitializer />
-        <AppRouter />
+        <AppErrorBoundary>
+          <AppRouter />
+        </AppErrorBoundary>
       </AntApp>
     </ConfigProvider>
   );

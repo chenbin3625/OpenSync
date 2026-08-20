@@ -49,6 +49,19 @@ func TestPrepareSQLiteTempDirRejectsRelativePath(t *testing.T) {
 	}
 }
 
+func TestPrepareSQLiteTempDirRejectsDataDirectoryAndRoot(t *testing.T) {
+	t.Setenv("OPENSYNC_DATA_DIR", filepath.Join(t.TempDir(), "data"))
+	t.Setenv("SQLITE_TMPDIR", filepath.Join(os.Getenv("OPENSYNC_DATA_DIR"), "tmp"))
+	if err := prepareSQLiteTempDir(); err == nil {
+		t.Fatal("prepareSQLiteTempDir() accepted a path inside the data directory")
+	}
+
+	t.Setenv("SQLITE_TMPDIR", string(os.PathSeparator))
+	if err := prepareSQLiteTempDir(); err == nil {
+		t.Fatal("prepareSQLiteTempDir() accepted the filesystem root")
+	}
+}
+
 func TestPrepareSQLiteTempDirPreservesExplicitTMPDIR(t *testing.T) {
 	tempDir := filepath.Join(t.TempDir(), "sqlite")
 	t.Setenv("SQLITE_TMPDIR", tempDir)

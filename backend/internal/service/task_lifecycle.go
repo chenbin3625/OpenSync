@@ -29,7 +29,7 @@ func (jt *JobTask) finishSuccessfulTask() {
 	// synchronous HTTP calls (up to 30s per notify config) and would otherwise
 	// keep the job "doing", blocking the next scheduled run and manual/retry/
 	// delete operations until all webhooks are delivered.
-	jt.JobClient.markDone()
+	jt.JobClient.releaseDoing(jt)
 	jt.JobClient.clearCurrentTask(jt)
 	if err := jt.updateTaskStatus(); err != nil {
 		jt.finishFailedTask(taskStatusUpdateErrorMessage(err))
@@ -56,14 +56,17 @@ func (jt *JobTask) finishFailedTask(errMsg string) {
 		log.Printf("Failed to mark task %d as failed: %v", jt.TaskID, err)
 	}
 	if jt.JobClient != nil {
-		jt.JobClient.markDone()
+		jt.JobClient.releaseDoing(jt)
 		jt.JobClient.clearCurrentTask(jt)
 		jt.notifyProgressNow()
 	}
 }
 
 func (jt *JobTask) updateTaskStatus() error {
-	taskNum := GetCuTaskNum(jt.TaskID)
+	taskNum, err := GetCuTaskNum(jt.TaskID)
+	if err != nil {
+		return err
+	}
 	failOrOtherNum := util.ToInt(taskNum["failNum"]) + util.ToInt(taskNum["otherNum"])
 	allNum := util.ToInt(taskNum["allNum"])
 	status := finalTaskStatus(jt.isBreak(), jt.context().Err(), allNum, failOrOtherNum)
@@ -111,12 +114,18 @@ func taskDuration(createTime float64) int {
 
 // UpdateJobTaskStatusSimple updates task status with error message
 func UpdateJobTaskStatusSimple(taskID int64, status taskStatus, errMsg *string) error {
-	taskNum := GetCuTaskNum(taskID)
-	taskNumJSON, _ := json.Marshal(taskNum)
+	taskNum, err := GetCuTaskNum(taskID)
+	if err != nil {
+		return err
+	}
+	taskNumJSON, err := json.Marshal(taskNum)
+	if err != nil {
+		return err
+	}
 	return mapper.UpdateJobTaskStatusAndNum(taskID, status.Int(), errMsg, string(taskNumJSON))
 }
 
-// GetCuTaskNum gets current task counts from DB
-func GetCuTaskNum(taskID int64) map[string]interface{} {
+// GetCuTaskNum gets current task counts from DB.
+func GetCuTaskNum(taskID int64) (map[string]interface{}, error) {
 	return mapper.GetJobTaskCounts(taskID)
 }

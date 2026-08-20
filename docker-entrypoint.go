@@ -78,6 +78,17 @@ func prepareSQLiteTempDir() error {
 	if !filepath.IsAbs(tempDir) {
 		return fmt.Errorf("SQLITE_TMPDIR must be an absolute path: %s", tempDir)
 	}
+	tempDir = filepath.Clean(tempDir)
+	if !pathWithinTempRoot(tempDir) {
+		return fmt.Errorf("SQLITE_TMPDIR must be a system temporary directory: %s", tempDir)
+	}
+	dataDir := filepath.Clean(os.Getenv("OPENSYNC_DATA_DIR"))
+	if dataDir == "." || dataDir == "" {
+		dataDir = "/app/data"
+	}
+	if tempDir == dataDir || pathWithin(dataDir, tempDir) || pathWithin(tempDir, dataDir) {
+		return fmt.Errorf("SQLITE_TMPDIR must not overlap the OpenSync data directory: %s", tempDir)
+	}
 
 	mode := os.ModeSticky | 0777
 	if err := os.MkdirAll(tempDir, mode); err != nil {
@@ -129,15 +140,42 @@ func shouldChownRecursive(root string, uid int, gid int) (bool, error) {
 		return false, nil
 	}
 
-	info, err := os.Lstat(root)
+	needChown := false
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || int(stat.Uid) != uid || int(stat.Gid) != gid {
+			needChown = true
+		}
+		return nil
+	})
 	if err != nil {
 		return false, fmt.Errorf("failed to inspect %s ownership: %w", root, err)
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return true, nil
+	return needChown, nil
+}
+
+func pathWithin(parent, child string) bool {
+	rel, err := filepath.Rel(filepath.Clean(parent), filepath.Clean(child))
+	if err != nil {
+		return false
 	}
-	return int(stat.Uid) != uid || int(stat.Gid) != gid, nil
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func pathWithinTempRoot(path string) bool {
+	for _, root := range []string{os.TempDir(), "/tmp", "/var/tmp", "/var/folders", "/private/tmp", "/private/var/folders"} {
+		if pathWithin(root, path) {
+			return true
+		}
+	}
+	return false
 }
 
 func executablePath(name string) (string, error) {

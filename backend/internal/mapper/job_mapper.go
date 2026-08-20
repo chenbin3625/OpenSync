@@ -246,6 +246,8 @@ func DeleteJobTaskByRunTime(runTime int64) error {
 		}
 		if len(taskIDs) == 0 {
 			_, _ = GetDB().Exec("PRAGMA wal_checkpoint(PASSIVE)")
+			_, _ = GetDB().Exec("PRAGMA optimize")
+			_, _ = GetDB().Exec("PRAGMA incremental_vacuum")
 			return nil
 		}
 		if err := deleteJobTasksByIDs(taskIDs); err != nil {
@@ -421,10 +423,18 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 		if err != nil {
 			return nil, err
 		}
-		return map[string]interface{}{"dataList": dataList, "count": util.ToInt64(count)}, nil
+		total := util.ToInt64(count)
+		result := map[string]interface{}{"dataList": dataList, "count": total}
+		if total > int64(len(dataList)) {
+			result["truncated"] = true
+		}
+		return result, nil
 	}
 
-	offset := (pn - 1) * ps
+	offset, err := pageOffset(ps, pn)
+	if err != nil {
+		return nil, err
+	}
 
 	dataQuery := baseSQL + fmt.Sprintf(" LIMIT %d OFFSET %d", ps, offset)
 	dataList, err := FetchAllToTable(dataQuery, args...)
@@ -531,15 +541,18 @@ func int64InClause(values []int64) (string, []interface{}) {
 }
 
 // GetJobTaskCounts returns all task item status counters in one query.
-func GetJobTaskCounts(taskID int64) map[string]interface{} {
+func GetJobTaskCounts(taskID int64) (map[string]interface{}, error) {
 	rows, err := FetchAllToTable(
 		fmt.Sprintf(`SELECT%s FROM job_task_item WHERE taskId=?`, jobTaskCountSelect),
 		taskID,
 	)
-	if err != nil || len(rows) == 0 {
-		return EmptyJobTaskCounts()
+	if err != nil {
+		return nil, err
 	}
-	return rows[0]
+	if len(rows) == 0 {
+		return EmptyJobTaskCounts(), nil
+	}
+	return rows[0], nil
 }
 
 // GetJobTaskCountsByTaskIDs returns task item counters for many tasks in one query.

@@ -17,11 +17,12 @@ function updateTreeChildren(tree: TreeNode[], parentValue: string, children: Tre
 
 async function fetchDirChildren(alistId: number, parentPath: string): Promise<TreeNode[]> {
   if (!alistId) return [];
-  try {
-    const res = await alistGetPath(alistId, parentPath);
-    const items = res.data || [];
-    return (Array.isArray(items) ? items : []).map((item: PathItem) => {
+  const res = await alistGetPath(alistId, parentPath);
+  const items = res.data || [];
+  const nodes = (Array.isArray(items) ? items : [])
+    .map((item: PathItem): TreeNode | null => {
       const name = item.path || item.name || '';
+      if (!name.trim()) return null;
       const fullPath = parentPath === '/' ? `/${name}` : `${parentPath}/${name}`;
       return {
         title: name,
@@ -29,15 +30,15 @@ async function fetchDirChildren(alistId: number, parentPath: string): Promise<Tr
         key: fullPath,
         isLeaf: false,
       };
-    });
-  } catch {
-    return [];
-  }
+    })
+    .filter((node): node is TreeNode => node !== null);
+  return nodes.sort((left, right) => String(left.title).localeCompare(String(right.title)));
 }
 
 export function usePathTree(alistId: number | undefined, treeLoadRequestRef: RefObject<number>) {
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [loadedKeysState, setLoadedKeysState] = useState<Key[]>([]);
+  const [treeError, setTreeError] = useState(false);
   // Mirrored in a ref so onLoadData can check "already loaded" without
   // re-creating its identity on every expansion (which churns TreeSelect's
   // loadData prop and can trigger redundant loads).
@@ -59,6 +60,7 @@ export function usePathTree(alistId: number | undefined, treeLoadRequestRef: Ref
 
   const initializeTree = useCallback((paths: unknown) => {
     setLoadedKeys([]);
+    setTreeError(false);
     return buildPathTreeData(parseJobPathList(paths));
   }, [setLoadedKeys]);
 
@@ -67,7 +69,13 @@ export function usePathTree(alistId: number | undefined, treeLoadRequestRef: Ref
     setTreeData(pathTree);
     if (!alistId) return pathTree;
     const requestID = treeLoadRequestRef.current;
-    const nodes = await fetchDirChildren(alistId, '/');
+    let nodes: TreeNode[];
+    try {
+      nodes = await fetchDirChildren(alistId, '/');
+    } catch {
+      if (requestID === treeLoadRequestRef.current) setTreeError(true);
+      return pathTree;
+    }
     if (requestID !== treeLoadRequestRef.current) return pathTree;
     const root = [{ title: '/', value: '/', key: '/', children: nodes }];
     const merged = mergeTreeData(root, pathTree);
@@ -81,7 +89,13 @@ export function usePathTree(alistId: number | undefined, treeLoadRequestRef: Ref
     loadingKeysRef.current.add(node.value);
     try {
       const requestID = treeLoadRequestRef.current;
-      const children = await fetchDirChildren(alistId, node.value);
+      let children: TreeNode[];
+      try {
+        children = await fetchDirChildren(alistId, node.value);
+      } catch {
+        if (requestID === treeLoadRequestRef.current) setTreeError(true);
+        return;
+      }
       if (requestID !== treeLoadRequestRef.current) return;
       setLoadedKeysState((prev) => [...prev, node.value]);
       loadedKeysRef.current.add(node.value);
@@ -94,12 +108,14 @@ export function usePathTree(alistId: number | undefined, treeLoadRequestRef: Ref
   const clearTree = useCallback(() => {
     setTreeData([]);
     setLoadedKeys([]);
+    setTreeError(false);
   }, [setLoadedKeys]);
 
   return {
     treeData,
     setTreeData,
     loadedKeys: loadedKeysState,
+    treeError,
     setLoadedKeys,
     initializeTree,
     loadRoot,
