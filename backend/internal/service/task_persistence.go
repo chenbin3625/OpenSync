@@ -22,9 +22,17 @@ func (jt *JobTask) persistRemainingTaskItems() error {
 	return jt.taskPersistenceError()
 }
 
+func (jt *JobTask) cancelScheduledPersistFlushLocked() {
+	if jt.persistFlushTimer != nil {
+		jt.persistFlushTimer.Stop()
+		jt.persistFlushTimer = nil
+	}
+	jt.persistFlushScheduled = false
+}
+
 func (jt *JobTask) drainScheduledPersistFlush() {
 	jt.persistFlushMu.Lock()
-	jt.persistFlushScheduled = false
+	jt.cancelScheduledPersistFlushLocked()
 	jt.persistFlushMu.Unlock()
 	_ = jt.flushPersistBuffer()
 	jt.persistFlushWG.Wait()
@@ -73,8 +81,9 @@ func (jt *JobTask) schedulePersistFlush() {
 		return
 	}
 	jt.persistFlushScheduled = true
-	time.AfterFunc(persistFlushInterval, func() {
+	jt.persistFlushTimer = time.AfterFunc(persistFlushInterval, func() {
 		jt.persistFlushMu.Lock()
+		jt.persistFlushTimer = nil
 		jt.persistFlushScheduled = false
 		jt.persistFlushMu.Unlock()
 		if err := jt.flushPersistBuffer(); err != nil {
@@ -93,6 +102,10 @@ func (jt *JobTask) flushPersistBuffer() error {
 	items := append([]JobTaskItem(nil), jt.persistBuffer...)
 	jt.persistBuffer = jt.persistBuffer[:0]
 	jt.persistBufMu.Unlock()
+
+	jt.persistFlushMu.Lock()
+	jt.cancelScheduledPersistFlushLocked()
+	jt.persistFlushMu.Unlock()
 
 	jt.persistFlushWG.Add(1)
 	defer jt.persistFlushWG.Done()
