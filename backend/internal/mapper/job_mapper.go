@@ -418,12 +418,14 @@ func CountJobTaskItemsByStatuses(taskID int64, statuses []int) (int64, error) {
 	}
 	clause, args := statusInClause(statuses)
 	query := fmt.Sprintf("SELECT COUNT(id) FROM job_task_item WHERE taskId=? AND status IN (%s)", clause)
-	queryArgs := append([]interface{}{taskID}, args...)
-	count, err := FetchFirstVal(query, queryArgs...)
-	if err != nil {
+	queryArgs := make([]interface{}, 1, len(args)+1)
+	queryArgs[0] = taskID
+	queryArgs = append(queryArgs, args...)
+	var count int64
+	if err := GetDB().QueryRow(query, queryArgs...).Scan(&count); err != nil {
 		return 0, err
 	}
-	return util.ToInt64(count), nil
+	return count, nil
 }
 
 // ForEachJobTaskItemsByStatuses reads task items in bounded batches.
@@ -501,17 +503,22 @@ func int64InClause(values []int64) (string, []interface{}) {
 
 // GetJobTaskCounts returns all task item status counters in one query.
 func GetJobTaskCounts(taskID int64) (map[string]interface{}, error) {
-	rows, err := FetchAllToTable(
+	var counts jobTaskCounts
+	if err := GetDB().QueryRow(
 		fmt.Sprintf(`SELECT%s FROM job_task_item WHERE taskId=?`, jobTaskCountSelect),
 		taskID,
-	)
-	if err != nil {
+	).Scan(
+		&counts.allNum,
+		&counts.waitNum,
+		&counts.runningNum,
+		&counts.successNum,
+		&counts.failNum,
+		&counts.otherNum,
+		&counts.sumSize,
+	); err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
-		return EmptyJobTaskCounts(), nil
-	}
-	return rows[0], nil
+	return counts.toMap(), nil
 }
 
 // GetJobTaskCountsByTaskIDs returns task item counters for many tasks in one query.
@@ -535,23 +542,61 @@ func GetJobTaskCountsByTaskIDs(taskIDs []int64) map[int64]map[string]interface{}
 	}
 
 	clause, args := int64InClause(uniqueIDs)
-	rows, err := FetchAllToTable(
+	rows, err := GetDB().Query(
 		fmt.Sprintf(`SELECT
-				taskId,%s
-			FROM job_task_item
-			WHERE taskId IN (%s)
-			GROUP BY taskId`, jobTaskCountSelect, clause),
+					taskId,%s
+				FROM job_task_item
+				WHERE taskId IN (%s)
+				GROUP BY taskId`, jobTaskCountSelect, clause),
 		args...,
 	)
 	if err != nil {
 		return results
 	}
-	for _, row := range rows {
-		taskID := util.ToInt64(row["taskId"])
-		delete(row, "taskId")
-		results[taskID] = row
+	defer rows.Close()
+	for rows.Next() {
+		var taskID int64
+		var counts jobTaskCounts
+		if err := rows.Scan(
+			&taskID,
+			&counts.allNum,
+			&counts.waitNum,
+			&counts.runningNum,
+			&counts.successNum,
+			&counts.failNum,
+			&counts.otherNum,
+			&counts.sumSize,
+		); err != nil {
+			return results
+		}
+		results[taskID] = counts.toMap()
+	}
+	if err := rows.Err(); err != nil {
+		return results
 	}
 	return results
+}
+
+type jobTaskCounts struct {
+	allNum     int64
+	waitNum    int64
+	runningNum int64
+	successNum int64
+	failNum    int64
+	otherNum   int64
+	sumSize    int64
+}
+
+func (c jobTaskCounts) toMap() map[string]interface{} {
+	return map[string]interface{}{
+		"waitNum":    c.waitNum,
+		"runningNum": c.runningNum,
+		"successNum": c.successNum,
+		"failNum":    c.failNum,
+		"otherNum":   c.otherNum,
+		"allNum":     c.allNum,
+		"sumSize":    c.sumSize,
+	}
 }
 
 func EmptyJobTaskCounts() map[string]interface{} {

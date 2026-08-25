@@ -148,6 +148,17 @@ export function sortTaskItemsByCreateTimeDesc(rows: TaskItem[]): TaskItem[] {
   });
 }
 
+// Running rows arrive from the SSE snapshot/patch pipeline in a stable order:
+// a full snapshot is ordered once, while progress-only patches preserve the
+// existing array order. Avoid copying and sorting the entire active list on
+// every progress frame; historical pages still sort defensively because they
+// are loaded from independent server responses.
+export function pageTaskItems(rows: TaskItem[], status: number, page: number, pageSize: number): TaskItem[] {
+  const ordered = status === 1 ? rows : sortTaskItemsByCreateTimeDesc(rows);
+  const start = Math.max(0, (page - 1) * pageSize);
+  return ordered.slice(start, start + pageSize);
+}
+
 export function shouldReplaceRealtimeRows(
   previous: RealtimeTaskLoadKey | null,
   next: RealtimeTaskLoadKey,

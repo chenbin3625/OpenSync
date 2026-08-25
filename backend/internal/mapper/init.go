@@ -167,7 +167,12 @@ func ensureIndexes(db *sql.DB) error {
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_time ON job_task_item(taskId, createTime DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status ON job_task_item(taskId, status)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status_time ON job_task_item(taskId, status, createTime DESC)",
-		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_type ON job_task_item(taskId, type)",
+		// The time suffix lets type/object-filtered detail pages stream rows in
+		// create order without scanning every item for the task and sorting the
+		// matches. The composite type index supersedes the old type-only index.
+		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_type_time ON job_task_item(taskId, type, createTime DESC)",
+		"DROP INDEX IF EXISTS idx_job_task_item_task_type",
+		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_is_path_time ON job_task_item(taskId, isPath, createTime DESC)",
 		// Enforce userName uniqueness on existing databases so the first-run
 		// InitializeUser endpoint cannot create a duplicate admin account under
 		// a TOCTOU race. Fresh databases get it via the CREATE TABLE statement.

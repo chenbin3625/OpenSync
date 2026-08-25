@@ -13,6 +13,7 @@ import {
   mergeTaskItems,
   mergeTaskRecords,
   normalizeTaskItemPage,
+  pageTaskItems,
   pollIntervalForActiveWork,
   shouldResetRealtimeSnapshot,
   shouldReplaceRealtimeRows,
@@ -153,6 +154,17 @@ test('sortTaskItemsByCreateTimeDesc sorts by create time and id fallback', () =>
 
   assert.deepEqual(sorted.map((row) => row.id), [3, 2, 4, 1]);
   assert.notEqual(sorted, rows);
+});
+
+test('pageTaskItems keeps realtime patch order without sorting', () => {
+  const rows: TaskItem[] = [
+    { id: 1, status: 1, createTime: 100 },
+    { id: 2, status: 1, createTime: 300 },
+    { id: 3, status: 1, createTime: 200 },
+  ];
+
+  assert.deepEqual(pageTaskItems(rows, 1, 1, 3).map((row) => row.id), [1, 2, 3]);
+  assert.deepEqual(pageTaskItems(rows, 2, 1, 3).map((row) => row.id), [2, 3, 1]);
 });
 
 test('getRealtimeTaskIdentity combines task id and create time', () => {

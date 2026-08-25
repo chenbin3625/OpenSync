@@ -158,7 +158,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.10.10
+image: chenbin3625/opensync:1.10.11
 ```
 
 ## Docker 命令部署
@@ -311,7 +311,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.10.10`
+- `chenbin3625/opensync:1.10.11`
 - `chenbin3625/opensync:1.10`
 
 镜像支持以下平台：
@@ -505,7 +505,7 @@ services:
 To pin a version, change the image to:
 
 ```yaml
-image: chenbin3625/opensync:1.10.10
+image: chenbin3625/opensync:1.10.11
 ```
 
 ## Docker CLI Deployment
@@ -658,7 +658,7 @@ go test ./...
 OpenSync recommends the Docker Hub images by default:
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.10.10`
+- `chenbin3625/opensync:1.10.11`
 - `chenbin3625/opensync:1.10`
 
 Supported platforms:

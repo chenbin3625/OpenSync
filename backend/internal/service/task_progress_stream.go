@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"opensync/internal/model"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -14,18 +13,32 @@ const progressNotifyDebounce = 400 * time.Millisecond
 const maxProgressSubscribersPerJob = 8
 
 type progressItemState struct {
-	progress float64
-	status   int
+	progress   float64
+	status     int
+	generation uint64
+}
+
+// progressItemKey is deliberately a comparable value instead of a formatted
+// string. Progress frames are rebuilt on every debounced SSE update; building
+// "id:"/"alist:"/"path:" strings for every active item creates avoidable
+// temporary allocations and CPU work on the hottest realtime path.
+type progressItemKey struct {
+	kind                       uint8
+	id                         int64
+	text                       string
+	fileName, srcPath, dstPath string
 }
 
 type progressFrame struct {
 	taskID     int64
 	createTime int
-	keys       map[string]progressItemState
+	generation uint64
+	keys       map[progressItemKey]progressItemState
 }
 
 type progressHub struct {
 	mu          sync.Mutex
+	framesMu    sync.Mutex
 	subscribers map[int64]map[chan []byte]struct{}
 	pending     map[int64]struct{}
 	frames      map[int64]progressFrame
@@ -63,10 +76,11 @@ func (h *progressHub) subscribe(jobID int64, ch chan []byte) bool {
 }
 
 func (h *progressHub) unsubscribe(jobID int64, ch <-chan []byte) {
+	clearFrame := false
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	subs := h.subscribers[jobID]
 	if subs == nil {
+		h.mu.Unlock()
 		return
 	}
 	for candidate := range subs {
@@ -77,6 +91,16 @@ func (h *progressHub) unsubscribe(jobID int64, ch <-chan []byte) {
 	}
 	if len(subs) == 0 {
 		delete(h.subscribers, jobID)
+		clearFrame = true
+	}
+	h.mu.Unlock()
+	// A disconnected viewer no longer needs the last progress diff frame.
+	// Release it immediately so a job with many completed/aborted viewers does
+	// not retain all active-item keys until the next task snapshot.
+	if clearFrame {
+		h.framesMu.Lock()
+		delete(h.frames, jobID)
+		h.framesMu.Unlock()
 	}
 }
 
@@ -211,14 +235,22 @@ func BuildJobProgressStreamPayload(jobID int64) ([]byte, error) {
 	return marshalJobProgress(jobID, true)
 }
 
-func (item streamDoingItem) streamKey() string {
+func (item streamDoingItem) streamKey() progressItemKey {
 	if item.ID != 0 {
-		return "id:" + strconv.FormatInt(item.ID, 10)
+		return progressItemKey{kind: 1, id: item.ID}
 	}
 	if item.AlistTaskID != "" {
-		return "alist:" + item.AlistTaskID
+		return progressItemKey{kind: 2, text: item.AlistTaskID}
 	}
-	return "path:" + item.FileName + "|" + item.SrcPath + "|" + item.DstPath
+	return progressItemKey{
+		kind: 3,
+		// Path-keyed items are only used before AList returns a remote task id.
+		// Keep the common ID forms allocation-free and retain the fallback as
+		// separate comparable fields so it also avoids composite-string builds.
+		fileName: item.FileName,
+		srcPath:  item.SrcPath,
+		dstPath:  item.DstPath,
+	}
 }
 
 func (item streamDoingItem) streamState() progressItemState {
@@ -245,57 +277,64 @@ func (item streamDoingItem) toPatch(includePaths bool) streamDoingPatch {
 
 func (h *progressHub) prepareStreamPayload(jobID int64, payload *jobCurrentPayload, snapshot bool) {
 	doing := payload.DoingTask
-	next := progressFrame{
-		taskID:     payload.TaskID,
-		createTime: payload.CreateTime,
-		keys:       make(map[string]progressItemState, len(doing)),
-	}
-	for _, item := range doing {
-		next.keys[item.streamKey()] = item.streamState()
-	}
+	patch := make([]streamDoingPatch, 0, len(doing))
 
-	h.mu.Lock()
+	h.framesMu.Lock()
 	if h.frames == nil {
 		h.frames = make(map[int64]progressFrame)
 	}
-	prev, hasPrev := h.frames[jobID]
-	h.frames[jobID] = next
-	h.mu.Unlock()
-
-	if snapshot || !hasPrev || prev.taskID != next.taskID || prev.createTime != next.createTime {
-		return
+	frame, hasPrev := h.frames[jobID]
+	previousTaskID := frame.taskID
+	previousCreateTime := frame.createTime
+	sameTask := hasPrev && previousTaskID == payload.TaskID && previousCreateTime == payload.CreateTime
+	if frame.keys == nil {
+		frame.keys = make(map[progressItemKey]progressItemState, len(doing))
 	}
-	if !sameProgressKeySet(prev.keys, next.keys) {
-		return
+	frame.taskID = payload.TaskID
+	frame.createTime = payload.CreateTime
+	frame.generation++
+	if frame.generation == 0 {
+		// A running task will never realistically reach uint64 wraparound, but
+		// resetting the map keeps the generation invariant explicit.
+		clear(frame.keys)
+		frame.generation = 1
 	}
-
-	patch := make([]streamDoingPatch, 0, len(doing))
+	generation := frame.generation
+	fileSetChanged := !sameTask
 	for _, item := range doing {
 		key := item.streamKey()
-		state := next.keys[key]
-		if prev.keys[key] == state {
-			continue
+		state := item.streamState()
+		previous, exists := frame.keys[key]
+		if sameTask {
+			if !exists {
+				fileSetChanged = true
+			} else if previous.progress != state.progress || previous.status != state.status {
+				patch = append(patch, item.toPatch(item.ID == 0 && item.AlistTaskID == ""))
+			}
 		}
-		patch = append(patch, item.toPatch(item.ID == 0 && item.AlistTaskID == ""))
+		state.generation = generation
+		frame.keys[key] = state
+	}
+	for key, state := range frame.keys {
+		if state.generation != generation {
+			delete(frame.keys, key)
+			if sameTask {
+				fileSetChanged = true
+			}
+		}
+	}
+	h.frames[jobID] = frame
+	h.framesMu.Unlock()
+
+	if snapshot || !hasPrev || !sameTask || fileSetChanged {
+		return
 	}
 	payload.DoingTask = nil
 	payload.DoingPatch = patch
 }
 
-func sameProgressKeySet(left, right map[string]progressItemState) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for key := range left {
-		if _, ok := right[key]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
 func (h *progressHub) clearFrame(jobID int64) {
-	h.mu.Lock()
+	h.framesMu.Lock()
 	delete(h.frames, jobID)
-	h.mu.Unlock()
+	h.framesMu.Unlock()
 }

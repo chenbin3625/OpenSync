@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -312,6 +313,41 @@ func TestCheckWaitContextBoundsTrackedPathBuckets(t *testing.T) {
 	}
 }
 
+func TestFirstAlistPathSegmentPreservesSplitNBehavior(t *testing.T) {
+	cases := map[string]string{
+		"":                 "",
+		"bucket":           "",
+		"/":                "",
+		"/bucket":          "bucket",
+		"/bucket/file.txt": "bucket",
+		"bucket/file.txt":  "file.txt",
+		"bucket/file/more": "file",
+		"//file":           "",
+	}
+	for path, want := range cases {
+		if got := firstAlistPathSegment(path); got != want {
+			t.Errorf("firstAlistPathSegment(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func BenchmarkFirstAlistPathSegment(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		if firstAlistPathSegment("/library/season/file.mkv") == "" {
+			b.Fatal("firstAlistPathSegment() returned empty segment")
+		}
+	}
+}
+
+func BenchmarkSplitNAlistPathSegment(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		parts := strings.SplitN("/library/season/file.mkv", "/", 3)
+		if len(parts) < 2 || parts[1] == "" {
+			b.Fatal("SplitN() returned empty segment")
+		}
+	}
+}
+
 type closeTrackingTransport struct {
 	closed atomic.Bool
 }
@@ -450,6 +486,47 @@ func TestValidateAlistURLAcceptsHTTPAndHTTPS(t *testing.T) {
 	}
 	if err := validateAlistURL("ftp://alist.example.com"); err == nil {
 		t.Fatalf("validateAlistURL() accepted unsupported scheme")
+	}
+}
+
+func benchmarkUncachedRequestURL(c *AlistClient, apiPath string, params map[string]string) string {
+	base, _ := url.Parse(c.URL)
+	endpoint, _ := url.Parse(apiPath)
+	base.Path = strings.TrimRight(base.Path, "/") + "/" + strings.TrimLeft(endpoint.Path, "/")
+	query := base.Query()
+	for key, value := range endpoint.Query() {
+		for _, item := range value {
+			query.Add(key, item)
+		}
+	}
+	for key, value := range params {
+		query.Set(key, value)
+	}
+	base.RawQuery = query.Encode()
+	return base.String()
+}
+
+func BenchmarkAlistRequestURLCachedBase(b *testing.B) {
+	client := &AlistClient{URL: "https://alist.example.test/root"}
+	parsed, _ := url.Parse(client.URL)
+	client.baseURL = *parsed
+	params := map[string]string{"tid": "task-123", "page": "2"}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if got, err := client.requestURL("/api/admin/task/copy/info", params); err != nil || got == "" {
+			b.Fatalf("requestURL() = %q, err=%v", got, err)
+		}
+	}
+}
+
+func BenchmarkAlistRequestURLUncachedBase(b *testing.B) {
+	client := &AlistClient{URL: "https://alist.example.test/root"}
+	params := map[string]string{"tid": "task-123", "page": "2"}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if got := benchmarkUncachedRequestURL(client, "/api/admin/task/copy/info", params); got == "" {
+			b.Fatal("benchmarkUncachedRequestURL() returned empty URL")
+		}
 	}
 }
 

@@ -55,6 +55,10 @@ type AlistClient struct {
 	waits   map[string]time.Time
 	mu      sync.Mutex
 	client  *http.Client
+	// baseURL is parsed once when the client is created. The URL is immutable
+	// for the lifetime of a cached client, so requestURL can copy this small
+	// value instead of reparsing the base string on every AList call.
+	baseURL url.URL
 }
 
 // alistResponse represents AList API response
@@ -75,12 +79,17 @@ func NewAlistClientContext(ctx context.Context, alistURL string, token string, a
 	if err != nil {
 		return nil, err
 	}
+	parsedURL, err := url.Parse(normalizedURL)
+	if err != nil {
+		return nil, errors.New(msg.AlistURLInvalid)
+	}
 	c := &AlistClient{
 		URL:     normalizedURL,
 		Token:   token,
 		AlistID: alistID,
 		waits:   make(map[string]time.Time),
 		client:  newAlistHTTPClient(config.GetConfig().Server.AllowInternalAlist),
+		baseURL: *parsedURL,
 	}
 	if err := c.getUserContext(ctx); err != nil {
 		c.Close()
@@ -205,9 +214,13 @@ func normalizeAlistBaseURL(rawURL string) (string, error) {
 }
 
 func (c *AlistClient) requestURL(apiPath string, params map[string]string) (string, error) {
-	base, err := url.Parse(c.URL)
-	if err != nil || base.Scheme == "" || base.Host == "" {
-		return "", errors.New(msg.AddressIncorrect)
+	base := c.baseURL
+	if base.Scheme == "" || base.Host == "" {
+		parsed, err := url.Parse(c.URL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return "", errors.New(msg.AddressIncorrect)
+		}
+		base = *parsed
 	}
 	endpoint, err := url.Parse(apiPath)
 	if err != nil || endpoint.IsAbs() || endpoint.Host != "" {
@@ -268,11 +281,7 @@ func (c *AlistClient) CheckWaitContext(ctx context.Context, path string, scanInt
 		ctx = context.Background()
 	}
 
-	parts := strings.SplitN(path, "/", 3)
-	var pathFirst string
-	if len(parts) > 1 {
-		pathFirst = parts[1]
-	}
+	pathFirst := firstAlistPathSegment(path)
 	if pathFirst == "" {
 		return nil
 	}
@@ -303,6 +312,22 @@ func (c *AlistClient) CheckWaitContext(ctx context.Context, path string, scanInt
 		}
 	}
 	return nil
+}
+
+// firstAlistPathSegment preserves the historical SplitN(path, "/", 3)[1]
+// behavior while avoiding a temporary slice on every rate-limited AList
+// operation. AList paths normally start with '/', but the no-leading-slash
+// form is kept compatible for callers and tests.
+func firstAlistPathSegment(path string) string {
+	firstSlash := strings.IndexByte(path, '/')
+	if firstSlash < 0 {
+		return ""
+	}
+	rest := path[firstSlash+1:]
+	if nextSlash := strings.IndexByte(rest, '/'); nextSlash >= 0 {
+		return rest[:nextSlash]
+	}
+	return rest
 }
 
 func (c *AlistClient) pruneWaitsLocked(cutoff time.Time) {
@@ -425,14 +450,11 @@ func (c *AlistClient) FilePathList(ctx context.Context, path string) ([]map[stri
 		return nil, err
 	}
 
-	var result []map[string]string
+	result := make([]map[string]string, 0, len(files))
 	for name := range files {
 		if strings.HasSuffix(name, "/") {
 			result = append(result, map[string]string{"path": strings.TrimSuffix(name, "/")})
 		}
-	}
-	if result == nil {
-		result = []map[string]string{}
 	}
 	return result, nil
 }

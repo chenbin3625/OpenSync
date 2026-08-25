@@ -57,6 +57,20 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 	if len(result) >= maxFileListEntries {
 		return nil, fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries)
 	}
+	// The first response reveals the total entry count. Reserve the final map
+	// capacity once for multi-page listings so merging pages does not repeatedly
+	// grow and rehash the result map.
+	resultCapacity := total
+	if resultCapacity > maxFileListEntries {
+		resultCapacity = maxFileListEntries
+	}
+	if resultCapacity > len(result)*2 {
+		resized := make(FileListResult, resultCapacity)
+		for name, meta := range result {
+			resized[name] = meta
+		}
+		result = resized
+	}
 
 	pages := (total + fileListPageSize - 1) / fileListPageSize
 	if pages > maxFileListPages {
@@ -69,7 +83,6 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 	var mu sync.Mutex
 	var fetchErr error
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, fileListPageWorkers)
 	fail := func(err error) {
 		mu.Lock()
 		if fetchErr == nil {
@@ -79,38 +92,59 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 		mu.Unlock()
 	}
 
-	for page := 2; page <= pages; page++ {
-		if ctx.Err() != nil {
-			break
-		}
-		wg.Add(1)
-		go func(page int) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-			defer func() { <-sem }()
-
-			pageReq := req
-			pageReq.Page = page
-			pageResult := make(FileListResult, fileListPageSize)
-			if _, _, err := c.fetchFileListPage(ctx, pageReq, pageResult); err != nil {
-				fail(err)
-				return
-			}
-			mu.Lock()
-			for name, meta := range pageResult {
-				result[name] = meta
-			}
-			overCap := len(result) >= maxFileListEntries
-			mu.Unlock()
-			if overCap {
-				fail(fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries))
-			}
-		}(page)
+	remainingPages := pages - 1
+	workerCount := fileListPageWorkers
+	if workerCount > remainingPages {
+		workerCount = remainingPages
 	}
+	pageJobs := make(chan int)
+	wg.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case page, ok := <-pageJobs:
+					if !ok {
+						return
+					}
+					if ctx.Err() != nil {
+						return
+					}
+
+					pageReq := req
+					pageReq.Page = page
+					pageResult := make(FileListResult, fileListPageSize)
+					if _, _, err := c.fetchFileListPage(ctx, pageReq, pageResult); err != nil {
+						fail(err)
+						return
+					}
+					mu.Lock()
+					for name, meta := range pageResult {
+						result[name] = meta
+					}
+					overCap := len(result) >= maxFileListEntries
+					mu.Unlock()
+					if overCap {
+						fail(fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries))
+						return
+					}
+				}
+			}
+		}()
+	}
+
+sendPages:
+	for page := 2; page <= pages; page++ {
+		select {
+		case pageJobs <- page:
+		case <-ctx.Done():
+			break sendPages
+		}
+	}
+	close(pageJobs)
 	wg.Wait()
 	if fetchErr != nil {
 		return nil, fetchErr

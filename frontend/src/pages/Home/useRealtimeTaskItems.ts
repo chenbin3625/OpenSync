@@ -6,6 +6,7 @@ import {
   getRealtimeTaskIdentity,
   mergeTaskItems,
   normalizeTaskItemPage,
+  pageTaskItems,
   shouldReplaceRealtimeRows,
   shouldResetRealtimeSnapshot,
   sortTaskItemsByCreateTimeDesc,
@@ -104,7 +105,14 @@ export function useRealtimeTaskItems({
       abortRef.current?.abort();
       lastLoadedRef.current = loadKey;
       const doingTask = currentTask.doingTask || [];
-      setTabTaskList((previous) => replaceRows ? doingTask : mergeTaskItems(previous, doingTask));
+      const patchKeepsOrder = Boolean(currentTask.doingPatch) &&
+        lastLoaded?.status === 1 &&
+        lastLoaded.taskIdentity === taskIdentity;
+      const orderedDoingTask = patchKeepsOrder ? doingTask : sortTaskItemsByCreateTimeDesc(doingTask);
+      setTabTaskList((previous) => {
+        if (replaceRows || patchKeepsOrder) return orderedDoingTask;
+        return mergeTaskItems(previous, orderedDoingTask);
+      });
       setTabTaskTotal(doingTask.length);
       setTabLoading(false);
       return;
@@ -175,10 +183,7 @@ export function useRealtimeTaskItems({
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   const pagedTabTaskList = useMemo(() => {
-    const sortedList = sortTaskItemsByCreateTimeDesc(tabTaskList);
-    if (activeTab !== 1) return sortedList;
-    const start = (tabTaskPage - 1) * pageSize;
-    return sortedList.slice(start, start + pageSize);
+    return pageTaskItems(tabTaskList, activeTab, tabTaskPage, pageSize);
   }, [activeTab, pageSize, tabTaskList, tabTaskPage]);
 
   useEffect(() => {
