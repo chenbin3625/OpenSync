@@ -20,7 +20,7 @@ func StreamJobCurrent(c *gin.Context) {
 		return
 	}
 	jobID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
+	if err != nil || jobID <= 0 {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
@@ -37,6 +37,10 @@ func StreamJobCurrent(c *gin.Context) {
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 
 	updates := service.SubscribeJobProgress(jobID)
+	if updates == nil {
+		c.JSON(http.StatusTooManyRequests, model.Error("too many progress streams"))
+		return
+	}
 	defer service.UnsubscribeJobProgress(jobID, updates)
 
 	heartbeat := time.NewTicker(15 * time.Second)

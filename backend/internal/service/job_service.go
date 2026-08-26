@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"opensync/internal/msg"
 	"opensync/internal/mapper"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strconv"
 	"strings"
@@ -409,7 +409,7 @@ func GetJobCurrent(jobID int64, params map[string]interface{}) interface{} {
 	if taskClient != nil {
 		status, hasStatus := params["status"]
 		if !hasStatus || fmt.Sprintf("%v", status) == "" {
-			return taskClient.GetCurrent()
+			return taskClient.getCurrentPayload()
 		}
 		statusInt := util.ToInt(status)
 		pageSize := util.ToInt(params["pageSize"])

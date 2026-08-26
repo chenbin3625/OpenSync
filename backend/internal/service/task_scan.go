@@ -271,7 +271,7 @@ func (jt *JobTask) delFile(path, fileName string, size interface{}) taskStatus {
 	return status
 }
 
-func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, rootPath string, isSrc bool) (map[string]interface{}, error) {
+func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, rootPath string, isSrc bool) (FileListResult, error) {
 	var useCache int
 	if isSrc && !firstDst {
 		useCache = 1
@@ -295,7 +295,7 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 	}
 	defer jt.releaseScanSlot()
 
-	var result map[string]interface{}
+	var result FileListResult
 	var err error
 	for attempt := 0; attempt <= maxScanListRetries; attempt++ {
 		result, err = jt.AlistClient.FileListApiContext(jt.context(), path, useCache, scanInterval)
@@ -324,7 +324,7 @@ func (jt *JobTask) listDir(path string, firstDst bool, spec *ignore.GitIgnore, r
 
 	// Apply exclude rules
 	if spec != nil && len(result) > 0 {
-		filtered := make(map[string]interface{})
+		filtered := make(FileListResult, len(result))
 		for key, val := range result {
 			checkPath := excludeMatchPath(rootPath, path, key)
 			if !spec.MatchesPath(checkPath) {
@@ -368,8 +368,8 @@ func pathIfTrue(cond bool, path string) string {
 	return ""
 }
 
-func (jt *JobTask) listSrcAndDst(srcPath, dstPath string, spec *ignore.GitIgnore, srcRootPath, dstRootPath string, firstDst bool) (map[string]interface{}, map[string]interface{}, error) {
-	var srcFiles, dstFiles map[string]interface{}
+func (jt *JobTask) listSrcAndDst(srcPath, dstPath string, spec *ignore.GitIgnore, srcRootPath, dstRootPath string, firstDst bool) (FileListResult, FileListResult, error) {
+	var srcFiles, dstFiles FileListResult
 	var srcErr, dstErr error
 
 	var wg sync.WaitGroup
@@ -393,10 +393,10 @@ func (jt *JobTask) listSrcAndDst(srcPath, dstPath string, spec *ignore.GitIgnore
 		return nil, nil, dstErr
 	}
 	if srcFiles == nil {
-		srcFiles = make(map[string]interface{})
+		srcFiles = make(FileListResult)
 	}
 	if dstFiles == nil {
-		dstFiles = make(map[string]interface{})
+		dstFiles = make(FileListResult)
 	}
 	return srcFiles, dstFiles, nil
 }
@@ -619,6 +619,8 @@ func toFileMetadata(val interface{}) FileMetadata {
 		metadata := *v
 		metadata.MD5 = normalizeMD5(metadata.MD5)
 		return metadata
+	case map[string]interface{}:
+		return FileMetadata{Size: util.ToInt64(v["size"]), MD5: normalizeMD5(util.StringValue(v["md5"]))}
 	default:
 		return FileMetadata{Size: util.ToInt64(val)}
 	}

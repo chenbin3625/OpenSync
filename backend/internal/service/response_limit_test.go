@@ -10,7 +10,7 @@ import (
 
 func TestAlistClientRejectsOversizedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(strings.Repeat("x", maxResponseBytes+1)))
+		_, _ = w.Write([]byte(strings.Repeat("x", int(maxResponseBytes+1))))
 	}))
 	defer server.Close()
 

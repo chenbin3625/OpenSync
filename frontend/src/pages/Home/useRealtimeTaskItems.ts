@@ -6,11 +6,17 @@ import {
   getRealtimeTaskIdentity,
   mergeTaskItems,
   normalizeTaskItemPage,
+  pageTaskItems,
   shouldReplaceRealtimeRows,
   shouldResetRealtimeSnapshot,
   sortTaskItemsByCreateTimeDesc,
   type RealtimeTaskLoadKey,
 } from './taskRows';
+
+// Non-running tabs (success/fail/other/... ) fetch from the DB-backed server
+// page; slowing them down avoids hammering the sqlite aggregation queries on
+// very large task item sets while each tab is simply being watched.
+const NON_RUNNING_POLL_INTERVAL_MS = 15000;
 
 type RealtimeTaskItemsParams = {
   jobId: string;
@@ -99,7 +105,14 @@ export function useRealtimeTaskItems({
       abortRef.current?.abort();
       lastLoadedRef.current = loadKey;
       const doingTask = currentTask.doingTask || [];
-      setTabTaskList((previous) => replaceRows ? doingTask : mergeTaskItems(previous, doingTask));
+      const patchKeepsOrder = Boolean(currentTask.doingPatch) &&
+        lastLoaded?.status === 1 &&
+        lastLoaded.taskIdentity === taskIdentity;
+      const orderedDoingTask = patchKeepsOrder ? doingTask : sortTaskItemsByCreateTimeDesc(doingTask);
+      setTabTaskList((previous) => {
+        if (replaceRows || patchKeepsOrder) return orderedDoingTask;
+        return mergeTaskItems(previous, orderedDoingTask);
+      });
       setTabTaskTotal(doingTask.length);
       setTabLoading(false);
       return;
@@ -112,15 +125,14 @@ export function useRealtimeTaskItems({
     const fetchKey = `${loadKey.status}:${loadKey.taskIdentity}:${loadKey.page}`;
     const now = Date.now();
     const changedView = lastFetchKeyRef.current !== fetchKey;
-    if (!changedView && lastFetchAtRef.current != null && now - lastFetchAtRef.current < POLL_INTERVAL_MS) {
+    const pollIntervalMs = activeTab === 1 ? POLL_INTERVAL_MS : NON_RUNNING_POLL_INTERVAL_MS;
+    if (!changedView && lastFetchAtRef.current != null && now - lastFetchAtRef.current < pollIntervalMs) {
       return;
     }
-    // Skip the whole run while a request is still in flight: the in-flight
-    // request completes and updates state instead of being cancelled, and the
-    // next push/tick (changedView stays true) fetches any new view. Guarding
-    // here — before any state mutation — avoids clearing the view and leaving
-    // a stuck loading spinner when a tab/page switch races a slow fetch.
-    if (tabFetchingRef.current) return;
+    // A changed tab/page/task must win immediately. Abort the stale browser
+    // request; requestRef and the finally guard below prevent its completion
+    // from clearing loading state owned by the newer request.
+    if (tabFetchingRef.current) abortRef.current?.abort();
     lastFetchKeyRef.current = fetchKey;
     lastFetchAtRef.current = now;
 
@@ -156,8 +168,8 @@ export function useRealtimeTaskItems({
           if (resetSnapshot) setTabTaskTotal(0);
         }
       } finally {
-        tabFetchingRef.current = false;
         if (requestID === requestRef.current) {
+          tabFetchingRef.current = false;
           setTabLoading(false);
         }
       }
@@ -171,10 +183,7 @@ export function useRealtimeTaskItems({
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   const pagedTabTaskList = useMemo(() => {
-    const sortedList = sortTaskItemsByCreateTimeDesc(tabTaskList);
-    if (activeTab !== 1) return sortedList;
-    const start = (tabTaskPage - 1) * pageSize;
-    return sortedList.slice(start, start + pageSize);
+    return pageTaskItems(tabTaskList, activeTab, tabTaskPage, pageSize);
   }, [activeTab, pageSize, tabTaskList, tabTaskPage]);
 
   useEffect(() => {

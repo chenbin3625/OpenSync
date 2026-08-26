@@ -7,6 +7,7 @@ import (
 	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -246,6 +247,8 @@ func DeleteJobTaskByRunTime(runTime int64) error {
 		}
 		if len(taskIDs) == 0 {
 			_, _ = GetDB().Exec("PRAGMA wal_checkpoint(PASSIVE)")
+			_, _ = GetDB().Exec("PRAGMA optimize")
+			_, _ = GetDB().Exec("PRAGMA incremental_vacuum")
 			return nil
 		}
 		if err := deleteJobTasksByIDs(taskIDs); err != nil {
@@ -405,40 +408,7 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 	}
 
 	baseSQL := fmt.Sprintf("SELECT %s FROM job_task_item %s ORDER BY createTime DESC", jobTaskItemListColumns, where)
-
-	// Manual pagination
-	ps, pn, paginated, err := parsePageParams(params)
-	if err != nil {
-		return nil, err
-	}
-	if !paginated {
-		dataList, err := FetchAllToTable(withDefaultLimit(baseSQL), args...)
-		if err != nil {
-			return nil, err
-		}
-		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM job_task_item %s", where)
-		count, err := FetchFirstVal(countQuery, args...)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{"dataList": dataList, "count": util.ToInt64(count)}, nil
-	}
-
-	offset := (pn - 1) * ps
-
-	dataQuery := baseSQL + fmt.Sprintf(" LIMIT %d OFFSET %d", ps, offset)
-	dataList, err := FetchAllToTable(dataQuery, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM job_task_item %s", where)
-	count, err := FetchFirstVal(countQuery, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{"dataList": dataList, "count": util.ToInt64(count)}, nil
+	return FetchAllToPage(baseSQL, params, args...)
 }
 
 // CountJobTaskItemsByStatuses counts task items matching any of the given statuses.
@@ -448,12 +418,14 @@ func CountJobTaskItemsByStatuses(taskID int64, statuses []int) (int64, error) {
 	}
 	clause, args := statusInClause(statuses)
 	query := fmt.Sprintf("SELECT COUNT(id) FROM job_task_item WHERE taskId=? AND status IN (%s)", clause)
-	queryArgs := append([]interface{}{taskID}, args...)
-	count, err := FetchFirstVal(query, queryArgs...)
-	if err != nil {
+	queryArgs := make([]interface{}, 1, len(args)+1)
+	queryArgs[0] = taskID
+	queryArgs = append(queryArgs, args...)
+	var count int64
+	if err := GetDB().QueryRow(query, queryArgs...).Scan(&count); err != nil {
 		return 0, err
 	}
-	return util.ToInt64(count), nil
+	return count, nil
 }
 
 // ForEachJobTaskItemsByStatuses reads task items in bounded batches.
@@ -474,13 +446,12 @@ func ForEachJobTaskItemsByStatuses(taskID int64, statuses []int, batchSize int, 
 			 WHERE taskId=? AND status IN (%s)
 			   AND (createTime > ? OR (createTime = ? AND id > ?))
 			 ORDER BY createTime ASC, id ASC
-			 LIMIT %d`,
+			 LIMIT ?`,
 			jobTaskItemRuntimeColumns,
 			clause,
-			batchSize,
 		)
 		args := append([]interface{}{taskID}, statusArgs...)
-		args = append(args, lastCreateTime, lastCreateTime, lastID)
+		args = append(args, lastCreateTime, lastCreateTime, lastID, batchSize)
 		items, err := FetchAllToTable(query, args...)
 		if err != nil {
 			return err
@@ -532,14 +503,22 @@ func int64InClause(values []int64) (string, []interface{}) {
 
 // GetJobTaskCounts returns all task item status counters in one query.
 func GetJobTaskCounts(taskID int64) map[string]interface{} {
-	rows, err := FetchAllToTable(
+	var counts jobTaskCounts
+	if err := GetDB().QueryRow(
 		fmt.Sprintf(`SELECT%s FROM job_task_item WHERE taskId=?`, jobTaskCountSelect),
 		taskID,
-	)
-	if err != nil || len(rows) == 0 {
+	).Scan(
+		&counts.allNum,
+		&counts.waitNum,
+		&counts.runningNum,
+		&counts.successNum,
+		&counts.failNum,
+		&counts.otherNum,
+		&counts.sumSize,
+	); err != nil {
 		return EmptyJobTaskCounts()
 	}
-	return rows[0]
+	return counts.toMap()
 }
 
 // GetJobTaskCountsByTaskIDs returns task item counters for many tasks in one query.
@@ -563,23 +542,61 @@ func GetJobTaskCountsByTaskIDs(taskIDs []int64) map[int64]map[string]interface{}
 	}
 
 	clause, args := int64InClause(uniqueIDs)
-	rows, err := FetchAllToTable(
+	rows, err := GetDB().Query(
 		fmt.Sprintf(`SELECT
-				taskId,%s
-			FROM job_task_item
-			WHERE taskId IN (%s)
-			GROUP BY taskId`, jobTaskCountSelect, clause),
+					taskId,%s
+				FROM job_task_item
+				WHERE taskId IN (%s)
+				GROUP BY taskId`, jobTaskCountSelect, clause),
 		args...,
 	)
 	if err != nil {
 		return results
 	}
-	for _, row := range rows {
-		taskID := util.ToInt64(row["taskId"])
-		delete(row, "taskId")
-		results[taskID] = row
+	defer rows.Close()
+	for rows.Next() {
+		var taskID int64
+		var counts jobTaskCounts
+		if err := rows.Scan(
+			&taskID,
+			&counts.allNum,
+			&counts.waitNum,
+			&counts.runningNum,
+			&counts.successNum,
+			&counts.failNum,
+			&counts.otherNum,
+			&counts.sumSize,
+		); err != nil {
+			return results
+		}
+		results[taskID] = counts.toMap()
+	}
+	if err := rows.Err(); err != nil {
+		return results
 	}
 	return results
+}
+
+type jobTaskCounts struct {
+	allNum     int64
+	waitNum    int64
+	runningNum int64
+	successNum int64
+	failNum    int64
+	otherNum   int64
+	sumSize    int64
+}
+
+func (c jobTaskCounts) toMap() map[string]interface{} {
+	return map[string]interface{}{
+		"waitNum":    c.waitNum,
+		"runningNum": c.runningNum,
+		"successNum": c.successNum,
+		"failNum":    c.failNum,
+		"otherNum":   c.otherNum,
+		"allNum":     c.allNum,
+		"sumSize":    c.sumSize,
+	}
 }
 
 func EmptyJobTaskCounts() map[string]interface{} {
@@ -608,9 +625,26 @@ func taskItemKeywordFilter(keyword string) (string, []interface{}) {
 }
 
 func taskItemFTSAvailable() bool {
+	handle := GetDB()
+	ftsAvailability.mu.Lock()
+	defer ftsAvailability.mu.Unlock()
+	if ftsAvailability.known && ftsAvailability.db == handle {
+		return ftsAvailability.ok
+	}
 	var name string
-	err := GetDB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='job_task_item_fts'").Scan(&name)
-	return err == nil && name == "job_task_item_fts"
+	err := handle.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='job_task_item_fts'").Scan(&name)
+	ok := err == nil && name == "job_task_item_fts"
+	ftsAvailability.db = handle
+	ftsAvailability.known = true
+	ftsAvailability.ok = ok
+	return ok
+}
+
+var ftsAvailability struct {
+	mu    sync.Mutex
+	db    *sql.DB
+	known bool
+	ok    bool
 }
 
 func fts5Phrase(s string) string {

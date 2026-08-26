@@ -243,6 +243,7 @@ func TestEnsureIndexesCreatesTaskStatusTimeIndex(t *testing.T) {
 		id integer primary key autoincrement,
 		jobId integer,
 		status integer,
+		runTime integer,
 		createTime integer
 	)`); err != nil {
 		t.Fatalf("create job_task: %v", err)
@@ -252,6 +253,7 @@ func TestEnsureIndexesCreatesTaskStatusTimeIndex(t *testing.T) {
 		taskId integer,
 		status integer,
 		type integer,
+		isPath integer,
 		createTime integer
 	)`); err != nil {
 		t.Fatalf("create job_task_item: %v", err)
@@ -261,6 +263,12 @@ func TestEnsureIndexesCreatesTaskStatusTimeIndex(t *testing.T) {
 
 	if !indexExists(testDB, "idx_job_task_item_task_status_time") {
 		t.Fatalf("expected idx_job_task_item_task_status_time to exist")
+	}
+	if !indexExists(testDB, "idx_job_task_item_task_type_time") {
+		t.Fatalf("expected idx_job_task_item_task_type_time to exist")
+	}
+	if !indexExists(testDB, "idx_job_task_item_task_is_path_time") {
+		t.Fatalf("expected idx_job_task_item_task_is_path_time to exist")
 	}
 }
 

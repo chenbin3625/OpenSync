@@ -8,21 +8,22 @@ import (
 
 type dstNameMatchEntry struct {
 	key       string
-	value     interface{}
+	value     FileMetadata
 	ambiguous bool
 }
 
 type dstNameMatchIndex struct {
-	items     map[string]interface{}
+	items     FileListResult
 	canonical map[string]dstNameMatchEntry
 }
 
 type srcNameMatchIndex struct {
-	items     map[string]interface{}
+	items     FileListResult
 	canonical map[string]int
 }
 
-func newDstNameMatchIndex(items map[string]interface{}) dstNameMatchIndex {
+func newDstNameMatchIndex(raw interface{}) dstNameMatchIndex {
+	items := fileListResultFromValue(raw)
 	index := dstNameMatchIndex{
 		items:     items,
 		canonical: make(map[string]dstNameMatchEntry),
@@ -40,7 +41,8 @@ func newDstNameMatchIndex(items map[string]interface{}) dstNameMatchIndex {
 	return index
 }
 
-func newSrcNameMatchIndex(items map[string]interface{}) srcNameMatchIndex {
+func newSrcNameMatchIndex(raw interface{}) srcNameMatchIndex {
+	items := fileListResultFromValue(raw)
 	index := srcNameMatchIndex{
 		items:     items,
 		canonical: make(map[string]int),
@@ -51,22 +53,37 @@ func newSrcNameMatchIndex(items map[string]interface{}) srcNameMatchIndex {
 	return index
 }
 
-func (i dstNameMatchIndex) find(srcKey string, srcIndex srcNameMatchIndex) (string, interface{}, bool) {
+func (i dstNameMatchIndex) find(srcKey string, srcIndex srcNameMatchIndex) (string, FileMetadata, bool) {
 	if value, ok := i.items[srcKey]; ok {
 		return srcKey, value, true
 	}
 	canonicalKey := canonicalFileKey(srcKey)
 	if srcIndex.canonical[canonicalKey] > 1 {
-		return "", nil, false
+		return "", FileMetadata{}, false
 	}
 	entry, ok := i.canonical[canonicalKey]
 	if !ok || entry.ambiguous {
-		return "", nil, false
+		return "", FileMetadata{}, false
 	}
 	if _, sourceOwnsMatchedName := srcIndex.items[entry.key]; sourceOwnsMatchedName {
-		return "", nil, false
+		return "", FileMetadata{}, false
 	}
 	return entry.key, entry.value, true
+}
+
+func fileListResultFromValue(raw interface{}) FileListResult {
+	switch items := raw.(type) {
+	case FileListResult:
+		return items
+	case map[string]interface{}:
+		result := make(FileListResult, len(items))
+		for key, value := range items {
+			result[key] = toFileMetadata(value)
+		}
+		return result
+	default:
+		return FileListResult{}
+	}
 }
 
 func canonicalFileKey(key string) string {

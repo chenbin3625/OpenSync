@@ -33,6 +33,9 @@ type ServerConfig struct {
 	TrustedProxies []string
 	// AllowInternalWebhook allows webhook notifications to reach private/LAN IP addresses and HTTP URLs.
 	AllowInternalWebhook bool
+	// TLSCertFile and TLSKeyFile enable HTTPS/HTTP2 and opportunistic HTTP3.
+	TLSCertFile string
+	TLSKeyFile  string
 }
 
 // DBConfig holds database configuration
@@ -116,18 +119,18 @@ func GetConfig() *Config {
 	dbname := "data/openSync.db"
 
 	sCfg := ServerConfig{
-		Bind:            defaultBind,
-		Port:            defaultPort,
-		Expires:         defaultExpires,
-		LogLevel:        defaultLogLevel,
-		ConsoleLevel:    defaultConsoleLevel,
-		LogSave:         defaultLogSave,
-		TaskSave:        defaultTaskSave,
-		Timeout:         defaultTaskTimeout,
-		CopyConcurrency: DefaultCopyConcurrency,
-		ScanConcurrency: DefaultScanConcurrency,
-		MaxRetries:      DefaultMaxRetries,
-		PasswdStr:       passwdStr,
+		Bind:                 defaultBind,
+		Port:                 defaultPort,
+		Expires:              defaultExpires,
+		LogLevel:             defaultLogLevel,
+		ConsoleLevel:         defaultConsoleLevel,
+		LogSave:              defaultLogSave,
+		TaskSave:             defaultTaskSave,
+		Timeout:              defaultTaskTimeout,
+		CopyConcurrency:      DefaultCopyConcurrency,
+		ScanConcurrency:      DefaultScanConcurrency,
+		MaxRetries:           DefaultMaxRetries,
+		PasswdStr:            passwdStr,
 		AllowInternalWebhook: true,
 	}
 
@@ -191,6 +194,8 @@ func GetConfig() *Config {
 		sCfg.TrustedProxies = parseTrustedProxies(os.Getenv("OPENSYNC_TRUSTED_PROXIES"))
 		sCfg.AllowInternalWebhook = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_WEBHOOK", sCfg.AllowInternalWebhook)
 	}
+	sCfg.TLSCertFile = envStringConfigValue("OPENSYNC_TLS_CERT", sCfg.TLSCertFile)
+	sCfg.TLSKeyFile = envStringConfigValue("OPENSYNC_TLS_KEY", sCfg.TLSKeyFile)
 
 	sysConfig = &Config{
 		DB:     DBConfig{DBName: dbname},
@@ -214,6 +219,10 @@ func clampServerConfig(sCfg *ServerConfig) {
 	sCfg.CopyConcurrency = clampInt(sCfg.CopyConcurrency, MinCopyConcurrency, MaxCopyConcurrency, DefaultCopyConcurrency)
 	sCfg.ScanConcurrency = clampInt(sCfg.ScanConcurrency, MinScanConcurrency, MaxScanConcurrency, DefaultScanConcurrency)
 	sCfg.MaxRetries = clampInt(sCfg.MaxRetries, MinMaxRetries, MaxRetryAttempts, DefaultMaxRetries)
+}
+
+func (s ServerConfig) TLSEnabled() bool {
+	return strings.TrimSpace(s.TLSCertFile) != "" && strings.TrimSpace(s.TLSKeyFile) != ""
 }
 
 func clampInt(value, min, max, fallback int) int {

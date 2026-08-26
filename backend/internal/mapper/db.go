@@ -22,6 +22,7 @@ import (
 var (
 	db   *sql.DB
 	once = &sync.Once{}
+	dbMu sync.RWMutex
 )
 
 const maxPageSize = 500
@@ -47,6 +48,11 @@ func InitDB() *sql.DB {
 		}
 		if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 			log.Printf("Failed to set sqlite busy_timeout: %v", err)
+		}
+		for _, pragma := range []string{"PRAGMA foreign_keys=ON", "PRAGMA temp_store=MEMORY", "PRAGMA cache_size=-16384", "PRAGMA mmap_size=67108864"} {
+			if _, err := db.Exec(pragma); err != nil {
+				log.Printf("Failed to set sqlite %s: %v", pragma, err)
+			}
 		}
 	})
 	return db
@@ -111,14 +117,20 @@ func sqliteDSN(dbName string) string {
 
 // GetDB returns the database connection
 func GetDB() *sql.DB {
-	if db == nil {
-		return InitDB()
+	dbMu.RLock()
+	if db != nil {
+		handle := db
+		dbMu.RUnlock()
+		return handle
 	}
-	return db
+	dbMu.RUnlock()
+	return InitDB()
 }
 
 // CloseDB closes the global database handle and allows later reinitialization.
 func CloseDB() error {
+	dbMu.Lock()
+	defer dbMu.Unlock()
 	if db == nil {
 		return nil
 	}
@@ -130,10 +142,14 @@ func CloseDB() error {
 
 // SetDBForTest swaps the package database handle and returns a restore function.
 func SetDBForTest(testDB *sql.DB) func() {
+	dbMu.Lock()
 	oldDB := db
 	db = testDB
+	dbMu.Unlock()
 	return func() {
+		dbMu.Lock()
 		db = oldDB
+		dbMu.Unlock()
 	}
 }
 
@@ -150,17 +166,18 @@ func FetchAllToTable(query string, args ...interface{}) ([]map[string]interface{
 		return nil, err
 	}
 
-	var results []map[string]interface{}
+	results := make([]map[string]interface{}, 0, 16)
+	n := len(columns)
+	values := make([]interface{}, n)
+	valuePtrs := make([]interface{}, n)
+	for i := range valuePtrs {
+		valuePtrs[i] = &values[i]
+	}
 	for rows.Next() {
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
 		if err := rows.Scan(valuePtrs...); err != nil {
 			return nil, err
 		}
-		row := make(map[string]interface{})
+		row := make(map[string]interface{}, n)
 		for i, col := range columns {
 			val := values[i]
 			if b, ok := val.([]byte); ok {
@@ -230,46 +247,105 @@ func ExecuteMany(query string, argsList [][]interface{}) error {
 	return nil
 }
 
-// FetchAllToPage executes a paginated query
+// FetchAllToPage executes a paginated query with a window count when SQLite
+// can keep the list and total in one round-trip.
 func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...interface{}) (map[string]interface{}, error) {
 	ps, pn, paginated, err := parsePageParams(params)
 	if err != nil {
 		return nil, err
 	}
 	if !paginated {
-		dataList, err := FetchAllToTable(withDefaultLimit(baseSQL), sqlArgs...)
-		if err != nil {
-			return nil, err
-		}
-		countQuery := "SELECT COUNT(*) FROM (" + stripOrderBy(baseSQL) + ")"
-		count, err := FetchFirstVal(countQuery, sqlArgs...)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]interface{}{
-			"dataList": dataList,
-			"count":    util.ToInt64(count),
-		}, nil
+		return fetchPage(baseSQL, defaultUnpagedLimit, 0, false, sqlArgs)
 	}
-
-	offset := (pn - 1) * ps
-
-	dataQuery := baseSQL + fmt.Sprintf(" LIMIT %d OFFSET %d", ps, offset)
-	dataList, err := FetchAllToTable(dataQuery, sqlArgs...)
+	offset, err := pageOffset(ps, pn)
 	if err != nil {
 		return nil, err
 	}
+	return fetchPage(baseSQL, ps, offset, true, sqlArgs)
+}
 
-	countQuery := "SELECT COUNT(*) FROM (" + stripOrderBy(baseSQL) + ")"
-	count, err := FetchFirstVal(countQuery, sqlArgs...)
+const pageTotalColumn = "__opensync_page_total"
+
+func fetchPage(baseSQL string, limit int, offset int64, paginated bool, sqlArgs []interface{}) (map[string]interface{}, error) {
+	query, args, window := pageQuery(baseSQL, limit, offset, paginated, sqlArgs)
+	dataList, err := FetchAllToTable(query, args...)
 	if err != nil {
 		return nil, err
 	}
+	total, hasTotal := takePageTotal(dataList)
+	if !hasTotal {
+		if len(dataList) == 0 && offset == 0 {
+			total = 0
+		} else {
+			count, err := FetchFirstVal("SELECT COUNT(*) FROM ("+stripOrderBy(baseSQL)+")", sqlArgs...)
+			if err != nil {
+				return nil, err
+			}
+			total = util.ToInt64(count)
+		}
+	}
+	result := map[string]interface{}{"dataList": dataList, "count": total}
+	if !paginated && window && total > int64(len(dataList)) {
+		result["truncated"] = true
+	}
+	return result, nil
+}
 
-	return map[string]interface{}{
-		"dataList": dataList,
-		"count":    util.ToInt64(count),
-	}, nil
+func pageQuery(baseSQL string, limit int, offset int64, paginated bool, sqlArgs []interface{}) (string, []interface{}, bool) {
+	if !strings.Contains(strings.ToUpper(baseSQL), " UNION ") {
+		query := withPageTotal(baseSQL)
+		if paginated {
+			return query + " LIMIT ? OFFSET ?", appendSQLArgs(sqlArgs, limit, offset), true
+		}
+		return query + " LIMIT ?", appendSQLArgs(sqlArgs, limit), true
+	}
+	if paginated {
+		return baseSQL + " LIMIT ? OFFSET ?", appendSQLArgs(sqlArgs, limit, offset), false
+	}
+	return baseSQL + " LIMIT ?", appendSQLArgs(sqlArgs, limit), false
+}
+
+func appendSQLArgs(args []interface{}, extra ...interface{}) []interface{} {
+	result := make([]interface{}, 0, len(args)+len(extra))
+	result = append(result, args...)
+	return append(result, extra...)
+}
+
+func withPageTotal(baseSQL string) string {
+	trimmed := strings.TrimSpace(baseSQL)
+	if len(trimmed) < 7 || !strings.EqualFold(trimmed[:6], "SELECT") || (trimmed[6] != ' ' && trimmed[6] != '\t' && trimmed[6] != '\n') {
+		return trimmed
+	}
+	return "SELECT COUNT(*) OVER() AS " + pageTotalColumn + "," + trimmed[6:]
+}
+
+func takePageTotal(rows []map[string]interface{}) (int64, bool) {
+	if len(rows) == 0 {
+		return 0, false
+	}
+	var total int64
+	found := false
+	for _, row := range rows {
+		if value, ok := row[pageTotalColumn]; ok {
+			total = util.ToInt64(value)
+			delete(row, pageTotalColumn)
+			found = true
+		}
+	}
+	return total, found
+}
+
+func pageOffset(pageSize, pageNum int) (int64, error) {
+	if pageSize <= 0 || pageNum <= 0 {
+		return 0, errors.New(msg.LostPart)
+	}
+	index := int64(pageNum) - 1
+	size := int64(pageSize)
+	maxInt64 := int64(^uint64(0) >> 1)
+	if index > maxInt64/size {
+		return 0, errors.New(msg.LostPart)
+	}
+	return index * size, nil
 }
 
 func withDefaultLimit(baseSQL string) string {

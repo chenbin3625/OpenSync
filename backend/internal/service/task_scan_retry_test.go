@@ -36,7 +36,7 @@ func TestListDirRetriesTransientAListFailures(t *testing.T) {
 	if attempts.Load() != maxScanListRetries+1 {
 		t.Fatalf("list attempts = %d, want %d", attempts.Load(), maxScanListRetries+1)
 	}
-	metadata, ok := files["file.txt"].(FileMetadata)
+	metadata, ok := files["file.txt"]
 	if !ok || metadata.Size != 10 {
 		t.Fatalf("listed file metadata = %#v, want size 10", files["file.txt"])
 	}

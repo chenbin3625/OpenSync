@@ -154,6 +154,22 @@ func (ci *CopyItem) countableWaitSize() int64 {
 	return util.ToInt64(ci.FileSize)
 }
 
+func (ci *CopyItem) toStreamItem() streamDoingItem {
+	ci.mu.RLock()
+	defer ci.mu.RUnlock()
+	return streamDoingItem{
+		AlistTaskID: ci.AlistTaskID,
+		FileName:    ci.FileName,
+		SrcPath:     ci.SrcPath,
+		DstPath:     ci.DstPath,
+		FileSize:    util.ToInt64(ci.FileSize),
+		Type:        ci.CopyType.Int(),
+		Status:      ci.Status.Int(),
+		Progress:    ci.Progress,
+		CreateTime:  ci.CreateTime,
+	}
+}
+
 func (ci *CopyItem) ToMap(taskID int64) map[string]interface{} {
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()

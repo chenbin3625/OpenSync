@@ -35,6 +35,7 @@ type JobTask struct {
 	BreakFlag     atomic.Bool
 	scanSem       chan struct{}
 	scanBranchSem chan struct{}
+	lastMeter     transferMeter
 	ctx           context.Context
 	cancel        context.CancelFunc
 	runtimeMu     sync.Mutex
@@ -45,17 +46,17 @@ type JobTask struct {
 	CurrentTasks map[int][]map[string]interface{}
 	CurrentMu    sync.RWMutex
 
-	RetrySourceTaskID int64
-	RetryStatuses     []taskStatus
-	FatalMu           sync.Mutex
-	FatalErr          *string
-	PersistMu         sync.Mutex
-	PersistErr        error
-	persistBufMu      sync.Mutex
-	persistBuffer     []JobTaskItem
-	persistFlushMu    sync.Mutex
-	persistFlushScheduled bool
-	copyMonitor       *copyTaskMonitor
+	RetrySourceTaskID         int64
+	RetryStatuses             []taskStatus
+	FatalMu                   sync.Mutex
+	FatalErr                  *string
+	PersistMu                 sync.Mutex
+	PersistErr                error
+	persistBufMu              sync.Mutex
+	persistBuffer             []JobTaskItem
+	persistFlushMu            sync.Mutex
+	persistFlushScheduled     bool
+	copyMonitor               *copyTaskMonitor
 	copyMonitorClientOverride copyItemClient
 }
 

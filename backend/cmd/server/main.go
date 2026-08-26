@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"embed"
 	"errors"
 	"flag"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/quic-go/quic-go/http3"
 )
 
 //go:embed all:web
@@ -61,11 +63,18 @@ func maxRequestBodySize(max int64) gin.HandlerFunc {
 	}
 }
 
-func securityHeaders() gin.HandlerFunc {
+func securityHeaders(http3Ports ...int) gin.HandlerFunc {
+	altSvc := ""
+	if len(http3Ports) > 0 && http3Ports[0] > 0 {
+		altSvc = fmt.Sprintf(`h3=":%d"; ma=86400`, http3Ports[0])
+	}
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
 		c.Header("Referrer-Policy", "no-referrer")
+		if altSvc != "" {
+			c.Header("Alt-Svc", altSvc)
+		}
 		c.Next()
 	}
 }
@@ -175,7 +184,11 @@ func run(parent context.Context) error {
 
 	// Error recovery + Auth middleware
 	r.Use(errorRecovery())
-	r.Use(securityHeaders())
+	http3Port := 0
+	if cfg.Server.TLSEnabled() {
+		http3Port = cfg.Server.Port
+	}
+	r.Use(securityHeaders(http3Port))
 	r.Use(maxRequestBodySize(1 << 20)) // 1MB; config/alist/notify payloads are small JSON
 	r.Use(middleware.AuthRequired())
 
@@ -238,11 +251,19 @@ func run(parent context.Context) error {
 
 	port := fmt.Sprintf("%d", cfg.Server.Port)
 	addr := net.JoinHostPort(cfg.Server.Bind, port)
-	log.Printf("启动成功_/_Running at http://%s/", addr)
+	if cfg.Server.TLSEnabled() {
+		log.Printf("启动成功_/_Running at https://%s/ (HTTP/2 + HTTP/3)", addr)
+	} else {
+		log.Printf("启动成功_/_Running at http://%s/", addr)
+	}
 
 	server := &http.Server{
-		Addr:    addr,
-		Handler: r,
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    32 << 10,
 	}
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
@@ -252,16 +273,48 @@ func run(parent context.Context) error {
 	signalCtx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	err = runHTTPServer(signalCtx, server, listener)
+	err = runHTTPServer(signalCtx, server, listener, cfg.Server.TLSCertFile, cfg.Server.TLSKeyFile)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	service.ShutdownJobs(shutdownCtx)
 	return err
 }
 
-func runHTTPServer(ctx context.Context, server *http.Server, listener net.Listener) error {
+func runHTTPServer(ctx context.Context, server *http.Server, listener net.Listener, tlsFiles ...string) error {
+	certFile, keyFile := "", ""
+	if len(tlsFiles) > 0 {
+		certFile = strings.TrimSpace(tlsFiles[0])
+	}
+	if len(tlsFiles) > 1 {
+		keyFile = strings.TrimSpace(tlsFiles[1])
+	}
+	tlsEnabled := certFile != "" && keyFile != ""
+	var h3 *http3.Server
+	if tlsEnabled {
+		tlsConf, err := loadServerTLSConfig(certFile, keyFile)
+		if err != nil {
+			_ = listener.Close()
+			return err
+		}
+		server.TLSConfig = http12TLSConfig(tlsConf)
+		packet, err := net.ListenPacket("udp", listener.Addr().String())
+		if err != nil {
+			_ = listener.Close()
+			return fmt.Errorf("HTTP/3 listen: %w", err)
+		}
+		h3 = &http3.Server{Handler: server.Handler, TLSConfig: http3.ConfigureTLSConfig(tlsConf.Clone())}
+		go func() {
+			if err := h3.Serve(packet); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("HTTP/3 server: %v", err)
+			}
+		}()
+	}
 	errCh := make(chan error, 1)
 	go func() {
+		if tlsEnabled {
+			errCh <- server.ServeTLS(listener, certFile, keyFile)
+			return
+		}
 		errCh <- server.Serve(listener)
 	}()
 
@@ -276,6 +329,9 @@ func runHTTPServer(ctx context.Context, server *http.Server, listener net.Listen
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if h3 != nil {
+		_ = h3.Close()
+	}
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		_ = server.Close()
 		return err
@@ -286,4 +342,18 @@ func runHTTPServer(ctx context.Context, server *http.Server, listener net.Listen
 		return nil
 	}
 	return err
+}
+
+func loadServerTLSConfig(certFile, keyFile string) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load TLS certificate: %w", err)
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, nil
+}
+
+func http12TLSConfig(base *tls.Config) *tls.Config {
+	cfg := base.Clone()
+	cfg.NextProtos = []string{"h2", "http/1.1"}
+	return cfg
 }
