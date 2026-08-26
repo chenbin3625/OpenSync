@@ -370,18 +370,51 @@ func (e *FileListEntry) UnmarshalJSON(data []byte) error {
 		Name     string          `json:"name"`
 		IsDir    bool            `json:"is_dir"`
 		Size     int64           `json:"size"`
-		Modified int64           `json:"modified"`
+		Modified json.RawMessage `json:"modified"`
 		HashInfo json.RawMessage `json:"hash_info"`
 		Hashinfo string          `json:"hashinfo"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	e.Name, e.IsDir, e.Size, e.Modified, e.Hashinfo = raw.Name, raw.IsDir, raw.Size, raw.Modified, raw.Hashinfo
+	e.Name, e.IsDir, e.Size, e.Modified, e.Hashinfo = raw.Name, raw.IsDir, raw.Size, parseModified(raw.Modified), raw.Hashinfo
 	if len(raw.HashInfo) > 0 && string(raw.HashInfo) != "null" {
 		e.HashInfo = raw.HashInfo
 	}
 	return nil
+}
+
+// parseModified accepts both the numeric timestamps used by older AList
+// versions and the quoted RFC3339 timestamps returned by newer versions.
+// Modified is only advisory metadata, so an unknown value is treated as zero
+// instead of rejecting the entire directory listing.
+func parseModified(raw json.RawMessage) int64 {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return 0
+	}
+	if raw[0] == '"' {
+		var value string
+		if json.Unmarshal(raw, &value) != nil {
+			return 0
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return 0
+		}
+		if timestamp, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return timestamp
+		}
+		if timestamp, err := time.Parse(time.RFC3339Nano, value); err == nil {
+			return timestamp.Unix()
+		}
+		return 0
+	}
+	timestamp, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return timestamp
 }
 
 // FileMetadata contains lightweight comparison data from AList list results.

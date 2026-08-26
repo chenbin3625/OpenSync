@@ -54,7 +54,7 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 	if n == 0 || total <= n || n < fileListPageSize {
 		return result, nil
 	}
-	if len(result) >= maxFileListEntries {
+	if fileListLimitExceeded(len(result)) {
 		return nil, fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries)
 	}
 	// The first response reveals the total entry count. Reserve the final map
@@ -125,7 +125,7 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 					for name, meta := range pageResult {
 						result[name] = meta
 					}
-					overCap := len(result) >= maxFileListEntries
+					overCap := fileListLimitExceeded(len(result))
 					mu.Unlock()
 					if overCap {
 						fail(fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries))
@@ -150,6 +150,10 @@ sendPages:
 		return nil, fetchErr
 	}
 	return result, nil
+}
+
+func fileListLimitExceeded(count int) bool {
+	return count > maxFileListEntries
 }
 
 func (c *AlistClient) fetchFileListPage(ctx context.Context, req alistListRequest, result FileListResult) (int, int, error) {

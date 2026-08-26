@@ -5,6 +5,7 @@ import {
   filterRunningTaskRows,
   getRealtimeTaskIdentity,
   getTaskItemKey,
+  mergeCurrentTaskData,
   mergeTaskItems,
   mergeTaskRecords,
   normalizeTaskItemPage,
@@ -14,7 +15,7 @@ import {
   shouldPollRealtime,
   sortTaskItemsByCreateTimeDesc,
 } from '../src/pages/Home/taskRows.ts';
-import type { TaskItem, TaskRecord } from '../src/types.ts';
+import type { CurrentTaskData, TaskItem, TaskRecord } from '../src/types.ts';
 
 test('mergeTaskRecords keeps unchanged task row references during refresh', () => {
   const existing: TaskRecord[] = [
@@ -93,6 +94,31 @@ test('mergeTaskItems reuses the previous array when refreshed rows are unchanged
   const merged = mergeTaskItems(existing, refreshed);
 
   assert.equal(merged, existing);
+});
+
+test('mergeCurrentTaskData clears rows on an empty full snapshot', () => {
+  const previous: CurrentTaskData = {
+    taskId: 10,
+    scanFinish: false,
+    createTime: 100,
+    duration: 1,
+    num: { wait: 0, running: 1, success: 0, fail: 0, other: 0 },
+    size: { wait: 0, running: 1, success: 0, fail: 0, other: 0 },
+    doingTask: [{ id: 1, status: 1, progress: 100 }],
+  };
+  const next: CurrentTaskData = {
+    taskId: 10,
+    scanFinish: false,
+    createTime: 100,
+    duration: 2,
+    num: { wait: 0, running: 0, success: 0, fail: 0, other: 0 },
+    size: { wait: 0, running: 0, success: 0, fail: 0, other: 0 },
+    doingTask: [],
+  };
+
+  const merged = mergeCurrentTaskData(next, previous);
+
+  assert.deepEqual(merged.doingTask, []);
 });
 
 test('filterCurrentTaskFromHistory removes the active running task from history rows', () => {

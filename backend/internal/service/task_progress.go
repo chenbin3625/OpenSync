@@ -95,18 +95,21 @@ type jobCurrentPayload struct {
 	TaskID     int64                `json:"taskId"`
 	ScanFinish bool                 `json:"scanFinish"`
 	Scan       *scanProgressPayload `json:"scan,omitempty"`
-	DoingTask  []streamDoingItem    `json:"doingTask,omitempty"`
-	DoingPatch []streamDoingPatch   `json:"doingPatch,omitempty"`
-	CreateTime int                  `json:"createTime"`
-	Duration   int                  `json:"duration"`
-	FirstSync  *int                 `json:"firstSync"`
-	Num        taskNumStats         `json:"num"`
-	Size       taskSizeStats        `json:"size"`
-	DoneSize   int64                `json:"doneSize"`
-	RemainSize int64                `json:"remainSize"`
-	Speed      float64              `json:"speed,omitempty"`
-	SpeedAvg   float64              `json:"speedAvg,omitempty"`
-	RemainTime int                  `json:"remainTime,omitempty"`
+	// Full snapshots must retain an empty slice in JSON. The frontend uses a
+	// missing doingTask only for patch frames; omitting an empty snapshot would
+	// make completed rows linger until the task itself disappears.
+	DoingTask  []streamDoingItem  `json:"doingTask"`
+	DoingPatch []streamDoingPatch `json:"doingPatch,omitempty"`
+	CreateTime int                `json:"createTime"`
+	Duration   int                `json:"duration"`
+	FirstSync  *int               `json:"firstSync"`
+	Num        taskNumStats       `json:"num"`
+	Size       taskSizeStats      `json:"size"`
+	DoneSize   int64              `json:"doneSize"`
+	RemainSize int64              `json:"remainSize"`
+	Speed      float64            `json:"speed,omitempty"`
+	SpeedAvg   float64            `json:"speedAvg,omitempty"`
+	RemainTime int                `json:"remainTime,omitempty"`
 }
 
 type transferMeter struct {

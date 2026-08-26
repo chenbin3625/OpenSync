@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,27 @@ import (
 
 	"opensync/internal/mapper"
 )
+
+func TestFileListEntryUnmarshalAcceptsStringModified(t *testing.T) {
+	var entry FileListEntry
+	if err := json.Unmarshal([]byte(`{"name":"video.mkv","modified":"2024-01-02T03:04:05Z"}`), &entry); err != nil {
+		t.Fatalf("json.Unmarshal() error: %v", err)
+	}
+	want := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC).Unix()
+	if entry.Modified != want {
+		t.Fatalf("Modified = %d, want %d", entry.Modified, want)
+	}
+}
+
+func TestFileListEntryUnmarshalAcceptsNumericModifiedString(t *testing.T) {
+	var entry FileListEntry
+	if err := json.Unmarshal([]byte(`{"name":"video.mkv","modified":"1704164645"}`), &entry); err != nil {
+		t.Fatalf("json.Unmarshal() error: %v", err)
+	}
+	if entry.Modified != 1704164645 {
+		t.Fatalf("Modified = %d, want 1704164645", entry.Modified)
+	}
+}
 
 func TestFileListEntryMetadataUsesHashInfoMD5(t *testing.T) {
 	entry := FileListEntry{

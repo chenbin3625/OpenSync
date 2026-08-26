@@ -111,3 +111,15 @@ func TestFileListApiContextPostsTypedBodyAndOverlapsRemainingPages(t *testing.T)
 		t.Fatalf("max inflight = %d, want overlapping remaining-page fetches", maxInflight)
 	}
 }
+
+func TestFileListLimitExceededAllowsExactLimit(t *testing.T) {
+	if fileListLimitExceeded(maxFileListEntries - 1) {
+		t.Fatal("entry count below limit was rejected")
+	}
+	if fileListLimitExceeded(maxFileListEntries) {
+		t.Fatal("entry count exactly at limit was rejected")
+	}
+	if !fileListLimitExceeded(maxFileListEntries + 1) {
+		t.Fatal("entry count above limit was accepted")
+	}
+}

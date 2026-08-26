@@ -91,6 +91,17 @@ func TestStreamDoingItemOmitsIdleFields(t *testing.T) {
 	}
 }
 
+func TestJobCurrentPayloadEmitsEmptyDoingTaskSnapshot(t *testing.T) {
+	payload := jobCurrentPayload{DoingTask: []streamDoingItem{}}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal() error: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"doingTask":[]`) {
+		t.Fatalf("empty doingTask snapshot was omitted: %s", encoded)
+	}
+}
+
 func TestPrepareStreamPayloadPatchesUnchangedFileSet(t *testing.T) {
 	hub := &progressHub{
 		subscribers: make(map[int64]map[chan []byte]struct{}),

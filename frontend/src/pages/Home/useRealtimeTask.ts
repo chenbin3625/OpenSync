@@ -32,14 +32,18 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
   const prevTaskRef = useRef<CurrentTaskView | null>(null);
   const requestRef = useRef(0);
   const inFlightRef = useRef(false);
+  const pollAbortRef = useRef<AbortController | null>(null);
 
   const refreshCurrentTask = useCallback(async () => {
     if (!jobId || !canPollCurrentDocument()) return;
     if (inFlightRef.current) return;
     const requestID = ++requestRef.current;
+    const controller = new AbortController();
+    pollAbortRef.current?.abort();
+    pollAbortRef.current = controller;
     inFlightRef.current = true;
     try {
-      const res = await jobGetTaskCurrent({ id: jobId }, { silent: true });
+      const res = await jobGetTaskCurrent({ id: jobId }, { silent: true, signal: controller.signal });
       if (requestID !== requestRef.current) return;
       const data = res.data || null;
       if (isCurrentTaskData(data)) {
@@ -51,12 +55,18 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
     } catch {
       /* keep the last visible realtime snapshot on transient polling errors */
     } finally {
-      inFlightRef.current = false;
+      if (pollAbortRef.current === controller) {
+        pollAbortRef.current = null;
+        inFlightRef.current = false;
+      }
     }
   }, [jobId]);
 
   useEffect(() => {
     requestRef.current += 1;
+    pollAbortRef.current?.abort();
+    pollAbortRef.current = null;
+    inFlightRef.current = false;
     prevTaskRef.current = null;
     setCurrentTask(null);
   }, [jobId]);
