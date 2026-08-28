@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert, App, Button, Card, Col, Form, Input, InputNumber, Modal, Row, Space, Tooltip,
 } from 'antd';
@@ -37,23 +37,38 @@ export default function Setting() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
 
+  const configRequestRef = useRef(0);
+  const configAbortRef = useRef<AbortController | null>(null);
+
   const fetchConfig = useCallback(async () => {
+    const requestID = ++configRequestRef.current;
+    configAbortRef.current?.abort();
+    const controller = new AbortController();
+    configAbortRef.current = controller;
     setLoading(true);
     setConfigError(false);
     try {
-      const res = await getSystemConfig({ silent: true });
+      const res = await getSystemConfig({ silent: true, signal: controller.signal });
+      if (requestID !== configRequestRef.current) return;
       if (res.data) {
         setConfigValues(res.data);
       }
     } catch (err) {
+      if (controller.signal.aborted) return;
+      if (requestID !== configRequestRef.current) return;
       setConfigError(true);
       console.error('system config fetch failed', err);
     } finally {
-      setLoading(false);
+      if (requestID === configRequestRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
-  useEffect(() => { fetchConfig(); }, [fetchConfig]);
+  useEffect(() => {
+    fetchConfig();
+    return () => { configAbortRef.current?.abort(); };
+  }, [fetchConfig]);
   useEffect(() => {
     if (!loading && configValues) {
       configForm.setFieldsValue(configValues);

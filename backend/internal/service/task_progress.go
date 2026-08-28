@@ -189,9 +189,6 @@ func (jt *JobTask) getCurrentPayload() jobCurrentPayload {
 	}
 
 	jt.CurrentMu.Lock()
-	if len(jt.CurrentTasks) > 0 {
-		clear(jt.CurrentTasks)
-	}
 	prev := jt.lastMeter
 	if prev.duration > 0 && duration != prev.duration {
 		payload.Speed = float64(doneSize-prev.doneSize) / float64(duration-prev.duration)

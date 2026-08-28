@@ -1,23 +1,25 @@
 package model
 
-// User represents user_list table
+// User represents user_list table. Sensitive fields intentionally have no json
+// tag: the structs must never be serialized to an API response by accident
+// (handlers pass explicit public maps instead).
 type User struct {
-	ID          int64  `json:"id" db:"id"`
-	UserName    string `json:"userName" db:"userName"`
-	Passwd      string `json:"passwd,omitempty" db:"passwd"`
-	RecoveryKey string `json:"recoveryKey,omitempty" db:"recoveryKey"`
-	SQLVersion  int64  `json:"sqlVersion,omitempty" db:"sqlVersion"`
-	CreateTime  int64  `json:"createTime" db:"createTime"`
+	ID          int64  `db:"id"`
+	UserName    string `db:"userName"`
+	Passwd      string `db:"passwd"`
+	RecoveryKey string `db:"recoveryKey"`
+	SQLVersion  int64  `db:"sqlVersion"`
+	CreateTime  int64  `db:"createTime"`
 }
 
 // Alist represents alist_list table
 type Alist struct {
-	ID         int64  `json:"id" db:"id"`
-	Remark     string `json:"remark" db:"remark"`
-	URL        string `json:"url" db:"url"`
-	UserName   string `json:"userName" db:"userName"`
-	Token      string `json:"token,omitempty" db:"token"`
-	CreateTime int64  `json:"createTime" db:"createTime"`
+	ID         int64  `db:"id"`
+	Remark     string `db:"remark"`
+	URL        string `db:"url"`
+	UserName   string `db:"userName"`
+	Token      string `db:"token"`
+	CreateTime int64  `db:"createTime"`
 }
 
 // Job represents job table

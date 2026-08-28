@@ -162,9 +162,13 @@ func panicAlistClientLoadError(err error) {
 	if err == nil {
 		return
 	}
-	// Log the full error (which may include internal host/IP/port details) but
-	// return only a generic message to the client so network topology is not
-	// leaked through the API response.
+	// "Not found" is already a sanitized, actionable public message — pass it
+	// through so a stale client ID gets a meaningful error. Everything else may
+	// include internal host/IP/port details: log it and return only a generic
+	// message so network topology is not leaked through the API response.
+	if err.Error() == msg.AlistNotFound {
+		panicPublic(msg.AlistNotFound)
+	}
 	log.Printf("alist client load failed: %v", err)
 	panicPublic(msg.AlistConnectFail)
 }
@@ -227,7 +231,7 @@ func UpdateClient(alist map[string]interface{}) {
 
 	alistOld, err := mapper.GetAlistByID(alistID)
 	if err != nil {
-		panic(err.Error())
+		panicPublicIf(err, msg.AlistNotFound)
 	}
 
 	oldURL := fmt.Sprintf("%v", alistOld["url"])
@@ -281,6 +285,9 @@ func AddClient(alist map[string]interface{}) {
 
 	newID, err := mapper.AddAlist(remarkStr, urlStr, client.User, token)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			panicPublic(msg.AlistExists)
+		}
 		panic(err.Error())
 	}
 
@@ -288,8 +295,15 @@ func AddClient(alist map[string]interface{}) {
 	storeAlistClient(newID, client)
 }
 
+// alistRefMu serializes (validate alist exists → insert job) against
+// (check job references → remove alist), closing the TOCTOU window where a job
+// could be created for an alist that RemoveClient is deleting.
+var alistRefMu sync.Mutex
+
 // RemoveClient removes an AList client
 func RemoveClient(alistID int64) {
+	alistRefMu.Lock()
+	defer alistRefMu.Unlock()
 	count, err := mapper.CountJobsByAlistID(alistID)
 	if err != nil {
 		panic(err.Error())

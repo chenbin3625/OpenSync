@@ -18,9 +18,11 @@ func TestParseExcludePatternsSupportsNewlinesAndComments(t *testing.T) {
 	}
 }
 
-func TestParseExcludePatternsKeepsColonCompatibility(t *testing.T) {
-	got := parseExcludePatterns("*.tmp : .git/ : node_modules/")
-	want := []string{"*.tmp", ".git/", "node_modules/"}
+func TestParseExcludePatternsTreatsColonAsLiteralPattern(t *testing.T) {
+	// Colon-splitting was removed: a single line is one gitignore pattern, so
+	// patterns that legitimately contain a colon keep their meaning.
+	got := parseExcludePatterns("foo:bar.txt")
+	want := []string{"foo:bar.txt"}
 
 	if len(got) != len(want) {
 		t.Fatalf("parseExcludePatterns() length = %d, want %d (%#v)", len(got), len(want), got)
@@ -33,7 +35,7 @@ func TestParseExcludePatternsKeepsColonCompatibility(t *testing.T) {
 }
 
 func TestNormalizeExcludeStoresNewlineSeparatedRules(t *testing.T) {
-	got := normalizeExclude("*.tmp : .git/ : node_modules/")
+	got := normalizeExclude("*.tmp\n.git/\nnode_modules/")
 	want := "*.tmp\n.git/\nnode_modules/"
 
 	if got != want {

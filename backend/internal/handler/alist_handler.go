@@ -2,10 +2,9 @@ package handler
 
 import (
 	"net/http"
-	"opensync/internal/msg"
 	"opensync/internal/model"
+	"opensync/internal/msg"
 	"opensync/internal/service"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,9 +15,9 @@ func GetAlist(c *gin.Context) {
 	alistIDStr := c.Query("alistId")
 	path := c.Query("path")
 	if alistIDStr != "" && path != "" {
-		alistID, err := strconv.ParseInt(alistIDStr, 10, 64)
+		alistID, err := parseRequiredID(alistIDStr, "alistId")
 		if err != nil {
-			c.JSON(http.StatusOK, model.Error(msg.LostPart))
+			c.JSON(http.StatusOK, model.Error(err.Error()))
 			return
 		}
 		result := service.GetChildPath(c.Request.Context(), alistID, path)
@@ -63,9 +62,9 @@ func DeleteAlist(c *gin.Context) {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
-	id, err := strconv.ParseInt(idStr, 10, 64)
+	id, err := parseRequiredID(idStr, "id")
 	if err != nil {
-		c.JSON(http.StatusOK, model.Error(msg.LostPart))
+		c.JSON(http.StatusOK, model.Error(err.Error()))
 		return
 	}
 	service.RemoveClient(id)

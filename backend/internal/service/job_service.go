@@ -248,6 +248,17 @@ func nonNegativeFileSize(value interface{}) (int64, error) {
 func AddJobClient(job map[string]interface{}, isInit bool) {
 	CleanJobInput(job)
 	ValidateJobInput(job)
+	if !isInit {
+		// Interactive add: validate that the engine exists and hold the
+		// reference lock until the job row is inserted, so a concurrent
+		// RemoveClient cannot delete the engine in between and leave a job
+		// pointing at nothing.
+		alistRefMu.Lock()
+		defer alistRefMu.Unlock()
+		if _, err := getAlistByID(util.ToInt64(job["alistId"])); err != nil {
+			panicPublicIf(err, msg.AlistNotFound)
+		}
+	}
 	client := NewJobClient(job, isInit)
 	jobClientListMu.Lock()
 	jobClientList[client.JobID] = client
@@ -360,7 +371,7 @@ func AbortJob(jobID int64) {
 func StopTask(taskID int64) {
 	job, err := mapper.GetJobByTaskID(taskID)
 	if err != nil {
-		panic(err.Error())
+		panicPublicIf(err, msg.JobNotFound)
 	}
 	client := GetJobClientByID(util.ToInt64(job["id"]))
 	task := client.currentTask()
@@ -374,7 +385,7 @@ func StopTask(taskID int64) {
 func RetryFailedTask(taskID int64) {
 	job, err := mapper.GetJobByTaskID(taskID)
 	if err != nil {
-		panic(err.Error())
+		panicPublicIf(err, msg.JobNotFound)
 	}
 	client := GetJobClientByID(util.ToInt64(job["id"]))
 	if !client.enabled() {

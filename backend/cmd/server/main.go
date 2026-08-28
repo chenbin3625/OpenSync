@@ -169,10 +169,7 @@ func run(parent context.Context) error {
 		}
 	}()
 
-	// Update abnormal tasks on startup
-	mapper.UpdateAbnormalTasks()
-
-	// Initialize jobs
+	// Initialize jobs (also marks leftover in-flight tasks as aborted on startup)
 	service.InitJobs()
 	stopTaskRetention := service.StartTaskRetentionScheduler()
 	defer stopTaskRetention()
@@ -226,6 +223,7 @@ func run(parent context.Context) error {
 	// Notify routes
 	r.GET("/svr/notify", handler.GetNotify)
 	r.POST("/svr/notify", handler.AddNotify)
+	r.POST("/svr/notify/test", handler.TestNotify)
 	r.PUT("/svr/notify", handler.UpdateNotify)
 	r.DELETE("/svr/notify", handler.DeleteNotify)
 

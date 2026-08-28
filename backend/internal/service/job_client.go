@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"opensync/internal/msg"
 	"opensync/internal/mapper"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"sync"
 	"time"
@@ -225,6 +225,8 @@ func jobTaskHasStatus(taskID int64, statuses ...taskStatus) bool {
 
 // NewJobClient creates a new job client
 func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
+	// Clone first: the defaults below must not mutate the caller's map.
+	job = cloneJobConfig(job)
 	jc := &JobClient{
 		Job: cloneJobConfig(job),
 	}

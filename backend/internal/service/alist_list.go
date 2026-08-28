@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"opensync/internal/msg"
 	"sync"
 )
 
@@ -51,8 +50,17 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 	if err != nil {
 		return nil, err
 	}
-	if n == 0 || total <= n || n < fileListPageSize {
+	if n == 0 || total <= n {
 		return result, nil
+	}
+
+	// Some AList drivers clamp the page size below what was requested. When the
+	// first page comes back short while more entries exist, the clamp is the
+	// observed page size and the page count must be derived from it — deriving
+	// pages from the requested size would silently drop every later page.
+	listPageSize := fileListPageSize
+	if n < fileListPageSize {
+		listPageSize = n
 	}
 	if fileListLimitExceeded(len(result)) {
 		return nil, fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries)
@@ -72,7 +80,7 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 		result = resized
 	}
 
-	pages := (total + fileListPageSize - 1) / fileListPageSize
+	pages := (total + listPageSize - 1) / listPageSize
 	if pages > maxFileListPages {
 		return nil, fmt.Errorf("AList directory listing exceeded %d pages", maxFileListPages)
 	}
@@ -82,6 +90,11 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 
 	var mu sync.Mutex
 	var fetchErr error
+	// emptyPage records the first page that came back with zero entries. With an
+	// accurate total that can only happen on the final page; an empty page
+	// earlier means the server's total does not match its content, and merging
+	// what arrived would silently drop files.
+	emptyPage := 0
 	var wg sync.WaitGroup
 	fail := func(err error) {
 		mu.Lock()
@@ -117,13 +130,17 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 					pageReq := req
 					pageReq.Page = page
 					pageResult := make(FileListResult, fileListPageSize)
-					if _, _, err := c.fetchFileListPage(ctx, pageReq, pageResult); err != nil {
+					fetched, _, err := c.fetchFileListPage(ctx, pageReq, pageResult)
+					if err != nil {
 						fail(err)
 						return
 					}
 					mu.Lock()
 					for name, meta := range pageResult {
 						result[name] = meta
+					}
+					if fetched == 0 && page < pages && (emptyPage == 0 || page < emptyPage) {
+						emptyPage = page
 					}
 					overCap := fileListLimitExceeded(len(result))
 					mu.Unlock()
@@ -149,6 +166,15 @@ sendPages:
 	if fetchErr != nil {
 		return nil, fetchErr
 	}
+	// The parent context (task break/timeout) can cancel the workers between
+	// requests; returning the partial map with a nil error would present an
+	// incomplete directory listing as a successful one.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if emptyPage > 0 {
+		return nil, fmt.Errorf("AList directory listing is incomplete: page %d of %d returned no entries (total=%d)", emptyPage, pages, total)
+	}
 	return result, nil
 }
 
@@ -163,7 +189,7 @@ func (c *AlistClient) fetchFileListPage(ctx context.Context, req alistListReques
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return 0, 0, fmt.Errorf("%s (HTTP %d)", msg.CodeNot200, resp.StatusCode)
+		return 0, 0, &alistStatusError{httpStatus: resp.StatusCode}
 	}
 	n, total, code, message, err := decodeFileListResponse(resp.Body, maxResponseBytes, result)
 	if err != nil {

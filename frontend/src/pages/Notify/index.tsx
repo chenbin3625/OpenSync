@@ -3,7 +3,7 @@ import {
   Card, Button, Modal, Form, Input, Select, Switch, Space, Popconfirm, Tag, App, Empty, Typography, Descriptions, Tooltip,
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined, ReloadOutlined } from '@ant-design/icons';
-import { notifyGet, notifyPost, notifyPut, notifyDelete } from '../../api/notify';
+import { notifyGet, notifyPost, notifyPostTest, notifyPut, notifyDelete } from '../../api/notify';
 import dayjs from 'dayjs';
 import type { NotifyFormValues, NotifyItem } from '../../types';
 
@@ -290,7 +290,7 @@ export default function Notify() {
         method: m,
         params: JSON.stringify(getNotifyParamsFromValues(values)),
       };
-      await notifyPost({ notify: notifyData });
+      await notifyPostTest({ notify: notifyData });
       message.success('测试消息已发送');
     } catch (err) {
       console.error('notify test failed', err);
@@ -340,7 +340,7 @@ export default function Notify() {
     try {
       // Send the id so the backend tests with the stored (real) config; the
       // list params are redacted and would fail if sent verbatim.
-      await notifyPost({ notify: { id: item.id, method: item.method, params: item.params } });
+      await notifyPostTest({ notify: { id: item.id, method: item.method, params: item.params } });
       message.success('测试消息已发送');
     } catch (err) {
       console.error('notify test send failed', err);

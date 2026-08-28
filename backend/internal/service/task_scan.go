@@ -36,6 +36,7 @@ func (jt *JobTask) acquireScanSlot() bool {
 	if jt.isBreak() {
 		return false
 	}
+	jt.initRuntime()
 	// Block on the semaphore instead of polling every 50ms. The context is
 	// cancelled on break/timeout (requestBreak / task timeout), so the wait
 	// still propagates cancellation promptly.

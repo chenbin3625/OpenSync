@@ -9,6 +9,10 @@ export function notifyPost(data: Record<string, unknown>) {
   return request.post('/notify', data) as Promise<ApiResponse<null>>;
 }
 
+export function notifyPostTest(data: Record<string, unknown>) {
+  return request.post('/notify/test', data) as Promise<ApiResponse<null>>;
+}
+
 export function notifyPut(data: Record<string, unknown>) {
   return request.put('/notify', data) as Promise<ApiResponse<null>>;
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"opensync/internal/msg"
 	"opensync/pkg/util"
-	"strings"
 	"sync"
 	"time"
 )
@@ -27,12 +26,13 @@ func (watch *copyTaskWatch) closeDone() {
 }
 
 type copyTaskMonitor struct {
-	jt      *JobTask
-	mu      sync.Mutex
-	watches map[string]*copyTaskWatch
-	stopCh  chan struct{}
-	once    sync.Once
-	wg      sync.WaitGroup
+	jt       *JobTask
+	mu       sync.Mutex
+	watches  map[string]*copyTaskWatch
+	stopCh   chan struct{}
+	once     sync.Once
+	stopOnce sync.Once
+	wg       sync.WaitGroup
 	// stopped is set under mu once the monitor loop has exited (task broken,
 	// timed out, or shut down). A track() call that arrives after the loop has
 	// exited must not enqueue a watch nobody will ever process, otherwise the
@@ -119,11 +119,9 @@ func (m *copyTaskMonitor) track(ci *CopyItem) {
 }
 
 func (m *copyTaskMonitor) stop() {
-	select {
-	case <-m.stopCh:
-	default:
+	m.stopOnce.Do(func() {
 		close(m.stopCh)
-	}
+	})
 	m.mu.Lock()
 	m.stopped = true
 	m.mu.Unlock()
@@ -224,7 +222,7 @@ func (m *copyTaskMonitor) fetchUndoneByType(active []*copyTaskWatch) map[taskIte
 }
 
 func (m *copyTaskMonitor) applyTaskInfo(watch *copyTaskWatch, taskInfo map[string]interface{}) bool {
-	state := taskStatusFromValue(taskInfo["state"])
+	state := mapAlistTaskState(util.ToInt(taskInfo["state"]))
 	progress := util.ToFloat64(taskInfo["progress"])
 	errStr := ""
 	if e, ok := taskInfo["error"]; ok && e != nil {
@@ -258,7 +256,7 @@ func (m *copyTaskMonitor) pollTaskInfo(watch *copyTaskWatch) bool {
 			return false
 		}
 		eMsg := err.Error()
-		if strings.Contains(eMsg, "404") {
+		if isAlistObjectNotFound(err) {
 			if exists, verr := watch.ci.verifyDstExists(m.jt, client); verr == nil && exists {
 				watch.ci.setProgress(taskStatusSuccess, 100, nil)
 				m.finishWatch(watch)
@@ -281,6 +279,25 @@ func (m *copyTaskMonitor) pollTaskInfo(watch *copyTaskWatch) bool {
 	return m.applyTaskInfo(watch, taskInfo)
 }
 
+// mapAlistTaskState converts an AList admin-task state (tache.State: 0 pending,
+// 1 running, 2 succeeded, 4 canceled, 7 failed; 5 and other values are interim
+// retry states) to the local task status. Non-terminal states map to Running so
+// the watch keeps polling until a terminal state arrives.
+func mapAlistTaskState(state int) taskStatus {
+	switch state {
+	case 0:
+		return taskStatusWaiting
+	case 2:
+		return taskStatusSuccess
+	case 4:
+		return taskStatusStopped
+	case 7:
+		return taskStatusFailed
+	default:
+		return taskStatusRunning
+	}
+}
+
 func (m *copyTaskMonitor) takeWatch(watch *copyTaskWatch) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -297,10 +314,17 @@ func (m *copyTaskMonitor) finishWatch(watch *copyTaskWatch) {
 	if !m.takeWatch(watch) {
 		return
 	}
-	ctx, cancel := m.jt.cleanupContext()
-	_ = m.jt.copyMonitorClient().TaskDeleteContext(ctx, watch.taskID, watch.copyType)
-	cancel()
-	watch.closeDone()
+	// The item already reached a terminal state, so delete the finished remote
+	// task off the polling loop: a slow cleanup (up to the 30s cleanup timeout)
+	// would otherwise delay status updates for the remaining watches.
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		ctx, cancel := m.jt.cleanupContext()
+		_ = m.jt.copyMonitorClient().TaskDeleteContext(ctx, watch.taskID, watch.copyType)
+		cancel()
+		watch.closeDone()
+	}()
 }
 
 func (m *copyTaskMonitor) abortWatch(watch *copyTaskWatch, cause error) {

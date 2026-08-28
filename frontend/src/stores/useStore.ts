@@ -46,18 +46,18 @@ const getInitialUser = (): UserInfo | null => {
   }
 };
 
-const persistState = (newKey: string, oldKey: string, value: unknown) => {
+// persistState writes the canonical key only. The legacy vuex `lifeData` blob
+// is read for backward compatibility above but is no longer written: it used
+// to keep stale user info around after logout.
+const persistState = (key: string, value: unknown) => {
   try {
     if (value === null || value === undefined) {
-      localStorage.removeItem(newKey);
+      localStorage.removeItem(key);
     } else if (typeof value === 'string') {
-      localStorage.setItem(newKey, value);
+      localStorage.setItem(key, value);
     } else {
-      localStorage.setItem(newKey, JSON.stringify(value));
+      localStorage.setItem(key, JSON.stringify(value));
     }
-    const data = JSON.parse(localStorage.getItem('lifeData') || '{}');
-    data[oldKey] = value;
-    localStorage.setItem('lifeData', JSON.stringify(data));
   } catch (err) {
     console.error('failed to persist local state', err);
   }
@@ -68,12 +68,15 @@ export const useStore = create<AppState>((set) => ({
   authChecked: false,
   theme: getInitialTheme(),
   setUserInfo: (user) => {
-    persistState('opensync_userInfo', 'vuex_userInfo', user);
-    set({ userInfo: user });
+    // Reject malformed payloads so a broken response can never be persisted as
+    // a "logged in" session.
+    const valid = user === null || isUserInfo(user) ? user : null;
+    persistState('opensync_userInfo', valid);
+    set({ userInfo: valid });
   },
   setAuthChecked: (checked) => set({ authChecked: checked }),
   setTheme: (theme) => {
-    persistState('opensync_theme', 'vuex_theme', theme);
+    persistState('opensync_theme', theme);
     set({ theme });
   },
 }));

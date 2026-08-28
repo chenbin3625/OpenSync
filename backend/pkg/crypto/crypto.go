@@ -57,18 +57,25 @@ func IsModernPasswordHash(storedHash string) bool {
 		strings.HasPrefix(storedHash, "$2y$")
 }
 
-// ReadOrSetFile reads file content, creates with default if not exists
-func ReadOrSetFile(fileName string, defaultVal string, force bool) string {
+// ReadOrSetFile reads file content, creating it with defaultValue when it does
+// not exist. Callers must treat a persist error as fatal when the value feeds
+// cryptography: falling back to an in-memory default would silently rotate the
+// secret on every restart and invalidate all stored cookies and tokens.
+func ReadOrSetFile(fileName string, defaultVal string, force bool) (string, error) {
 	if !force {
 		if data, err := os.ReadFile(fileName); err == nil && len(strings.TrimSpace(string(data))) > 0 {
 			_ = os.Chmod(fileName, 0600)
-			return string(data)
+			return string(data), nil
 		}
 	}
 	dir := filepath.Dir(fileName)
 	if dir != "." {
-		_ = os.MkdirAll(dir, 0755)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", err
+		}
 	}
-	_ = os.WriteFile(fileName, []byte(defaultVal), 0600)
-	return defaultVal
+	if err := os.WriteFile(fileName, []byte(defaultVal), 0600); err != nil {
+		return "", err
+	}
+	return defaultVal, nil
 }

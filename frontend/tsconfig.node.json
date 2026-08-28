@@ -14,6 +14,9 @@
     "moduleDetection": "force",
     "noEmit": true,
 
+    /* Type safety */
+    "strict": true,
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,

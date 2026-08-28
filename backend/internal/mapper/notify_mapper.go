@@ -61,7 +61,7 @@ func executeNotifyUpdate(query string, args ...interface{}) error {
 		return err
 	}
 	if affected == 0 {
-		return errors.New(msg.LostPart)
+		return errors.New(msg.NotifyNotFound)
 	}
 	return nil
 }

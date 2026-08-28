@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { jobGetTaskCurrent } from '../../api/job';
-import { POLL_INTERVAL_MS } from '../../api/request';
 import type { CurrentTaskView, TaskItem } from '../../types';
 import {
   getRealtimeTaskIdentity,
@@ -125,8 +124,9 @@ export function useRealtimeTaskItems({
     const fetchKey = `${loadKey.status}:${loadKey.taskIdentity}:${loadKey.page}`;
     const now = Date.now();
     const changedView = lastFetchKeyRef.current !== fetchKey;
-    const pollIntervalMs = activeTab === 1 ? POLL_INTERVAL_MS : NON_RUNNING_POLL_INTERVAL_MS;
-    if (!changedView && lastFetchAtRef.current != null && now - lastFetchAtRef.current < pollIntervalMs) {
+    // This branch only runs for non-running tabs (activeTab === 1 returned
+    // above), so the throttle always uses the slower DB-backed interval.
+    if (!changedView && lastFetchAtRef.current != null && now - lastFetchAtRef.current < NON_RUNNING_POLL_INTERVAL_MS) {
       return;
     }
     // A changed tab/page/task must win immediately. Abort the stale browser

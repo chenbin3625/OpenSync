@@ -95,7 +95,9 @@ func (c *copyItemTestClient) FileExistsContext(context.Context, string, string) 
 }
 
 func TestCopyItemUsesMoveAPIForMoveItems(t *testing.T) {
-	client := &copyItemTestClient{}
+	// The stub returns no remote task id, so DoIt verifies the destination;
+	// fileExists=true represents the synchronous-completion path.
+	client := &copyItemTestClient{fileExists: true}
 	item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "file.txt", int64(1), taskItemTypeMove)
 
 	item.DoIt()

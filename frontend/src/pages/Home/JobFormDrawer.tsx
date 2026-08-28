@@ -102,6 +102,7 @@ export default function JobFormDrawer({
     clearTree: clearSrcTree,
     onLoadData: onLoadSrcData,
     setLoadedKeys: setSrcLoadedKeys,
+    treeLoadError: srcTreeError,
   } = usePathTree(selectedAlistId, treeLoadRequestRef);
   const {
     treeData: dstTreeData,
@@ -109,7 +110,11 @@ export default function JobFormDrawer({
     clearTree: clearDstTree,
     onLoadData: onLoadDstData,
     setLoadedKeys: setDstLoadedKeys,
+    treeLoadError: dstTreeError,
   } = usePathTree(selectedAlistId, treeLoadRequestRef);
+  const treeNotFoundContent = selectedAlistId
+    ? (srcTreeError || dstTreeError ? '目录加载失败，请重试' : '请先展开目录')
+    : '请先选择引擎';
 
   useEffect(() => {
     if (selectedAlistId) {
@@ -306,7 +311,7 @@ export default function JobFormDrawer({
                 treeNodeFilterProp="title"
                 styles={{ popup: { root: { maxHeight: 300, overflow: 'auto' } } }}
                 suffixIcon={treeLoading ? <Spin size="small" /> : undefined}
-                notFoundContent={selectedAlistId ? '请先展开目录' : '请先选择引擎'}
+                notFoundContent={treeNotFoundContent}
               />
             </Form.Item>
           </Col>
@@ -324,7 +329,7 @@ export default function JobFormDrawer({
                 treeNodeFilterProp="title"
                 styles={{ popup: { root: { maxHeight: 300, overflow: 'auto' } } }}
                 suffixIcon={treeLoading ? <Spin size="small" /> : undefined}
-                notFoundContent={selectedAlistId ? '请先展开目录' : '请先选择引擎'}
+                notFoundContent={treeNotFoundContent}
               />
             </Form.Item>
           </Col>

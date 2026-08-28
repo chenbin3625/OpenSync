@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"sync"
 	"time"
@@ -211,6 +212,22 @@ func (ci *CopyItem) DoIt() {
 		}
 
 		ci.setTaskID(taskID)
+		if taskID == "" && !ci.confirmSynchronousCopy(runtime, client) {
+			// AList accepted the request but returned no task id, and the file
+			// never arrived at the destination. Treat the attempt as failed so
+			// the bounded retry loop can resubmit it.
+			emptyTaskErr := errors.New(msg.AlistNoCopyTask)
+			if attempt < maxRetries {
+				ci.setRetrying(emptyTaskErr)
+				if completed := runtime.waitForBreak(copyRetryDelay(attempt)); !completed {
+					ci.setStatus(taskStatusStopped)
+					break
+				}
+				continue
+			}
+			ci.setFailure(emptyTaskErr)
+			break
+		}
 		if taskID == "" {
 			ci.setProgress(taskStatusSuccess, 100, nil)
 		} else if ci.status() != taskStatusStopped {
@@ -234,6 +251,19 @@ func (ci *CopyItem) startTransfer(ctx context.Context, client copyItemClient) (s
 		return client.MoveFileContext(ctx, ci.SrcPath, ci.DstPath, ci.FileName)
 	}
 	return client.CopyFileContext(ctx, ci.SrcPath, ci.DstPath, ci.FileName)
+}
+
+// confirmSynchronousCopy handles a copy/move response with no task id: some
+// backends complete the operation synchronously. The destination is verified so
+// "no task" is only treated as success when the file actually arrived. A
+// verification error keeps the legacy assume-success behavior instead of
+// failing items on a flaky existence check.
+func (ci *CopyItem) confirmSynchronousCopy(runtime copyItemRuntime, client copyItemClient) bool {
+	exists, err := ci.verifyDstExists(runtime, client)
+	if err != nil {
+		return true
+	}
+	return exists
 }
 
 func defaultCopyRetryDelay(attempt int) time.Duration {
@@ -273,13 +303,17 @@ func (ci *CopyItem) stopRemoteTask(client copyItemClient, cause error) {
 		ci.setProgress(taskStatusStopped, ci.progress(), &errMsg)
 	}
 	if taskID := ci.taskID(); taskID != "" {
-		ctx, cancel := ci.copyRuntime().cleanupContext()
-		if err := client.TaskCancelContext(ctx, taskID, ci.CopyType); err != nil {
+		// Cancel and delete each get their own cleanup context so a slow cancel
+		// cannot exhaust the budget and silently skip the delete.
+		cancelCtx, cancelCancel := ci.copyRuntime().cleanupContext()
+		if err := client.TaskCancelContext(cancelCtx, taskID, ci.CopyType); err != nil {
 			errMsg := err.Error()
 			ci.setProgress(taskStatusStopped, ci.progress(), &errMsg)
 		}
-		_ = client.TaskDeleteContext(ctx, taskID, ci.CopyType)
-		cancel()
+		cancelCancel()
+		deleteCtx, cancelDelete := ci.copyRuntime().cleanupContext()
+		_ = client.TaskDeleteContext(deleteCtx, taskID, ci.CopyType)
+		cancelDelete()
 	}
 }
 

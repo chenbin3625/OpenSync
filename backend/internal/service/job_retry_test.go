@@ -30,6 +30,13 @@ func setupRetryFailedTaskTest(t *testing.T, enable int) (*JobClient, int64) {
 	mapper.InitSQL()
 	resetJobClientsForTest()
 
+	// AddJobClient validates that the engine exists before inserting the job.
+	oldGetAlist := getAlistByID
+	getAlistByID = func(alistID int64) (map[string]interface{}, error) {
+		return map[string]interface{}{"id": alistID, "url": "https://alist.test", "token": "t"}, nil
+	}
+	t.Cleanup(func() { getAlistByID = oldGetAlist })
+
 	AddJobClient(map[string]interface{}{
 		"enable":        enable,
 		"remark":        "retry-test",

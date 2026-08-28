@@ -3,9 +3,9 @@ package handler
 import (
 	"net/http"
 	"opensync/internal/config"
-	"opensync/internal/msg"
 	"opensync/internal/middleware"
 	"opensync/internal/model"
+	"opensync/internal/msg"
 	"opensync/internal/service"
 	"strings"
 
@@ -23,7 +23,10 @@ func Login(c *gin.Context) {
 		return
 	}
 	user := service.CheckPwdScoped(0, req.Passwd, req.UserName, c.ClientIP())
-	middleware.SetAuthCookie(c, user)
+	if err := middleware.SetAuthCookie(c, user); err != nil {
+		c.JSON(http.StatusOK, model.Error(msg.SetCookieFail))
+		return
+	}
 	// Return user info without passwd and sqlVersion
 	userReturn := map[string]interface{}{
 		"id":         user["id"],
@@ -51,7 +54,10 @@ func Initialize(c *gin.Context) {
 		return
 	}
 	user, recoveryKey := service.InitializeUser(req.UserName, req.Passwd)
-	middleware.SetAuthCookie(c, user)
+	if err := middleware.SetAuthCookie(c, user); err != nil {
+		c.JSON(http.StatusOK, model.Error(msg.SetCookieFail))
+		return
+	}
 	userReturn := map[string]interface{}{
 		"id":          user["id"],
 		"userName":    user["userName"],

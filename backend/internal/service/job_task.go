@@ -43,8 +43,8 @@ type JobTask struct {
 	ScanTotalDirs atomic.Int64
 	ScanDoneDirs  atomic.Int64
 
-	CurrentTasks map[int][]map[string]interface{}
-	CurrentMu    sync.RWMutex
+	// CurrentMu guards the transfer meter below (speed bookkeeping).
+	CurrentMu sync.RWMutex
 
 	RetrySourceTaskID         int64
 	RetryStatuses             []taskStatus
@@ -81,7 +81,6 @@ func newJobTask(taskID int64, jc *JobClient) *JobTask {
 		QueueNum:       0,
 		scanSem:        make(chan struct{}, scanConcurrencyLimit()),
 		scanBranchSem:  make(chan struct{}, scanConcurrencyLimit()),
-		CurrentTasks:   make(map[int][]map[string]interface{}),
 	}
 	jt.ctx, jt.cancel = newTaskContext(config.GetConfig().Server.Timeout)
 	jt.AlistClient = GetClientByIDContext(jt.ctx, util.ToInt64(job["alistId"]))
@@ -195,9 +194,6 @@ func (jt *JobTask) ensureRuntimeLocked() {
 	}
 	if jt.scanBranchSem == nil {
 		jt.scanBranchSem = make(chan struct{}, scanConcurrencyLimit())
-	}
-	if jt.CurrentTasks == nil {
-		jt.CurrentTasks = make(map[int][]map[string]interface{})
 	}
 	if jt.ctx == nil || jt.cancel == nil {
 		jt.ctx, jt.cancel = newTaskContext(config.GetConfig().Server.Timeout)

@@ -201,6 +201,8 @@ docker run -d \
 | `OPENSYNC_COPY_CONCURRENCY` | `5` | 单个任务的复制并发数，范围 `1` 到 `100` |
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | 单个任务的扫描并发数，范围 `1` 到 `20` |
 | `OPENSYNC_MAX_RETRIES` | `2` | 单个复制项失败后的最大自动重试次数，`0` 表示不自动重试 |
+| `OPENSYNC_ALLOW_INTERNAL_WEBHOOK` | `false` | 是否允许通知 Webhook 指向内网/本机地址以及使用明文 HTTP。通知自建内网服务（如 ntfy、Bark、Home Assistant）时需设为 `true` |
+| `OPENSYNC_TRUSTED_PROXIES` | 空 | 信任的反向代理 CIDR 列表（逗号分隔），仅这些来源的 `X-Forwarded-Proto` 会用于设置 Cookie Secure 属性 |
 | `OPENSYNC_CHOWN` | 自动 | 容器数据目录权限策略：`always` 强制递归修改，`never` 跳过，未设置时仅在目录所有者不匹配时修改 |
 
 如果需要使用配置文件，可以创建或通过系统设置页生成 `data/config.ini`：
@@ -218,9 +220,13 @@ task_timeout=48
 copy_concurrency=5
 scan_concurrency=8
 max_retries=2
+allow_internal_webhook=false
+trusted_proxies=
 ```
 
 系统设置页可在线调整历史任务保留、任务超时、复制并发、扫描并发和自动重试次数。历史任务会在保存配置时立即清理过期记录，并在每日凌晨 3:00 按保留天数再次清理。端口、日志等级等启动期配置仍建议通过环境变量或配置文件维护。
+
+> 注意：`data/config.ini` 一旦存在，除 `OPENSYNC_TLS_CERT` / `OPENSYNC_TLS_KEY` 外的环境变量在重启后将不再生效（配置文件优先）。通过系统设置页保存配置时，只会改写 `[opensync]` 段中 OpenSync 管理的键，手工添加的注释、未知键和其它分段会原样保留。
 
 ## 本地构建镜像
 
@@ -536,6 +542,8 @@ The timezone of scheduled tasks is always controlled by `TZ`; when `data/config.
 | `OPENSYNC_COPY_CONCURRENCY` | `5` | Copy concurrency per task, range `1` to `100` |
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | Scan concurrency per task, range `1` to `20` |
 | `OPENSYNC_MAX_RETRIES` | `2` | Max auto-retries after a copy item fails, `0` disables auto-retry |
+| `OPENSYNC_ALLOW_INTERNAL_WEBHOOK` | `false` | Allow notification webhooks to target internal/loopback addresses or plain HTTP. Set to `true` when notifying self-hosted LAN services such as ntfy, Bark, or Home Assistant |
+| `OPENSYNC_TRUSTED_PROXIES` | empty | Comma-separated CIDR list of trusted reverse proxies; only their `X-Forwarded-Proto` is honored for the Cookie Secure attribute |
 | `OPENSYNC_CHOWN` | auto | Data directory ownership policy: `always` forces a recursive chown, `never` skips it; unset only chowns when the owner does not match |
 
 To use a config file, create one or generate it from the System Settings page:
@@ -553,9 +561,13 @@ task_timeout=48
 copy_concurrency=5
 scan_concurrency=8
 max_retries=2
+allow_internal_webhook=false
+trusted_proxies=
 ```
 
 The System Settings page can adjust history retention, task timeout, copy concurrency, scan concurrency, and auto-retry counts online. Expired history records are cleaned immediately when settings are saved and again daily at 3:00 AM based on the retention days. Startup-time settings such as port and log level are still best maintained via environment variables or the config file.
+
+> Note: once `data/config.ini` exists, environment variables other than `OPENSYNC_TLS_CERT` / `OPENSYNC_TLS_KEY` no longer take effect after a restart (the config file wins). Saving settings from the System Settings page only rewrites the keys OpenSync manages inside `[opensync]`; comments, unknown keys, and other sections are preserved verbatim.
 
 ## Build the Image Locally
 

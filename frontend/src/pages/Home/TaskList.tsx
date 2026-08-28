@@ -247,7 +247,7 @@ function RealtimeTaskCard({
       }
     }, 1000);
     return () => { clearInterval(tickID); };
-  }, [currentTask.createTime, currentTask.taskId]);
+  }, []);
 
   // 计算各 tab 标签的计数，确保与分页器使用同步数据源，避免 React 状态更新一帧滞后导致不一致
   const getTabCount = (tabKey: number): number => {
@@ -370,6 +370,7 @@ export default function TaskList({
   const listLoadingRequestRef = useRef(0);
   const listAbortRef = useRef<AbortController | null>(null);
   const listFetchingRef = useRef(false);
+  const inFlightParamsRef = useRef<string | null>(null);
   const showRealtime = view === 'realtime' && active;
   const showHistory = view === 'history' && active;
   const { currentTask, refreshCurrentTask } = useRealtimeTask(jobId, showRealtime);
@@ -391,10 +392,18 @@ export default function TaskList({
 
   const fetchList = useCallback(async (showLoading = false) => {
     if (!jobId) return;
-    // Skip while a previous request is still in flight so a poll tick doesn't
-    // cancel the in-flight request (which still runs the DB query server-side).
-    if (listFetchingRef.current) return;
+    const paramsKey = JSON.stringify([
+      jobId, pageSize, page, historyStatusFilter, historyKeywordFilter,
+      historyTimeRange?.[0]?.valueOf(), historyTimeRange?.[1]?.valueOf(),
+    ]);
+    // Same-params poll tick: skip so the poll doesn't cancel the in-flight
+    // request (which still runs the DB query server-side). Changed params
+    // (page/filter/job): abort the stale request and refetch, otherwise the
+    // old response would land on the new page's UI.
+    if (listFetchingRef.current && inFlightParamsRef.current === paramsKey) return;
+    listAbortRef.current?.abort();
     listFetchingRef.current = true;
+    inFlightParamsRef.current = paramsKey;
     const controller = new AbortController();
     listAbortRef.current = controller;
     const requestID = ++listRequestRef.current;
@@ -432,6 +441,7 @@ export default function TaskList({
       }
     } finally {
       listFetchingRef.current = false;
+      inFlightParamsRef.current = null;
       if (showLoading && loadingRequestID === listLoadingRequestRef.current) {
         setLoading(false);
       }

@@ -80,8 +80,10 @@ func GetNotifyList() []map[string]interface{} {
 }
 
 // notifySecretKeys are param keys whose values are redacted in list responses.
+// body is included because request-body templates commonly embed tokens; the
+// stored value is restored for editing via resolveNotifyParams.
 var notifySecretKeys = map[int][]string{
-	0: {"url", "headers"},           // custom webhook: URL may embed token, headers carry auth
+	0: {"url", "headers", "body"},   // custom webhook: URL may embed token, headers/body carry auth
 	1: {"sendKey"},                  // Server酱
 	2: {"url", "webhook"},           // 钉钉 (access_token in URL query)
 	3: {"corpsecret", "corpSecret"}, // 企业微信应用密钥
@@ -89,6 +91,11 @@ var notifySecretKeys = map[int][]string{
 }
 
 const notifyRedactionMarker = "****"
+
+// notifyBodyRedacted replaces a request-body template in list responses. It
+// contains the standard marker so resolveNotifyParams restores the stored
+// template on edit.
+const notifyBodyRedacted = "******"
 
 func maskSecretValue(value string) string {
 	if len(value) <= 4 {
@@ -125,9 +132,12 @@ func maskNotifyURL(rawURL string) string {
 		u.RawQuery = q.Encode()
 	}
 	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(segs) > 0 {
+	if len(segs) > 0 && segs[len(segs)-1] != "" {
 		last := segs[len(segs)-1]
-		if len(last) >= 16 {
+		// Lark-style webhooks put the token in the final path segment. The old
+		// 16-char threshold let short tokens through; 12 still keeps short
+		// human-readable paths visible while masking credential-sized segments.
+		if len(last) >= 12 {
 			segs[len(segs)-1] = maskSecretValue(last)
 			u.Path = "/" + strings.Join(segs, "/")
 		}
@@ -153,6 +163,10 @@ func redactNotifyParams(method int, paramsStr string) string {
 		switch key {
 		case "headers":
 			params[key] = ""
+		case "body":
+			// Unlike sendKey-style masks, no suffix is kept: a body template
+			// may embed a token at any position.
+			params[key] = notifyBodyRedacted
 		case "url", "webhook":
 			params[key] = maskNotifyURL(s)
 		default:
@@ -184,7 +198,7 @@ func isMaskedSecretValue(value string) bool {
 // them.
 func resolveNotifyParams(notify map[string]interface{}) (map[string]interface{}, error) {
 	method := util.ToInt(notify["method"])
-	incoming, err := parseNotifyParams(fmt.Sprintf("%v", notify["params"]))
+	incoming, err := notifyParamsValue(notify["params"])
 	if err != nil {
 		return nil, err
 	}
@@ -293,18 +307,38 @@ func validateNotifyHTTPSURL(rawURL string) error {
 	return nil
 }
 
+// notifyParamsValue accepts params either as an already-parsed JSON object or
+// as a serialized JSON string, so callers sending either shape get consistent
+// validation instead of a raw 500.
+func notifyParamsValue(value interface{}) (map[string]interface{}, error) {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		return v, nil
+	case string:
+		return parseNotifyParams(v)
+	default:
+		return parseNotifyParams(fmt.Sprintf("%v", value))
+	}
+}
+
 // AddNewNotify adds a new notify config
 func AddNewNotify(notify map[string]interface{}) {
-	method := util.ToInt(notify["method"])
-	params, err := parseNotifyParams(fmt.Sprintf("%v", notify["params"]))
+	params, err := notifyParamsValue(notify["params"])
 	if err != nil {
 		panic(err.Error())
 	}
+	method := util.ToInt(notify["method"])
+	notify["method"] = method
+	notify["enable"] = util.ToInt(notify["enable"])
 	if err := validateNotifyParams(method, params); err != nil {
 		panicPublic(err.Error())
 	}
-	_, err = mapper.AddNotify(notify)
+	out, err := json.Marshal(params)
 	if err != nil {
+		panic(err.Error())
+	}
+	notify["params"] = string(out)
+	if _, err := mapper.AddNotify(notify); err != nil {
 		panic(err.Error())
 	}
 }
@@ -333,17 +367,13 @@ func EditNotify(notify map[string]interface{}) {
 // UpdateNotifyStatus updates notify enable status
 func UpdateNotifyStatus(notifyID int64, enable int) {
 	err := mapper.UpdateNotifyStatus(notifyID, enable)
-	if err != nil {
-		panic(err.Error())
-	}
+	panicPublicIf(err, msg.NotifyNotFound)
 }
 
 // DeleteNotify deletes a notify config
 func DeleteNotify(notifyID int64) {
 	err := mapper.DeleteNotify(notifyID)
-	if err != nil {
-		panic(err.Error())
-	}
+	panicPublicIf(err, msg.NotifyNotFound)
 }
 
 // TestNotify sends a test notification. Secrets that were redacted in the
@@ -451,8 +481,7 @@ func SendTaskNotification(taskID int64, status int, taskNum map[string]interface
 
 // sendNotify sends a notification via the configured method
 func sendNotify(notify map[string]interface{}, title, content string, needNotSync bool) {
-	paramsStr := fmt.Sprintf("%v", notify["params"])
-	params, err := parseNotifyParams(paramsStr)
+	params, err := notifyParamsValue(notify["params"])
 	if err != nil {
 		panic(err.Error())
 	}
@@ -696,9 +725,9 @@ func sendServerChan(client *http.Client, params map[string]interface{}, title, c
 
 	var urlStr string
 	if version == "v3" {
-		urlStr = fmt.Sprintf("https://sctapi.ftqq.com/%s.send", sendKey)
+		urlStr = fmt.Sprintf("https://sctapi.ftqq.com/%s.send", url.PathEscape(sendKey))
 	} else {
-		urlStr = fmt.Sprintf("https://sc.ftqq.com/%s.send", sendKey)
+		urlStr = fmt.Sprintf("https://sc.ftqq.com/%s.send", url.PathEscape(sendKey))
 	}
 
 	body := map[string]string{

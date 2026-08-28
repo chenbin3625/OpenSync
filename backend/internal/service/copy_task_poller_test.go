@@ -42,7 +42,7 @@ func TestCopyMonitorPollTaskInfo404MarksSuccessWhenDstExists(t *testing.T) {
 	client := &copyItemTestClient{
 		fileExists: true,
 		taskInfoFn: func(int) (map[string]interface{}, error) {
-			return nil, errors.New("404 not found")
+			return nil, &alistStatusError{httpStatus: 404}
 		},
 	}
 	monitor, watch := newCopyMonitorWatch(client)
@@ -62,7 +62,7 @@ func TestCopyMonitorPollTaskInfo404MarksFailedWhenDstMissing(t *testing.T) {
 	client := &copyItemTestClient{
 		fileExists: false,
 		taskInfoFn: func(int) (map[string]interface{}, error) {
-			return nil, errors.New("404 not found")
+			return nil, &alistStatusError{httpStatus: 404}
 		},
 	}
 	monitor, watch := newCopyMonitorWatch(client)

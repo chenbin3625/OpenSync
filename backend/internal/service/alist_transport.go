@@ -3,7 +3,6 @@ package service
 import (
 	"crypto/tls"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -91,6 +90,13 @@ func (t *protocolTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			return resp, nil
 		}
 		t.markHTTP3Failed(req.URL.Host)
+		if !isReplayableAlistRequest(req) {
+			// Do not transparently resend a mutating request over a new
+			// protocol: the server may have already executed it. h3Failed is
+			// recorded, so the caller's bounded retry (or the next request)
+			// goes over HTTP/1.1 or HTTP/2 instead.
+			return nil, err
+		}
 		retry, retryErr := cloneHTTPRequest(req)
 		if retryErr != nil {
 			return nil, err
@@ -106,6 +112,28 @@ func (t *protocolTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		t.markHTTP3(req.URL.Host)
 	}
 	return resp, nil
+}
+
+// mutatingAlistPaths are AList endpoints whose transparent replay after an
+// HTTP/3 transport failure could duplicate a server-side operation. The
+// request may have been received before the connection failed. Everything else
+// (including the POST-based read APIs such as /api/fs/list) is replayed, since
+// re-running a read is harmless and keeps scans resilient to QUIC blips.
+var mutatingAlistPaths = map[string]bool{
+	"/api/fs/copy":   true,
+	"/api/fs/move":   true,
+	"/api/fs/remove": true,
+}
+
+func isReplayableAlistRequest(req *http.Request) bool {
+	switch req.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return true
+	}
+	if strings.HasPrefix(req.URL.Path, "/api/admin/task/") {
+		return false
+	}
+	return !mutatingAlistPaths[req.URL.Path]
 }
 
 func (t *protocolTripper) preferHTTP3(host string) bool {
@@ -152,11 +180,12 @@ func (t *protocolTripper) CloseIdleConnections() {
 	}
 }
 
+// Close releases idle connections. HTTP/3 connections are only closed while
+// idle: http3.Transport.Close would also kill active QUIC connections, which
+// breaks in-flight requests on other tasks when a cached client is replaced or
+// evicted. Idle QUIC connections time out on their own.
 func (t *protocolTripper) Close() error {
 	t.CloseIdleConnections()
-	if closer, ok := t.h3.(io.Closer); ok {
-		return closer.Close()
-	}
 	return nil
 }
 

@@ -95,9 +95,16 @@ type SystemSettings struct {
 	MaxRetries      int `json:"maxRetries"`
 }
 
-// GetPasswordStr gets or generates the encryption secret key
+// GetPasswordStr gets or generates the encryption secret key. Persistence is
+// mandatory: a key that only exists in memory would rotate on restart and
+// invalidate every stored cookie and encrypted token, so a write failure is
+// fatal at startup.
 func GetPasswordStr() string {
-	return crypto.ReadOrSetFile("data/secret.key", crypto.GeneratePassword(256), false)
+	key, err := crypto.ReadOrSetFile("data/secret.key", crypto.GeneratePassword(256), false)
+	if err != nil {
+		log.Fatalf("Failed to persist data/secret.key: %v", err)
+	}
+	return key
 }
 
 // GetConfig returns the global config (singleton)
@@ -119,19 +126,23 @@ func GetConfig() *Config {
 	dbname := "data/openSync.db"
 
 	sCfg := ServerConfig{
-		Bind:                 defaultBind,
-		Port:                 defaultPort,
-		Expires:              defaultExpires,
-		LogLevel:             defaultLogLevel,
-		ConsoleLevel:         defaultConsoleLevel,
-		LogSave:              defaultLogSave,
-		TaskSave:             defaultTaskSave,
-		Timeout:              defaultTaskTimeout,
-		CopyConcurrency:      DefaultCopyConcurrency,
-		ScanConcurrency:      DefaultScanConcurrency,
-		MaxRetries:           DefaultMaxRetries,
-		PasswdStr:            passwdStr,
-		AllowInternalWebhook: true,
+		Bind:            defaultBind,
+		Port:            defaultPort,
+		Expires:         defaultExpires,
+		LogLevel:        defaultLogLevel,
+		ConsoleLevel:    defaultConsoleLevel,
+		LogSave:         defaultLogSave,
+		TaskSave:        defaultTaskSave,
+		Timeout:         defaultTaskTimeout,
+		CopyConcurrency: DefaultCopyConcurrency,
+		ScanConcurrency: DefaultScanConcurrency,
+		MaxRetries:      DefaultMaxRetries,
+		PasswdStr:       passwdStr,
+		// Default false: webhook targets must be public HTTPS endpoints unless
+		// the operator explicitly allows internal/LAN addresses and plain HTTP via
+		// config.ini or OPENSYNC_ALLOW_INTERNAL_WEBHOOK. NAS deployments that
+		// notify self-hosted LAN services need to opt in explicitly.
+		AllowInternalWebhook: false,
 	}
 
 	if _, err := os.Stat("data/config.ini"); err == nil {
@@ -373,39 +384,94 @@ func boolConfigValue(value string, fallback bool) bool {
 	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
+// configManagedKeys are the [opensync] keys the server writes itself. Any
+// other line in config.ini — comments, unknown keys, other sections — is
+// preserved verbatim when settings are updated at runtime.
+var configManagedKeys = []string{
+	"bind", "port", "expires", "log_level", "console_level", "log_save",
+	"task_save", "task_timeout", "copy_concurrency", "scan_concurrency",
+	"max_retries", "trusted_proxies", "allow_internal_webhook",
+}
+
+func configManagedValues(sCfg ServerConfig) map[string]string {
+	return map[string]string{
+		"bind":                   sCfg.Bind,
+		"port":                   strconv.Itoa(sCfg.Port),
+		"expires":                strconv.Itoa(sCfg.Expires),
+		"log_level":              strconv.Itoa(sCfg.LogLevel),
+		"console_level":          strconv.Itoa(sCfg.ConsoleLevel),
+		"log_save":               strconv.Itoa(sCfg.LogSave),
+		"task_save":              strconv.Itoa(sCfg.TaskSave),
+		"task_timeout":           strconv.Itoa(sCfg.Timeout),
+		"copy_concurrency":       strconv.Itoa(sCfg.CopyConcurrency),
+		"scan_concurrency":       strconv.Itoa(sCfg.ScanConcurrency),
+		"max_retries":            strconv.Itoa(sCfg.MaxRetries),
+		"trusted_proxies":        strings.Join(sCfg.TrustedProxies, ","),
+		"allow_internal_webhook": strconv.FormatBool(sCfg.AllowInternalWebhook),
+	}
+}
+
+// writeConfigFile rewrites the [opensync] section of data/config.ini while
+// preserving comments, unknown keys, and any other sections the operator added.
 func writeConfigFile(sCfg ServerConfig) error {
 	if err := os.MkdirAll("data", 0755); err != nil {
 		return err
 	}
-	content := fmt.Sprintf(`[opensync]
-bind=%s
-port=%d
-expires=%d
-log_level=%d
-console_level=%d
-log_save=%d
-task_save=%d
-task_timeout=%d
-copy_concurrency=%d
-scan_concurrency=%d
-max_retries=%d
-trusted_proxies=%s
-allow_internal_webhook=%t
-`,
-		sCfg.Bind,
-		sCfg.Port,
-		sCfg.Expires,
-		sCfg.LogLevel,
-		sCfg.ConsoleLevel,
-		sCfg.LogSave,
-		sCfg.TaskSave,
-		sCfg.Timeout,
-		sCfg.CopyConcurrency,
-		sCfg.ScanConcurrency,
-		sCfg.MaxRetries,
-		strings.Join(sCfg.TrustedProxies, ","),
-		sCfg.AllowInternalWebhook,
-	)
+	values := configManagedValues(sCfg)
+	pending := make(map[string]string, len(values))
+	for k, v := range values {
+		pending[k] = v
+	}
+
+	var out []string
+	inOpensync := false
+	if existing, err := os.ReadFile("data/config.ini"); err == nil {
+		for _, line := range strings.Split(string(existing), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+				// Append managed keys that were missing before leaving the
+				// [opensync] section.
+				if inOpensync && len(pending) > 0 {
+					for _, key := range configManagedKeys {
+						if v, ok := pending[key]; ok {
+							out = append(out, key+"="+v)
+							delete(pending, key)
+						}
+					}
+				}
+				inOpensync = trimmed == "[opensync]"
+				out = append(out, line)
+				continue
+			}
+			if inOpensync {
+				if key, _, isKV := strings.Cut(trimmed, "="); isKV {
+					key = strings.TrimSpace(key)
+					if _, managed := pending[key]; managed {
+						out = append(out, key+"="+pending[key])
+						delete(pending, key)
+						continue
+					}
+				}
+			}
+			out = append(out, line)
+		}
+	}
+	if len(pending) > 0 {
+		if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
+			out = append(out, "")
+		}
+		out = append(out, "[opensync]")
+		for _, key := range configManagedKeys {
+			if v, ok := pending[key]; ok {
+				out = append(out, key+"="+v)
+			}
+		}
+	}
+	content := strings.Join(out, "\n")
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+
 	tmpFile, err := os.CreateTemp("data", "config.ini.*")
 	if err != nil {
 		return err

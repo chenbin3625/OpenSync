@@ -204,6 +204,10 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
         closed = true;
         cleanupStream();
         stopPolling();
+        // Also drop any in-flight polling request so its completion callback
+        // cannot touch state after teardown.
+        pollAbortRef.current?.abort();
+        inFlightRef.current = false;
       };
     }
 
@@ -212,6 +216,8 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
       closed = true;
       cleanupStream();
       stopPolling();
+      pollAbortRef.current?.abort();
+      inFlightRef.current = false;
     };
   }, [enabled, jobId, refreshCurrentTask]);
 

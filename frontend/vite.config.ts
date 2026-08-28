@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const webGitkeepPath = fileURLToPath(new URL('../backend/cmd/server/web/.gitkeep', import.meta.url))
+const backendWebDir = fileURLToPath(new URL('../backend/cmd/server/web', import.meta.url))
+const webGitkeepPath = `${backendWebDir}/.gitkeep`
 
 export default defineConfig({
   plugins: [
@@ -11,7 +12,11 @@ export default defineConfig({
     {
       name: 'preserve-go-embed-placeholder',
       closeBundle() {
-        mkdirSync(fileURLToPath(new URL('../backend/cmd/server/web', import.meta.url)), { recursive: true })
+        // emptyOutDir wipes the go:embed placeholder, restore it — but only
+        // when the backend tree actually exists next to the frontend (an
+        // independent frontend checkout must not sprout a backend/ directory).
+        if (!existsSync(backendWebDir)) return
+        mkdirSync(backendWebDir, { recursive: true })
         writeFileSync(webGitkeepPath, '')
       },
     },
@@ -33,7 +38,11 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return
-          if (id.includes('/react') || id.includes('/react-dom') || id.includes('/scheduler')) {
+          if (
+            id.includes('/node_modules/react/') ||
+            id.includes('/node_modules/react-dom/') ||
+            id.includes('/node_modules/scheduler/')
+          ) {
             return 'react-vendor'
           }
           if (id.includes('/@ant-design/icons')) {

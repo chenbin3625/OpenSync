@@ -23,6 +23,13 @@ func TestEditEnabledJobClientUpdatesNextRunWithoutBreakingCurrentTask(t *testing
 	mapper.InitSQL()
 	resetJobClientsForTest()
 
+	// AddJobClient validates that the engine exists before inserting the job.
+	oldGetAlist := getAlistByID
+	getAlistByID = func(alistID int64) (map[string]interface{}, error) {
+		return map[string]interface{}{"id": alistID, "url": "https://alist.test", "token": "t"}, nil
+	}
+	defer func() { getAlistByID = oldGetAlist }()
+
 	AddJobClient(map[string]interface{}{
 		"enable":        1,
 		"remark":        "old",

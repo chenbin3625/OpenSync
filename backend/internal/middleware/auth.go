@@ -27,8 +27,8 @@ var sc *securecookie.SecureCookie
 var scMu sync.RWMutex
 
 const (
-	authUserCacheTTL          = 15 * time.Second
-	maxAuthUserCacheEntries   = 1024
+	authUserCacheTTL        = 15 * time.Second
+	maxAuthUserCacheEntries = 1024
 )
 
 type authUserCacheEntry struct {
@@ -191,15 +191,17 @@ func ClearAuthUserCache() {
 	authUserCacheMu.Unlock()
 }
 
-// SetAuthCookie sets the signed auth cookie
-func SetAuthCookie(c *gin.Context, user map[string]interface{}) {
+// SetAuthCookie sets the signed auth cookie. An error is returned so callers
+// can fail the login instead of responding with code 200 but no cookie, which
+// leaves the client logged out on the very next request.
+func SetAuthCookie(c *gin.Context, user map[string]interface{}) error {
 	cfg := config.GetConfig()
 	cookieData := NewCookieUser(user)
 	jsonData, _ := json.Marshal(cookieData)
 	encoded, err := currentSecureCookie().Encode(cookieName, string(jsonData))
 	if err != nil {
 		log.Printf("Failed to encode cookie: %v", err)
-		return
+		return err
 	}
 
 	expires := time.Now().Add(time.Duration(cfg.Server.Expires) * 24 * time.Hour)
@@ -213,6 +215,7 @@ func SetAuthCookie(c *gin.Context, user map[string]interface{}) {
 		Secure:   isSecureRequest(c),
 		SameSite: http.SameSiteLaxMode,
 	})
+	return nil
 }
 
 // ClearAuthCookie removes the auth cookie
@@ -253,9 +256,10 @@ func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 		// Frontend routes are public entry points; authentication is enforced by
-		// the API routes and the client-side guards.
+		// the API routes and the client-side guards. The noAuth match is anchored
+		// so a hypothetical future /svr/noAuthXxx route cannot sneak past auth.
 		if (path != "/svr" && !strings.HasPrefix(path, "/svr/")) ||
-			strings.HasPrefix(path, "/svr/noAuth") {
+			path == "/svr/noAuth" || strings.HasPrefix(path, "/svr/noAuth/") {
 			c.Next()
 			return
 		}

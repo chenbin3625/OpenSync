@@ -6,7 +6,7 @@ import (
 	"opensync/internal/model"
 	"opensync/internal/msg"
 	"opensync/internal/service"
-	"strconv"
+
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,13 +14,8 @@ import (
 
 // StreamJobCurrent handles GET /svr/job/stream as Server-Sent Events.
 func StreamJobCurrent(c *gin.Context) {
-	idStr := c.Query("id")
-	if idStr == "" {
-		c.JSON(http.StatusOK, model.Error(msg.LostPart))
-		return
-	}
-	jobID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || jobID <= 0 {
+	jobID, err := parseRequiredID(c.Query("id"), "id")
+	if err != nil {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
@@ -31,10 +26,14 @@ func StreamJobCurrent(c *gin.Context) {
 		return
 	}
 
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	// Validate the job and build the first frame BEFORE switching the response
+	// to SSE, so an unknown job still returns a normal JSON error instead of a
+	// JSON body glued onto an event-stream response.
+	initialPayload, err := service.BuildJobProgressStreamPayload(jobID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.Error("failed to build progress payload"))
+		return
+	}
 
 	updates := service.SubscribeJobProgress(jobID)
 	if updates == nil {
@@ -42,6 +41,10 @@ func StreamJobCurrent(c *gin.Context) {
 		return
 	}
 	defer service.UnsubscribeJobProgress(jobID, updates)
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
 
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
@@ -55,10 +58,8 @@ func StreamJobCurrent(c *gin.Context) {
 	}
 
 	service.TouchJobWatching(jobID)
-	if payload, err := service.BuildJobProgressStreamPayload(jobID); err == nil {
-		if !writeEvent(payload) {
-			return
-		}
+	if !writeEvent(initialPayload) {
+		return
 	}
 
 	for {

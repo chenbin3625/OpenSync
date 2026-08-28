@@ -157,6 +157,38 @@ func (c *AlistClient) startRequest(ctx context.Context, method, apiPath string, 
 	return resp, nil
 }
 
+// alistStatusError carries the HTTP status and AList business code of a failed
+// request so callers can branch on machine-readable codes instead of matching
+// error text. Error() keeps the historical message format.
+type alistStatusError struct {
+	httpStatus int
+	alistCode  int
+	message    string
+}
+
+func (e *alistStatusError) Error() string {
+	if e.alistCode != 0 {
+		return msg.AlistFailCodeReason(e.alistCode, e.message)
+	}
+	return fmt.Sprintf("%s (HTTP %d)", msg.CodeNot200, e.httpStatus)
+}
+
+// isAlistObjectNotFound reports whether err means "the requested path does not
+// exist": an HTTP 404, an AList business code 404, or AList's historical
+// 500-with-"object not found" response for a missing object. Deliberately
+// narrower than matching any "not found" text — infrastructure failures like
+// "storage not found" or a proxy 404 page must surface as real errors.
+func isAlistObjectNotFound(err error) bool {
+	var statusErr *alistStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	if statusErr.httpStatus == http.StatusNotFound || statusErr.alistCode == http.StatusNotFound {
+		return true
+	}
+	return statusErr.alistCode == 500 && strings.Contains(strings.ToLower(statusErr.message), "object not found")
+}
+
 func (c *AlistClient) doRequestContextLimit(ctx context.Context, method, apiPath string, data interface{}, params map[string]string, responseLimit int64) (json.RawMessage, error) {
 	resp, err := c.startRequest(ctx, method, apiPath, data, params)
 	if err != nil {
@@ -170,7 +202,7 @@ func (c *AlistClient) doRequestContextLimit(ctx context.Context, method, apiPath
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s (HTTP %d)", msg.CodeNot200, resp.StatusCode)
+		return nil, &alistStatusError{httpStatus: resp.StatusCode}
 	}
 
 	var res alistResponse
@@ -191,7 +223,7 @@ func (c *AlistClient) checkAlistCode(code int, message string) error {
 		return errors.New(msg.AlistUnAuth)
 	}
 	if code != 200 {
-		return errors.New(msg.AlistFailCodeReason(code, message))
+		return &alistStatusError{alistCode: code, message: message}
 	}
 	return nil
 }
@@ -530,8 +562,7 @@ func (c *AlistClient) FileGetContext(ctx context.Context, dir, name string) (boo
 	filePath := dir + "/" + strings.TrimSpace(name)
 	_, err := c.PostContext(ctx, "/api/fs/get", alistPathRequest{Path: filePath}, nil)
 	if err != nil {
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "404") || strings.Contains(strings.ToLower(errMsg), "not found") {
+		if isAlistObjectNotFound(err) {
 			return false, nil
 		}
 		return false, err

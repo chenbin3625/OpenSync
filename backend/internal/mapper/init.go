@@ -2,6 +2,7 @@ package mapper
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -18,6 +19,12 @@ func InitSQL() {
 	err := db.QueryRow("SELECT name FROM sqlite_master WHERE name='user_list'").Scan(&name)
 
 	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			// A transient failure (locked DB, I/O error) must not be mistaken
+			// for an empty database, or the "first run" branch would try to
+			// re-create the schema on top of existing data.
+			log.Fatalf("Failed to inspect database schema: %v", err)
+		}
 		// First run - create all tables
 		stmts := []string{
 			fmt.Sprintf(`CREATE TABLE user_list(
@@ -172,7 +179,9 @@ func ensureIndexes(db *sql.DB) {
 	}
 	for _, stmt := range indexes {
 		if _, err := db.Exec(stmt); err != nil {
-			log.Printf("Index creation failed: %v\nSQL: %s", err, stmt)
+			// Non-fatal (the schema works without indexes), but loud: silent
+			// degradation would show up only as unexplained slowness.
+			log.Printf("WARNING: index creation failed, query performance may degrade: %v\nSQL: %s", err, stmt)
 		}
 	}
 }

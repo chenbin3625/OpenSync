@@ -27,11 +27,26 @@ func AddNotify(c *gin.Context) {
 	}
 
 	notify := *req.Notify
-	if _, hasEnable := notify["enable"]; hasEnable {
-		service.AddNewNotify(notify)
-	} else {
-		service.TestNotify(notify)
+	if _, hasEnable := notify["enable"]; !hasEnable {
+		// A create request without `enable` is ambiguous; test sends belong on
+		// POST /svr/notify/test so this cannot silently fire a real message.
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
+		return
 	}
+	service.AddNewNotify(notify)
+	c.JSON(http.StatusOK, model.Success(nil))
+}
+
+// TestNotify handles POST /svr/notify/test
+func TestNotify(c *gin.Context) {
+	var req struct {
+		Notify *map[string]interface{} `json:"notify"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Notify == nil {
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
+		return
+	}
+	service.TestNotify(*req.Notify)
 	c.JSON(http.StatusOK, model.Success(nil))
 }
 
