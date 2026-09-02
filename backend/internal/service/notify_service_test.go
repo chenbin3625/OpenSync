@@ -136,6 +136,27 @@ func TestValidateNotifyParamsAcceptsCompleteConfigs(t *testing.T) {
 	}
 }
 
+func TestValidateNotifyParamsAcceptsInternalHTTPSWebhook(t *testing.T) {
+	// A reverse proxy can expose an HTTPS hostname that resolves to a LAN
+	// address. Such targets are valid for self-hosted services and must not be
+	// rejected solely because of the resolved address.
+	if err := validateNotifyParams(0, map[string]interface{}{
+		"url":    "https://ntfy.lan.example:8443/publish",
+		"method": "POST",
+	}); err != nil {
+		t.Fatalf("validateNotifyParams() error = %v, want nil for internal HTTPS webhook", err)
+	}
+}
+
+func TestValidateNotifyParamsAcceptsHTTPWebhook(t *testing.T) {
+	if err := validateNotifyParams(0, map[string]interface{}{
+		"url":    "http://127.0.0.1:8080/notify",
+		"method": "POST",
+	}); err != nil {
+		t.Fatalf("validateNotifyParams() error = %v, want nil for HTTP webhook", err)
+	}
+}
+
 func TestSendWebhookCustomBodyEscapesPlaceholderValues(t *testing.T) {
 	var got map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -164,6 +185,27 @@ func TestSendWebhookCustomBodyEscapesPlaceholderValues(t *testing.T) {
 	want := `title "quoted": content with "quotes"`
 	if got["text"] != want {
 		t.Fatalf("text = %q, want %q", got["text"], want)
+	}
+}
+
+func TestNotifyHTTPClientAllowsLoopbackWebhook(t *testing.T) {
+	received := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- struct{}{}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("sendWebhook() panic = %v, want loopback target to be reachable", recovered)
+		}
+	}()
+	sendWebhook(notifyHTTPClient, map[string]interface{}{"url": server.URL}, "title", "content")
+	select {
+	case <-received:
+	default:
+		t.Fatal("webhook handler was not called")
 	}
 }
 

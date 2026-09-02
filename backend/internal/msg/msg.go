@@ -41,7 +41,7 @@ const (
 	KeyWrong                = "恢复密钥错误"
 	PasswdWrongMaxTime      = "5分钟内密码错误超过3次，请稍后再试"
 	NotifyTestMsg           = "这是一条由您自己发送的OpenSync测试消息，当你看到这条消息，说明你的配置是正确可用的。"
-	NotifyURLInvalid        = "Webhook URL必须是有效的HTTPS地址"
+	NotifyURLInvalid        = "Webhook URL必须是有效的 HTTP 或 HTTPS URL"
 	NotifyMethodInvalid     = "通知方式不支持"
 	NotifyParamInvalid      = "通知配置参数不完整"
 	NotifySendFail          = "通知发送失败，请检查配置或稍后重试"

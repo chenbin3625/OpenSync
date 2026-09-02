@@ -50,8 +50,8 @@ const displayWebhookUrl = (value: string): string => {
   }
 };
 
-// URL validation rules. Webhook URLs commonly embed access tokens, so require
-// HTTPS for notification methods that store a webhook URL directly.
+// URL validation rules. Custom webhooks may target self-hosted HTTP(S)
+// services; provider-specific webhook URLs retain their HTTPS requirement.
 const urlRules = (requireHttps: boolean) => [
   { required: true, message: '请输入 URL' },
   { type: 'url' as const, message: '请输入合法 URL' },
@@ -360,7 +360,7 @@ export default function Notify() {
       case 0:
         return (
           <>
-            <Form.Item name="url" label="URL" rules={urlRules(true)}><Input /></Form.Item>
+            <Form.Item name="url" label="URL" rules={urlRules(false)}><Input /></Form.Item>
             <Form.Item name="httpMethod" label="HTTP方法" initialValue="POST">
               <Select options={[{ value: 'GET' }, { value: 'POST' }, { value: 'PUT' }]} />
             </Form.Item>

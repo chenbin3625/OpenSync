@@ -31,8 +31,6 @@ type ServerConfig struct {
 	// header may be honored when deciding whether to mark the auth cookie
 	// Secure behind a TLS-terminating reverse proxy.
 	TrustedProxies []string
-	// AllowInternalWebhook allows webhook notifications to reach private/LAN IP addresses and HTTP URLs.
-	AllowInternalWebhook bool
 	// TLSCertFile and TLSKeyFile enable HTTPS/HTTP2 and opportunistic HTTP3.
 	TLSCertFile string
 	TLSKeyFile  string
@@ -138,11 +136,6 @@ func GetConfig() *Config {
 		ScanConcurrency: DefaultScanConcurrency,
 		MaxRetries:      DefaultMaxRetries,
 		PasswdStr:       passwdStr,
-		// Default false: webhook targets must be public HTTPS endpoints unless
-		// the operator explicitly allows internal/LAN addresses and plain HTTP via
-		// config.ini or OPENSYNC_ALLOW_INTERNAL_WEBHOOK. NAS deployments that
-		// notify self-hosted LAN services need to opt in explicitly.
-		AllowInternalWebhook: false,
 	}
 
 	if _, err := os.Stat("data/config.ini"); err == nil {
@@ -185,9 +178,6 @@ func GetConfig() *Config {
 			if v, ok := opensync["trusted_proxies"]; ok {
 				sCfg.TrustedProxies = parseTrustedProxies(v)
 			}
-			if v, ok := opensync["allow_internal_webhook"]; ok {
-				sCfg.AllowInternalWebhook = boolConfigValue(v, sCfg.AllowInternalWebhook)
-			}
 		}
 	} else {
 		// Read from environment variables
@@ -203,7 +193,6 @@ func GetConfig() *Config {
 		sCfg.ScanConcurrency = envIntConfigValue("OPENSYNC_SCAN_CONCURRENCY", sCfg.ScanConcurrency)
 		sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
 		sCfg.TrustedProxies = parseTrustedProxies(os.Getenv("OPENSYNC_TRUSTED_PROXIES"))
-		sCfg.AllowInternalWebhook = envBoolConfigValue("OPENSYNC_ALLOW_INTERNAL_WEBHOOK", sCfg.AllowInternalWebhook)
 	}
 	sCfg.TLSCertFile = envStringConfigValue("OPENSYNC_TLS_CERT", sCfg.TLSCertFile)
 	sCfg.TLSKeyFile = envStringConfigValue("OPENSYNC_TLS_KEY", sCfg.TLSKeyFile)
@@ -368,46 +357,29 @@ func envStringConfigValue(envName string, fallback string) string {
 	return stringConfigValue(os.Getenv(envName), fallback)
 }
 
-func envBoolConfigValue(envName string, fallback bool) bool {
-	value := os.Getenv(envName)
-	if value == "" {
-		return fallback
-	}
-	return boolConfigValue(value, fallback)
-}
-
-func boolConfigValue(value string, fallback bool) bool {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if value == "" {
-		return fallback
-	}
-	return value == "1" || value == "true" || value == "yes" || value == "on"
-}
-
 // configManagedKeys are the [opensync] keys the server writes itself. Any
 // other line in config.ini — comments, unknown keys, other sections — is
 // preserved verbatim when settings are updated at runtime.
 var configManagedKeys = []string{
 	"bind", "port", "expires", "log_level", "console_level", "log_save",
 	"task_save", "task_timeout", "copy_concurrency", "scan_concurrency",
-	"max_retries", "trusted_proxies", "allow_internal_webhook",
+	"max_retries", "trusted_proxies",
 }
 
 func configManagedValues(sCfg ServerConfig) map[string]string {
 	return map[string]string{
-		"bind":                   sCfg.Bind,
-		"port":                   strconv.Itoa(sCfg.Port),
-		"expires":                strconv.Itoa(sCfg.Expires),
-		"log_level":              strconv.Itoa(sCfg.LogLevel),
-		"console_level":          strconv.Itoa(sCfg.ConsoleLevel),
-		"log_save":               strconv.Itoa(sCfg.LogSave),
-		"task_save":              strconv.Itoa(sCfg.TaskSave),
-		"task_timeout":           strconv.Itoa(sCfg.Timeout),
-		"copy_concurrency":       strconv.Itoa(sCfg.CopyConcurrency),
-		"scan_concurrency":       strconv.Itoa(sCfg.ScanConcurrency),
-		"max_retries":            strconv.Itoa(sCfg.MaxRetries),
-		"trusted_proxies":        strings.Join(sCfg.TrustedProxies, ","),
-		"allow_internal_webhook": strconv.FormatBool(sCfg.AllowInternalWebhook),
+		"bind":             sCfg.Bind,
+		"port":             strconv.Itoa(sCfg.Port),
+		"expires":          strconv.Itoa(sCfg.Expires),
+		"log_level":        strconv.Itoa(sCfg.LogLevel),
+		"console_level":    strconv.Itoa(sCfg.ConsoleLevel),
+		"log_save":         strconv.Itoa(sCfg.LogSave),
+		"task_save":        strconv.Itoa(sCfg.TaskSave),
+		"task_timeout":     strconv.Itoa(sCfg.Timeout),
+		"copy_concurrency": strconv.Itoa(sCfg.CopyConcurrency),
+		"scan_concurrency": strconv.Itoa(sCfg.ScanConcurrency),
+		"max_retries":      strconv.Itoa(sCfg.MaxRetries),
+		"trusted_proxies":  strings.Join(sCfg.TrustedProxies, ","),
 	}
 }
 

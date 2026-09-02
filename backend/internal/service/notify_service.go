@@ -2,22 +2,18 @@ package service
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
-	"opensync/internal/config"
 	"opensync/internal/mapper"
 	"opensync/internal/model"
 	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -26,42 +22,12 @@ const maxNotifyResponseBytes = 1 << 20 // 1MB
 var notifyHTTPClient = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
+		// Webhook destinations may be self-hosted on a LAN or loopback address;
+		// do not reject them after DNS resolution.
 		MaxIdleConns:        50,
 		MaxIdleConnsPerHost: 10,
 		IdleConnTimeout:     90 * time.Second,
-		// DialContext intercepts the resolved address to block SSRF attempts
-		// (private/loopback/link-local targets) before any connection is made.
-		DialContext: ssrfSafeDialContext(&net.Dialer{Timeout: 15 * time.Second}),
 	},
-}
-
-// ssrfSafeDialContext wraps a dialer so that connections to non-routable or
-// internal IP ranges are rejected. The control runs after DNS resolution with
-// the resolved IP, which avoids TOCTOU gaps between resolving and dialing.
-func ssrfSafeDialContext(dialer *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	dialer.Control = func(network, address string, _ syscall.RawConn) error {
-		host, _, err := net.SplitHostPort(address)
-		if err != nil {
-			return err
-		}
-		ip := net.ParseIP(host)
-		if ip == nil {
-			return fmt.Errorf("invalid notify target address: %s", address)
-		}
-		if isBlockedNotifyIP(ip) {
-			return fmt.Errorf("notify target %s is not allowed", ip)
-		}
-		return nil
-	}
-	return dialer.DialContext
-}
-
-func isBlockedNotifyIP(ip net.IP) bool {
-	if config.GetConfig().Server.AllowInternalWebhook {
-		return ip.IsUnspecified()
-	}
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
 }
 
 // GetNotifyList returns notify list with secret fields redacted so tokens
@@ -284,13 +250,7 @@ func validateNotifyWebhookURL(rawURL string) error {
 		return errors.New(msg.NotifyURLInvalid)
 	}
 	scheme := strings.ToLower(u.Scheme)
-	if config.GetConfig().Server.AllowInternalWebhook {
-		if scheme == "http" || scheme == "https" {
-			return nil
-		}
-		return errors.New(msg.NotifyURLInvalid)
-	}
-	if scheme != "https" {
+	if scheme != "http" && scheme != "https" {
 		return errors.New(msg.NotifyURLInvalid)
 	}
 	return nil

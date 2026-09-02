@@ -65,9 +65,9 @@ OpenSync 是面向飞牛 fnOS / 飞牛 NAS、普通 NAS 和 Docker 环境的 ALi
 
 ## 自定义 Webhook 通知
 
-在通知配置页新增通知时，选择“自定义Webhook”即可接入支持 HTTPS 回调的消息服务或自动化平台。
+在通知配置页新增通知时，选择“自定义Webhook”即可接入支持 HTTP/HTTPS 回调的消息服务或自动化平台。
 
-- `URL` 为必填项，必须填写有效的 HTTPS Webhook 地址。
+- `URL` 为必填项，必须填写有效的 HTTP 或 HTTPS Webhook 地址，可指向内网或本机服务。
 - `HTTP方法` 支持 `GET`、`POST`、`PUT`，默认使用 `POST`。
 - `GET` 会把通知标题和内容作为 `title`、`content` 查询参数发送。
 - `POST` / `PUT` 默认以 `application/json` 发送请求体。
@@ -156,7 +156,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.11.2
+image: chenbin3625/opensync:1.12.1
 ```
 
 ## Docker 命令部署
@@ -201,7 +201,6 @@ docker run -d \
 | `OPENSYNC_COPY_CONCURRENCY` | `5` | 单个任务的复制并发数，范围 `1` 到 `100` |
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | 单个任务的扫描并发数，范围 `1` 到 `20` |
 | `OPENSYNC_MAX_RETRIES` | `2` | 单个复制项失败后的最大自动重试次数，`0` 表示不自动重试 |
-| `OPENSYNC_ALLOW_INTERNAL_WEBHOOK` | `false` | 是否允许通知 Webhook 指向内网/本机地址以及使用明文 HTTP。通知自建内网服务（如 ntfy、Bark、Home Assistant）时需设为 `true` |
 | `OPENSYNC_TRUSTED_PROXIES` | 空 | 信任的反向代理 CIDR 列表（逗号分隔），仅这些来源的 `X-Forwarded-Proto` 会用于设置 Cookie Secure 属性 |
 | `OPENSYNC_CHOWN` | 自动 | 容器数据目录权限策略：`always` 强制递归修改，`never` 跳过，未设置时仅在目录所有者不匹配时修改 |
 
@@ -220,7 +219,6 @@ task_timeout=48
 copy_concurrency=5
 scan_concurrency=8
 max_retries=2
-allow_internal_webhook=false
 trusted_proxies=
 ```
 
@@ -305,7 +303,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.11.2`
+- `chenbin3625/opensync:1.12.1`
 - `chenbin3625/opensync:1.10`
 
 镜像支持以下平台：
@@ -406,9 +404,9 @@ Adjust history retention, task timeout, copy/scan concurrency, and auto-retry co
 
 ## Custom Webhook Notifications
 
-When creating a notification on the config page, choose "Custom Webhook" to integrate an HTTPS-callback messaging service or automation platform.
+When creating a notification on the config page, choose "Custom Webhook" to integrate an HTTP/HTTPS-callback messaging service or automation platform.
 
-- `URL` is required and must be a valid HTTPS webhook address.
+- `URL` is required and must be a valid HTTP or HTTPS webhook address; internal and loopback services are supported.
 - `HTTP method` supports `GET`, `POST`, and `PUT`; defaults to `POST`.
 - `GET` sends the notification title and content as `title` / `content` query parameters.
 - `POST` / `PUT` send the body as `application/json` by default.
@@ -497,7 +495,7 @@ services:
 To pin a version, change the image to:
 
 ```yaml
-image: chenbin3625/opensync:1.11.2
+image: chenbin3625/opensync:1.12.1
 ```
 
 ## Docker CLI Deployment
@@ -542,7 +540,6 @@ The timezone of scheduled tasks is always controlled by `TZ`; when `data/config.
 | `OPENSYNC_COPY_CONCURRENCY` | `5` | Copy concurrency per task, range `1` to `100` |
 | `OPENSYNC_SCAN_CONCURRENCY` | `8` | Scan concurrency per task, range `1` to `20` |
 | `OPENSYNC_MAX_RETRIES` | `2` | Max auto-retries after a copy item fails, `0` disables auto-retry |
-| `OPENSYNC_ALLOW_INTERNAL_WEBHOOK` | `false` | Allow notification webhooks to target internal/loopback addresses or plain HTTP. Set to `true` when notifying self-hosted LAN services such as ntfy, Bark, or Home Assistant |
 | `OPENSYNC_TRUSTED_PROXIES` | empty | Comma-separated CIDR list of trusted reverse proxies; only their `X-Forwarded-Proto` is honored for the Cookie Secure attribute |
 | `OPENSYNC_CHOWN` | auto | Data directory ownership policy: `always` forces a recursive chown, `never` skips it; unset only chowns when the owner does not match |
 
@@ -561,7 +558,6 @@ task_timeout=48
 copy_concurrency=5
 scan_concurrency=8
 max_retries=2
-allow_internal_webhook=false
 trusted_proxies=
 ```
 
@@ -646,7 +642,7 @@ go test ./...
 OpenSync recommends the Docker Hub images by default:
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.11.2`
+- `chenbin3625/opensync:1.12.1`
 - `chenbin3625/opensync:1.10`
 
 Supported platforms:
