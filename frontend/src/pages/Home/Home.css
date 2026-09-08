@@ -513,21 +513,7 @@
   margin-bottom: 12px;
 }
 
-.task-history-panel {
-  display: grid;
-  gap: 12px;
-}
-
-.task-history-panel .ant-table-wrapper {
-  overflow: hidden;
-  border: 1px solid var(--ant-color-border-secondary);
-  border-radius: 8px;
-}
-
-.task-history-time-range {
-  width: 260px;
-}
-
+.task-history-panel,
 .task-detail-panel {
   display: grid;
   gap: 12px;
@@ -537,10 +523,15 @@
   min-width: 0;
 }
 
+.task-history-panel .ant-table-wrapper,
 .task-detail-table.ant-table-wrapper {
   overflow: hidden;
   border: 1px solid var(--ant-color-border-secondary);
   border-radius: 8px;
+}
+
+.task-history-time-range {
+  width: 260px;
 }
 
 .task-status-with-error {

@@ -17,7 +17,8 @@ const homeCssSource = readFileSync(new URL('../src/pages/Home/Home.css', import.
 const loginCssSource = readFileSync(new URL('../src/pages/Login/Login.css', import.meta.url), 'utf8');
 
 test('application defines shared presentation theme tokens', () => {
-  assert.match(appSource, /colorPrimary:\s*isDark\s*\?\s*'#2dd4bf'\s*:\s*'#0f766e'/);
+  assert.match(appSource, /colorPrimary:\s*'#0f766e'/);
+  assert.doesNotMatch(appSource, /isDark/);
   assert.match(cssSource, /\.ops-page-surface/);
   assert.match(cssSource, /\.ops-section-title/);
 });

@@ -3,8 +3,7 @@
 }
 
 :root {
-  /* 原生控件（滚动条/表单控件）默认同时支持明暗，实际由 App 按主题覆写 */
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
 html,
@@ -119,31 +118,31 @@ select {
   flex: 0 0 auto;
 }
 
-.app-actions .ant-btn {
-  display: inline-grid;
-  width: 34px;
-  min-width: 34px;
-  place-items: center;
-  padding-inline: 0;
-  transition: all 0.2s ease;
-}
-
-.app-actions .ant-btn:last-child {
-  display: inline-flex;
-  width: auto;
-  padding-inline: 10px;
-}
-
-.app-user-badge {
+.app-user-menu {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
-  border: 1px solid var(--ant-color-border-secondary);
-  border-radius: 20px;
-  background: var(--ant-color-fill-quaternary);
+  min-width: 0;
+  padding-inline: 10px;
   font-size: 13px;
   color: var(--ant-color-text-secondary);
+}
+
+.app-user-menu:hover,
+.app-user-menu:focus-visible {
+  color: var(--ant-color-primary);
+  background: var(--ant-color-primary-bg);
+}
+
+.app-user-menu-label {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-user-menu-arrow {
+  font-size: 10px;
 }
 
 .app-content {
@@ -157,6 +156,10 @@ select {
 .ops-settings-panel {
   border-color: var(--ant-color-border-secondary);
   border-radius: 8px;
+}
+
+.ops-resource-card,
+.ops-settings-panel {
   box-shadow: none;
 }
 
@@ -166,7 +169,8 @@ select {
   box-shadow: 0 1px 3px color-mix(in srgb, var(--ant-color-text) 4%, transparent);
 }
 
-.page-card > .ant-card-body {
+.page-card > .ant-card-body,
+.ops-settings-panel .ant-card-body {
   padding: 20px;
 }
 
@@ -196,6 +200,14 @@ select {
   min-height: 56px;
   padding: 2px 2px 14px;
   border-bottom: 1px solid var(--ant-color-border-secondary);
+}
+
+.page-header {
+  margin-bottom: 16px;
+}
+
+.page-header h2 {
+  margin: 0;
 }
 
 .ops-page-actions {
@@ -241,7 +253,6 @@ select {
 
 .ops-resource-card {
   height: 100%;
-  border-radius: 8px;
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -337,27 +348,23 @@ select {
   padding: 32px 16px;
 }
 
-.ops-empty-action {
-  margin-top: 16px;
-  text-align: center;
-}
-
 /* 加载失败 / 空态的中部占位块（表格、列表页通用） */
 .ops-state-block {
   padding: 32px 0;
   text-align: center;
 }
 
+.ops-empty-action,
 .ops-state-action {
   margin-top: 16px;
 }
 
-.ops-settings-panel {
-  max-width: 960px;
+.ops-empty-action {
+  text-align: center;
 }
 
-.ops-settings-panel .ant-card-body {
-  padding: 20px;
+.ops-settings-panel {
+  max-width: 960px;
 }
 
 .ops-feedback,
@@ -392,14 +399,6 @@ select {
   margin-bottom: 0;
 }
 
-.page-header {
-  margin-bottom: 16px;
-}
-
-.page-header h2 {
-  margin: 0;
-}
-
 @media (max-width: 900px) {
   .app-header {
     padding-inline: 12px;
@@ -425,7 +424,8 @@ select {
   }
 
   .app-brand .ant-typography,
-  .app-actions .ant-btn:last-child > span:not(.ant-btn-icon) {
+  .app-user-menu-label,
+  .app-user-menu-arrow {
     display: none;
   }
 
@@ -433,9 +433,11 @@ select {
     gap: 0 !important;
   }
 
-  .app-actions .ant-btn:last-child {
+  .app-user-menu {
     width: 34px;
+    min-width: 34px;
     padding-inline: 0;
+    justify-content: center;
   }
 
   .app-top-nav .ant-menu-item {

@@ -119,7 +119,7 @@ func TestValidateJobInputAcceptsManualJobWithRequiredFields(t *testing.T) {
 }
 
 func TestDstPathForSrcSelectionPreservesSourceDirWhenMultipleSelected(t *testing.T) {
-	got := dstPathForSrcSelection("/backup/", "/media/photos", true)
+	got := dstPathForSrcSelection("/backup/", "/media/photos", []string{"/media/photos", "/archive/videos"})
 	want := "/backup/photos/"
 
 	if got != want {
@@ -128,10 +128,46 @@ func TestDstPathForSrcSelectionPreservesSourceDirWhenMultipleSelected(t *testing
 }
 
 func TestDstPathForSrcSelectionKeepsSingleSourceAtTargetRoot(t *testing.T) {
-	got := dstPathForSrcSelection("/backup/", "/media/photos", false)
+	got := dstPathForSrcSelection("/backup/", "/media/photos", []string{"/media/photos"})
 	want := "/backup/"
 
 	if got != want {
 		t.Fatalf("dstPathForSrcSelection() = %q, want %q", got, want)
+	}
+}
+
+func TestDstPathForSrcSelectionPreservesPartiallySelectedParent(t *testing.T) {
+	srcPaths := []string{"/drive/2", "/drive/学习"}
+	tests := []struct {
+		srcPath string
+		want    string
+	}{
+		{srcPath: "/drive/2", want: "/backup/drive/2/"},
+		{srcPath: "/drive/学习", want: "/backup/drive/学习/"},
+	}
+
+	for _, tt := range tests {
+		got := dstPathForSrcSelection("/backup/", tt.srcPath, srcPaths)
+		if got != tt.want {
+			t.Errorf("dstPathForSrcSelection(%q) = %q, want %q", tt.srcPath, got, tt.want)
+		}
+	}
+}
+
+func TestDstPathForSrcSelectionPreservesNestedPathsBelowCommonParent(t *testing.T) {
+	srcPaths := []string{"/drive/work/2", "/drive/study/notes"}
+	tests := []struct {
+		srcPath string
+		want    string
+	}{
+		{srcPath: "/drive/work/2", want: "/backup/drive/work/2/"},
+		{srcPath: "/drive/study/notes", want: "/backup/drive/study/notes/"},
+	}
+
+	for _, tt := range tests {
+		got := dstPathForSrcSelection("/backup/", tt.srcPath, srcPaths)
+		if got != tt.want {
+			t.Errorf("dstPathForSrcSelection(%q) = %q, want %q", tt.srcPath, got, tt.want)
+		}
 	}
 }

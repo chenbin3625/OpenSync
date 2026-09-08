@@ -4,25 +4,9 @@ import type { UserInfo } from '../types';
 interface AppState {
   userInfo: UserInfo | null;
   authChecked: boolean;
-  theme: 'dark' | 'light';
   setUserInfo: (user: UserInfo | null) => void;
   setAuthChecked: (checked: boolean) => void;
-  setTheme: (theme: 'dark' | 'light') => void;
 }
-
-const getInitialTheme = (): 'dark' | 'light' => {
-  try {
-    const directTheme = localStorage.getItem('opensync_theme');
-    if (directTheme === 'light' || directTheme === 'dark') {
-      return directTheme;
-    }
-    const data = JSON.parse(localStorage.getItem('lifeData') || '{}');
-    return data.vuex_theme === 'light' || data.vuex_theme === 'dark' ? data.vuex_theme : 'dark';
-  } catch (err) {
-    console.error('failed to read theme from localStorage', err);
-    return 'dark';
-  }
-};
 
 const isUserInfo = (value: unknown): value is UserInfo => {
   if (!value || typeof value !== 'object') return false;
@@ -66,7 +50,6 @@ const persistState = (key: string, value: unknown) => {
 export const useStore = create<AppState>((set) => ({
   userInfo: getInitialUser(),
   authChecked: false,
-  theme: getInitialTheme(),
   setUserInfo: (user) => {
     // Reject malformed payloads so a broken response can never be persisted as
     // a "logged in" session.
@@ -75,8 +58,4 @@ export const useStore = create<AppState>((set) => ({
     set({ userInfo: valid });
   },
   setAuthChecked: (checked) => set({ authChecked: checked }),
-  setTheme: (theme) => {
-    persistState('opensync_theme', theme);
-    set({ theme });
-  },
 }));

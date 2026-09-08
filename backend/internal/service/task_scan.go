@@ -109,12 +109,11 @@ func (jt *JobTask) sync() {
 	}
 
 	dstPaths := parsePathList(jt.Job["dstPath"])
-	hasMultipleSrc := len(srcPaths) > 1
 	for _, srcItem := range srcPaths {
 		srcItem = normalizeDirPath(srcItem)
 		for i, dstItem := range dstPaths {
 			dstItem = normalizeDirPath(dstItem)
-			resolvedDstPath := dstPathForSrcSelection(dstItem, srcItem, hasMultipleSrc)
+			resolvedDstPath := dstPathForSrcSelection(dstItem, srcItem, srcPaths)
 			jt.runScanWork(scanWork{
 				SrcPath:     srcItem,
 				DstPath:     resolvedDstPath,
@@ -195,17 +194,45 @@ func (jt *JobTask) retryMkdir(srcPath, dstPath string, copyType taskItemType) {
 	jt.CopyHook(srcPath, dstPath, "", nil, "", status, errMsg, taskItemPath, copyType, time.Now().Unix())
 }
 
-func dstPathForSrcSelection(dstPath, srcPath string, hasMultipleSrc bool) string {
+func dstPathForSrcSelection(dstPath, srcPath string, srcPaths []string) string {
 	dstPath = normalizeDirPath(dstPath)
-	if !hasMultipleSrc {
+	if len(srcPaths) <= 1 {
 		return dstPath
 	}
 
-	base := path.Base(strings.TrimSuffix(srcPath, "/"))
-	if base == "." || base == "/" || base == "" {
+	suffix := srcSelectionSuffix(srcPath, srcPaths)
+	if suffix == "." || suffix == "/" || suffix == "" {
 		return dstPath
 	}
-	return normalizeDirPath(dstPath + base)
+	return normalizeDirPath(dstPath + suffix)
+}
+
+func srcSelectionSuffix(srcPath string, srcPaths []string) string {
+	cleanSrc := path.Clean(strings.TrimSpace(srcPath))
+	// A partially checked tree branch arrives as sibling paths rather than its
+	// parent, so keep that shared parent in the destination hierarchy.
+	commonParent := commonSrcSelectionParent(srcPaths)
+	if commonParent == "" || commonParent == "." || commonParent == "/" {
+		return path.Base(cleanSrc)
+	}
+
+	anchor := normalizeDirPath(path.Dir(commonParent))
+	return strings.TrimPrefix(cleanSrc, anchor)
+}
+
+func commonSrcSelectionParent(srcPaths []string) string {
+	if len(srcPaths) < 2 {
+		return ""
+	}
+
+	common := path.Dir(path.Clean(strings.TrimSpace(srcPaths[0])))
+	for _, srcPath := range srcPaths[1:] {
+		parent := path.Dir(path.Clean(strings.TrimSpace(srcPath)))
+		for common != "." && common != "/" && parent != common && !strings.HasPrefix(parent, normalizeDirPath(common)) {
+			common = path.Dir(common)
+		}
+	}
+	return common
 }
 
 func normalizeDirPath(path string) string {

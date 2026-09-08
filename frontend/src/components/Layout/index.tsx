@@ -1,9 +1,10 @@
 import type React from 'react';
 import {
-  Button, Layout as AntLayout, Menu, Popconfirm, Space, Typography,
+  App as AntApp,
+  Button, Dropdown, Layout as AntLayout, Menu, Space, Typography,
 } from 'antd';
 import {
-  BellOutlined, BulbFilled, BulbOutlined, CloudServerOutlined, HomeOutlined,
+  BellOutlined, CloudServerOutlined, DownOutlined, HomeOutlined,
   LogoutOutlined, SettingOutlined, UserOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -23,7 +24,8 @@ const menuItems = [
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { theme: themeMode, setTheme, setUserInfo, userInfo } = useStore();
+  const { setUserInfo, userInfo } = useStore();
+  const { modal } = AntApp.useApp();
   const selectedKey = '/' + location.pathname.split('/')[1];
 
   const handleMenuClick = (e: { key: string }) => {
@@ -40,8 +42,28 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     navigate('/login');
   };
 
-  const toggleTheme = () => {
-    setTheme(themeMode === 'dark' ? 'light' : 'dark');
+  const confirmLogout = () => {
+    modal.confirm({
+      title: '确认退出',
+      content: '确定要退出登录吗？',
+      okText: '确定',
+      cancelText: '取消',
+      onOk: handleLogout,
+    });
+  };
+
+  const userMenuItems = [
+    {
+      key: 'logout',
+      icon: <LogoutOutlined />,
+      label: '退出登录',
+    },
+  ];
+
+  const handleUserMenuClick = ({ key }: { key: string }) => {
+    if (key === 'logout') {
+      confirmLogout();
+    }
   };
 
   return (
@@ -62,39 +84,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <Menu
           className="app-top-nav"
           mode="horizontal"
-          theme={themeMode}
           selectedKeys={[selectedKey]}
           items={menuItems}
           onClick={handleMenuClick}
         />
         <Space className="app-actions" size={8}>
-          {userInfo?.userName && (
-            <span className="app-user-badge">
-              <UserOutlined />
-              <span>{userInfo.userName}</span>
-            </span>
-          )}
-          <Button
-            type="text"
-            icon={themeMode === 'dark' ? <BulbFilled /> : <BulbOutlined />}
-            onClick={toggleTheme}
-            title={themeMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
-            aria-label={themeMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
-          />
-          <Popconfirm
-            title="确认退出"
-            description="确定要退出登录吗？"
-            onConfirm={handleLogout}
-            okText="确定"
-            cancelText="取消"
+          <Dropdown
+            menu={{ items: userMenuItems, onClick: handleUserMenuClick }}
+            trigger={['click']}
+            placement="bottomRight"
           >
-            <Button
-              type="text"
-              icon={<LogoutOutlined />}
-            >
-              登出
+            <Button type="text" className="app-user-menu" aria-label="用户菜单">
+              <UserOutlined />
+              <span className="app-user-menu-label">{userInfo?.userName || '用户'}</span>
+              <DownOutlined className="app-user-menu-arrow" />
             </Button>
-          </Popconfirm>
+          </Dropdown>
         </Space>
       </Header>
       <Content className="app-content">

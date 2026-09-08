@@ -156,7 +156,7 @@ services:
 如需固定版本，可以把镜像改为：
 
 ```yaml
-image: chenbin3625/opensync:1.12.1
+image: chenbin3625/opensync:1.13.0
 ```
 
 ## Docker 命令部署
@@ -303,7 +303,7 @@ go test ./...
 OpenSync 默认推荐使用 Docker Hub 镜像：
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.12.1`
+- `chenbin3625/opensync:1.13.0`
 - `chenbin3625/opensync:1.10`
 
 镜像支持以下平台：
@@ -356,7 +356,7 @@ If you are on fnOS and looking for a Cloud Sync alternative to sync your photo l
 - Webhook customization: GET / POST / PUT, JSON body templates, custom headers, and test sending.
 - Online runtime config: adjust history retention, task timeout, copy/scan concurrency, and auto-retry counts.
 - Account recovery: a 24-digit recovery key is generated on first setup; supports web password reset and a `reset-password` CLI fallback.
-- Adaptive UI: desktop and mobile layouts, light/dark themes, and the realtime view updates immediately when a task finishes.
+- Adaptive UI: desktop and mobile layouts, a consistent light theme, and the realtime view updates immediately when a task finishes.
 
 ## Interface Preview
 
@@ -495,7 +495,7 @@ services:
 To pin a version, change the image to:
 
 ```yaml
-image: chenbin3625/opensync:1.12.1
+image: chenbin3625/opensync:1.13.0
 ```
 
 ## Docker CLI Deployment
@@ -642,7 +642,7 @@ go test ./...
 OpenSync recommends the Docker Hub images by default:
 
 - `chenbin3625/opensync:latest`
-- `chenbin3625/opensync:1.12.1`
+- `chenbin3625/opensync:1.13.0`
 - `chenbin3625/opensync:1.10`
 
 Supported platforms:
