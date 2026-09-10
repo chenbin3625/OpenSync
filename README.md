@@ -1,5 +1,7 @@
 # OpenSync
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/chenbin3625/OpenSync)](https://github.com/chenbin3625/OpenSync/releases) [![CI](https://github.com/chenbin3625/OpenSync/actions/workflows/ci.yml/badge.svg)](https://github.com/chenbin3625/OpenSync/actions/workflows/ci.yml) [![Docker Pulls](https://img.shields.io/docker/pulls/chenbin3625/opensync)](https://hub.docker.com/r/chenbin3625/opensync)
+
 OpenSync is an AList / OpenList automation tool for fnOS (FeiNiu NAS), general NAS, and Docker environments. It connects local folders, cloud drives, object storage, WebDAV, and other storage backends through AList / OpenList, and uses visual jobs to handle backup, mirror, archive, and migration workflows.
 
 If you are on fnOS and looking for a Cloud Sync alternative to sync your photo library, media library, download folder, or document folder to a cloud drive, object storage, or another storage device, OpenSync is built for exactly that scenario.
@@ -334,6 +336,10 @@ The binaries embed the frontend static assets. After extracting, run `opensync` 
 - `data/secret.key` affects login cookies and the encryption of sensitive data; keep it via a persistent volume after deployment. It is not used for web password reset.
 - If you have accidentally shared the runtime data directory, rotate your AList / OpenList tokens.
 - Back up the `data/` directory before upgrading.
+
+## License
+
+This project is released under the [MIT License](LICENSE).
 
 ---
 
@@ -673,3 +679,7 @@ OpenSync 默认推荐使用 Docker Hub 镜像：
 - `data/secret.key` 会影响登录 Cookie 和敏感信息加解密，部署后应通过持久化目录保留；它不用于 Web 端密码重置。
 - 如果误分享了运行数据目录，请及时更换 AList / OpenList Token。
 - 升级前建议先备份 `data/` 目录。
+
+## 许可证
+
+本项目以 [MIT License](LICENSE) 授权。

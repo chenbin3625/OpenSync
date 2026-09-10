@@ -1,0 +1,60 @@
+name: Bug report / 问题反馈
+description: Report a reproducible problem / 反馈一个可复现的问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem.
+        感谢你反馈问题。请尽量把下面的信息填写完整,便于定位原因。
+  - type: input
+    id: version
+    attributes:
+      label: Version / 版本
+      description: Which release or image tag are you running? / 你正在使用的版本或镜像标签
+      placeholder: "e.g. v1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment / 部署方式
+      options:
+        - Docker / Docker Compose
+        - Binary / 二进制
+        - Built from source / 源码构建
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened / 问题现象
+      description: Describe what you saw and what you expected instead. / 描述实际现象以及你预期的情况
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots / 日志或截图
+      description: Please redact tokens, account names and private paths. / 粘贴前请隐去令牌、账号与私有路径
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist / 确认
+      options:
+        - label: I searched existing issues and this is not a duplicate. / 我已搜索过现有 issue,确认不是重复反馈
+          required: true

@@ -2,18 +2,19 @@ name: Docker Hub Description
 
 on:
   workflow_dispatch:
-    inputs:
-      repository:
-        description: Docker Hub repository
-        required: true
-        default: chenbin3625/opensync
-      readme:
-        description: Markdown file used as Docker Hub overview
-        required: true
-        default: .dockerhub/README.md
+  push:
+    branches: [main]
+    paths:
+      - ".dockerhub/README.md"
+      - ".github/workflows/dockerhub-description.yml"
 
 permissions:
   contents: read
+
+env:
+  IMAGE_NAME: chenbin3625/opensync
+  README_FILE: .dockerhub/README.md
+  SHORT_DESCRIPTION: "AList/OpenList sync automation for fnOS NAS and Docker | 飞牛 NAS / Docker 下的 AList / OpenList 自动同步工具"
 
 jobs:
   update:
@@ -34,10 +35,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Check overview length
+      - name: Check overview file
         shell: bash
         run: |
-          count="$(wc -m < "${{ inputs.readme }}")"
+          if [ ! -f "$README_FILE" ]; then
+            echo "::error::$README_FILE not found."
+            exit 1
+          fi
+          count="$(wc -m < "$README_FILE")"
           echo "Docker Hub overview length: $count characters"
           if [ "$count" -gt 25000 ]; then
             echo "::error::Docker Hub overview must be 25000 characters or fewer."
@@ -49,6 +54,6 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ inputs.repository }}
-          short-description: 飞牛 NAS 下的群晖 Cloud Sync 平替，基于 AList / OpenList 的自动同步工具。
-          readme-filepath: ${{ inputs.readme }}
+          repository: ${{ env.IMAGE_NAME }}
+          short-description: ${{ env.SHORT_DESCRIPTION }}
+          readme-filepath: ${{ env.README_FILE }}

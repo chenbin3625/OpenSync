@@ -1,0 +1,38 @@
+name: Feature request / 功能建议
+description: Suggest an idea or improvement / 提出新功能或改进建议
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests are welcome. Please describe the problem first, then your idea.
+        欢迎提功能建议。请先描述你遇到的问题,再说你期望的方案。
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 遇到的问题
+      description: What are you trying to do, and what gets in the way? / 你想做什么,现在卡在哪里
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / 期望的方案
+      description: How would you like this to work? / 你希望它怎么工作
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 考虑过的替代方案
+      description: Any workaround you already tried? / 你已经试过哪些替代办法
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist / 确认
+      options:
+        - label: I searched existing issues and this is not a duplicate. / 我已搜索过现有 issue,确认不是重复建议
+          required: true
