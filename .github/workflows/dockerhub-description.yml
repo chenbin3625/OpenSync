@@ -14,7 +14,7 @@ permissions:
 env:
   IMAGE_NAME: chenbin3625/opensync
   README_FILE: .dockerhub/README.md
-  SHORT_DESCRIPTION: "AList/OpenList sync automation for fnOS NAS and Docker | 飞牛 NAS / Docker 下的 AList / OpenList 自动同步工具"
+  SHORT_DESCRIPTION: "AList/OpenList sync for fnOS NAS | 飞牛 NAS 自动同步工具"
 
 jobs:
   update:
