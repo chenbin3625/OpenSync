@@ -61,6 +61,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: frontend
     timeout-minutes: 20
+    # This job both builds and uploads, and `gh release upload` needs a token with
+    # write access; the workflow default is contents: read.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
