@@ -8,19 +8,59 @@ on:
       tag:
         description: GitHub release tag to upload assets to
         required: true
-        default: v1.13.0
       ref:
         description: Git ref to build
         required: true
-        default: v1.13.0
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-assets-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  # The embedded Web UI used to be rebuilt inside every matrix leg (seven identical
+  # installs and builds). It is now built once and handed to the matrix as an artifact.
+  frontend:
+    name: Build web assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+
+      # Keep this version in sync with ci.yml and the Dockerfile.
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Package web assets
+        run: tar -czf opensync-web.tar.gz -C backend/cmd/server web
+
+      - name: Upload web assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: opensync-web
+          path: opensync-web.tar.gz
+          if-no-files-found: error
+
   build:
     name: Build ${{ matrix.id }}
     runs-on: ubuntu-latest
+    needs: frontend
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -73,28 +113,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Download web assets
+        uses: actions/download-artifact@v8
         with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          name: opensync-web
+
+      - name: Extract web assets
+        run: |
+          rm -rf backend/cmd/server/web
+          tar -xzf opensync-web.tar.gz -C backend/cmd/server
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-
-      - name: Build frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
 
       - name: Build and package cross-compiled binary
         id: package
@@ -127,7 +164,7 @@ jobs:
           fi
 
           checksum="$archive.sha256"
-          (cd dist && shasum -a 256 "$(basename "$archive")" > "$(basename "$checksum")")
+          (cd dist && sha256sum "$(basename "$archive")" > "$(basename "$checksum")")
 
           {
             echo "asset=$archive"

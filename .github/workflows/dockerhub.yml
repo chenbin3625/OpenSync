@@ -8,11 +8,9 @@ on:
       version:
         description: Version to publish, for example 1.5.0 or v1.5.0
         required: true
-        default: "1.13.0"
       ref:
         description: Git ref to build
         required: true
-        default: "v1.13.0"
       repository:
         description: Docker Hub repository
         required: true
@@ -26,6 +24,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: dockerhub-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   DOCKERHUB_REPOSITORY: chenbin3625/opensync
 
@@ -33,6 +35,7 @@ jobs:
   publish:
     name: Build and publish Docker Hub image
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Check Docker Hub secrets
@@ -46,28 +49,35 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
 
       - name: Prepare Docker tags
         id: tags
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_LATEST: ${{ inputs.latest }}
+          INPUT_REPOSITORY: ${{ inputs.repository }}
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            version="${{ github.event.release.tag_name }}"
-            if [ "${{ github.event.release.prerelease }}" = "true" ]; then
+          if [ "$EVENT_NAME" = "release" ]; then
+            version="$RELEASE_TAG"
+            if [ "$RELEASE_PRERELEASE" = "true" ]; then
               latest="false"
             else
               latest="true"
             fi
           else
-            version="${{ inputs.version }}"
-            latest="${{ inputs.latest }}"
+            version="$INPUT_VERSION"
+            latest="$INPUT_LATEST"
           fi
 
           version="${version#v}"
-          repository="${{ inputs.repository }}"
+          repository="$INPUT_REPOSITORY"
           if [ -z "$repository" ]; then
             repository="$DOCKERHUB_REPOSITORY"
           fi
