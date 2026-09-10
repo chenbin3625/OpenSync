@@ -41,7 +41,7 @@ docker compose up -d
 | Tag | Description |
 | --- | --- |
 | `chenbin3625/opensync:latest` | Latest stable release, recommended by default |
-| `chenbin3625/opensync:1.13.0` | Pinned full version, for reproducible deployments |
+| `chenbin3625/opensync:1.13.2` | Pinned full version, for reproducible deployments |
 | `chenbin3625/opensync:1.13` | Minor-version tag, tracks the newest `1.13.x` patch release |
 | `chenbin3625/opensync:1.10` | Older minor-version tag kept for existing deployments |
 
@@ -152,7 +152,7 @@ docker compose up -d
 | 标签 | 说明 |
 | --- | --- |
 | `chenbin3625/opensync:latest` | 最新稳定版，默认推荐 |
-| `chenbin3625/opensync:1.13.0` | 固定完整版本号，适合需要可复现部署的场景 |
+| `chenbin3625/opensync:1.13.2` | 固定完整版本号，适合需要可复现部署的场景 |
 | `chenbin3625/opensync:1.13` | 次版本号标签，跟随最新的 `1.13.x` 补丁版本 |
 | `chenbin3625/opensync:1.10` | 较早的次版本号标签，供已有部署继续使用 |
 
