@@ -1,0 +1,29 @@
+title: "[Idea]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this category for feature requests and improvement ideas.
+
+        这个分类用于功能建议、改进想法和路线讨论。请先说明你遇到的问题，再描述期望方案。
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 遇到的问题
+      description: What are you trying to do, and what gets in the way? / 你想做什么，现在卡在哪里？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / 期望方案
+      description: How would you like OpenSync to solve it? / 你希望 OpenSync 怎么解决？
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / 已尝试方案
+      description: Any workaround or other tool you already tried? / 你试过哪些替代办法或工具？
+    validations:
+      required: false

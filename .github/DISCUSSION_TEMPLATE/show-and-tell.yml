@@ -1,0 +1,29 @@
+title: "[Case]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this category to share deployment cases, NAS setups, screenshots, and sync workflows.
+
+        这个分类用于分享部署案例、NAS 方案、截图和实际同步流程。请注意隐藏令牌、账号、私有路径和主机名。
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Scenario / 使用场景
+      description: What are you syncing, from where to where, and why? / 你同步什么，从哪里到哪里，解决什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Setup / 部署信息
+      description: NAS model, OS, CPU architecture, deployment method, and storage backends. / NAS 型号、系统、CPU 架构、部署方式和存储后端。
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / 经验记录
+      description: Share screenshots, configuration tips, performance notes, or pitfalls. / 可分享截图、配置经验、性能观察或踩坑记录。
+    validations:
+      required: false

@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: Documentation / 文档
-    url: https://github.com/chenbin3625
+    url: https://github.com/chenbin3625/OpenSync#readme
     about: Please read the README first. / 请先阅读 README。
+  - name: Discussions / 社区讨论
+    url: https://github.com/chenbin3625/OpenSync/discussions
+    about: Usage help, feature ideas and deployment cases. / 使用求助、功能建议和部署案例请优先发 Discussions。
