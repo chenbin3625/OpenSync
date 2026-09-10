@@ -58,7 +58,7 @@ jobs:
               data = None if payload is None else json.dumps(payload).encode("utf-8")
               headers = {"Content-Type": "application/json"}
               if token:
-                  headers["Authorization"] = f"JWT {token}"
+                  headers["Authorization"] = f"Bearer {token}"
               req = urllib.request.Request(url, data=data, headers=headers, method=method)
               try:
                   with urllib.request.urlopen(req, timeout=60) as resp:
