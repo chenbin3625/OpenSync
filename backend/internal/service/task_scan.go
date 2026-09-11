@@ -109,19 +109,25 @@ func (jt *JobTask) sync() {
 	}
 
 	dstPaths := parsePathList(jt.Job["dstPath"])
+	fullSync := util.ToInt(jt.Job["method"]) == 1
 	for _, srcItem := range srcPaths {
 		srcItem = normalizeDirPath(srcItem)
 		for i, dstItem := range dstPaths {
 			dstItem = normalizeDirPath(dstItem)
 			resolvedDstPath := dstPathForSrcSelection(dstItem, srcItem, srcPaths)
-			jt.runScanWork(scanWork{
+			work := scanWork{
 				SrcPath:     srcItem,
 				DstPath:     resolvedDstPath,
 				SrcRootPath: srcItem,
 				DstRootPath: resolvedDstPath,
 				FirstDst:    i == 0,
 				Mode:        scanWorkCompare,
-			}, spec)
+			}
+			if fullSync {
+				jt.syncFull(work, spec)
+			} else {
+				jt.runScanWork(work, spec)
+			}
 		}
 	}
 	jt.markScanFinished()
