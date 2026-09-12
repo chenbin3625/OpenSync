@@ -216,25 +216,30 @@ func dstPathForSrcSelection(dstPath, srcPath string, srcPaths []string) string {
 func srcSelectionSuffix(srcPath string, srcPaths []string) string {
 	cleanSrc := path.Clean(strings.TrimSpace(srcPath))
 	// A partially checked tree branch arrives as sibling paths rather than its
-	// parent, so keep that shared parent in the destination hierarchy.
+	// parent, so the shared parent is the highest segment the selection already
+	// accounts for: everything above it is stripped, everything below it is kept
+	// so nested branches still reach the destination with their hierarchy.
 	commonParent := commonSrcSelectionParent(srcPaths)
 	if commonParent == "" || commonParent == "." || commonParent == "/" {
 		return path.Base(cleanSrc)
 	}
 
-	anchor := normalizeDirPath(path.Dir(commonParent))
-	return strings.TrimPrefix(cleanSrc, anchor)
+	return strings.TrimPrefix(cleanSrc, normalizeDirPath(commonParent))
 }
 
+// commonSrcSelectionParent returns the deepest directory that contains every
+// selected source path. Callers subtract exactly this prefix, so the value has
+// to be the common parent of the paths themselves — not of their parent
+// directories, which would leave one extra level in the destination path.
 func commonSrcSelectionParent(srcPaths []string) string {
 	if len(srcPaths) < 2 {
 		return ""
 	}
 
-	common := path.Dir(path.Clean(strings.TrimSpace(srcPaths[0])))
+	common := path.Clean(strings.TrimSpace(srcPaths[0]))
 	for _, srcPath := range srcPaths[1:] {
-		parent := path.Dir(path.Clean(strings.TrimSpace(srcPath)))
-		for common != "." && common != "/" && parent != common && !strings.HasPrefix(parent, normalizeDirPath(common)) {
+		selected := path.Clean(strings.TrimSpace(srcPath))
+		for common != "." && common != "/" && selected != common && !strings.HasPrefix(selected, normalizeDirPath(common)) {
 			common = path.Dir(common)
 		}
 	}
