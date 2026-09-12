@@ -1,8 +1,12 @@
 # OpenSync
 
+[Website](https://opensync.u1n1.com/) | [GitHub](https://github.com/chenbin3625/OpenSync) | [Releases](https://github.com/chenbin3625/OpenSync/releases) | [Discussions](https://github.com/chenbin3625/OpenSync/discussions)
+
 OpenSync is an AList / OpenList automation layer for fnOS (FeiNiu NAS), general NAS, and Docker environments. It connects local folders, cloud drives, object storage, WebDAV, and other storage backends through AList / OpenList, then uses visual jobs to handle backup, mirror, archive, and migration workflows.
 
 If you are on fnOS and want a Cloud Sync-style experience for a photo library, media library, download folder, or document folder, OpenSync is built for that exact gap.
+
+If OpenSync fills the NAS sync gap for you, please consider starring the [GitHub repository](https://github.com/chenbin3625/OpenSync) so more self-hosted users can find it.
 
 ![Task Management](https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/tasks-overview.png)
 
@@ -46,14 +50,7 @@ docker run -d \
 
 ## Image Tags
 
-| Tag | Description |
-| --- | --- |
-| `chenbin3625/opensync:latest` | Latest stable release, recommended by default |
-| `chenbin3625/opensync:1.13.2` | Pinned full version, for reproducible deployments |
-| `chenbin3625/opensync:1.13` | Minor-version tag, tracks the newest `1.13.x` patch release |
-| `chenbin3625/opensync:1.10` | Older minor-version tag kept for existing deployments |
-
-Images are published on every official GitHub release by the Docker Hub workflow. Stable releases publish the full version, the minor version, and `latest`; prereleases only publish their exact version tag.
+Use `chenbin3625/opensync:latest` for the newest stable release. Every official GitHub release also publishes versioned tags for deployments that need a fixed version.
 
 Supported platforms:
 
@@ -159,12 +156,7 @@ docker compose exec --user "${PUID:-1000}:${PGID:-1000}" opensync ./opensync res
 
 ## 镜像标签
 
-| 标签 | 说明 |
-| --- | --- |
-| `chenbin3625/opensync:latest` | 最新稳定版，默认推荐 |
-| `chenbin3625/opensync:1.13.2` | 固定完整版本号，适合需要可复现部署的场景 |
-| `chenbin3625/opensync:1.13` | 次版本号标签，跟随最新的 `1.13.x` 补丁版本 |
-| `chenbin3625/opensync:1.10` | 较早的次版本号标签，供已有部署继续使用 |
+使用 `chenbin3625/opensync:latest` 获取最新稳定版。每次正式发布也会推送带版本号的标签，供需要固定版本的部署使用。
 
 ## 重点功能
 

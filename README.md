@@ -2,11 +2,13 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/chenbin3625/OpenSync)](https://github.com/chenbin3625/OpenSync/releases) [![CI](https://github.com/chenbin3625/OpenSync/actions/workflows/ci.yml/badge.svg)](https://github.com/chenbin3625/OpenSync/actions/workflows/ci.yml) [![Docker Pulls](https://img.shields.io/docker/pulls/chenbin3625/opensync)](https://hub.docker.com/r/chenbin3625/opensync)
 
-[中文文档](README.zh-CN.md) | [60-second demo GIF](docs/demo/opensync-demo.gif) | [Docker Hub](https://hub.docker.com/r/chenbin3625/opensync) | [Discussions](https://github.com/chenbin3625/OpenSync/discussions)
+[Website](https://opensync.u1n1.com/) | [中文文档](README.zh-CN.md) | [60-second demo GIF](docs/demo/opensync-demo.gif) | [Docker Hub](https://hub.docker.com/r/chenbin3625/opensync) | [Discussions](https://github.com/chenbin3625/OpenSync/discussions)
 
 OpenSync is an AList / OpenList automation layer for fnOS (FeiNiu NAS), general NAS, and Docker environments. It connects local folders, cloud drives, object storage, WebDAV, and other storage backends through AList / OpenList, then uses visual jobs to handle backup, mirror, archive, and migration workflows.
 
 If you are on fnOS and want a Cloud Sync-style experience for a photo library, media library, download folder, or document folder, OpenSync is built for that exact gap.
+
+If OpenSync fills the NAS sync gap for you, please consider starring the [GitHub repository](https://github.com/chenbin3625/OpenSync) so more fnOS, NAS, Docker, AList, and OpenList users can find it.
 
 ![OpenSync task overview](docs/images/tasks-overview.png)
 
@@ -196,11 +198,7 @@ services:
       GIN_MODE: release
 ```
 
-To pin a version, change the image to:
-
-```yaml
-image: chenbin3625/opensync:1.13.2
-```
+Every release publishes both the versioned tags and `latest`, so `latest` always points at the newest stable build.
 
 ## Docker CLI Deployment
 

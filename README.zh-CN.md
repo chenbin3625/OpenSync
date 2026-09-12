@@ -2,11 +2,13 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/chenbin3625/OpenSync)](https://github.com/chenbin3625/OpenSync/releases) [![CI](https://github.com/chenbin3625/OpenSync/actions/workflows/ci.yml/badge.svg)](https://github.com/chenbin3625/OpenSync/actions/workflows/ci.yml) [![Docker Pulls](https://img.shields.io/docker/pulls/chenbin3625/opensync)](https://hub.docker.com/r/chenbin3625/opensync)
 
-[English](README.md) | [60 秒演示动图](docs/demo/opensync-demo.gif) | [Docker Hub](https://hub.docker.com/r/chenbin3625/opensync) | [Discussions](https://github.com/chenbin3625/OpenSync/discussions)
+[官网](https://opensync.u1n1.com/) | [English](README.md) | [60 秒演示动图](docs/demo/opensync-demo.gif) | [Docker Hub](https://hub.docker.com/r/chenbin3625/opensync) | [Discussions](https://github.com/chenbin3625/OpenSync/discussions)
 
 OpenSync 是面向飞牛 fnOS / 飞牛 NAS、普通 NAS 和 Docker 环境的 AList / OpenList 自动同步工具。它通过 AList / OpenList 连接本地目录、网盘、对象存储、WebDAV 等存储端，并用可视化任务完成备份、镜像、归档和迁移。
 
 如果你在飞牛 NAS 上想找一个类似群晖 Cloud Sync 的同步工具，用来把照片库、影音库、下载目录或文档目录同步到网盘、对象存储或另一台存储设备，OpenSync 就是面向这个场景做的。
+
+如果 OpenSync 正好补上了你的 NAS 自动同步缺口，欢迎在 [GitHub](https://github.com/chenbin3625/OpenSync) 点一个 Star，帮助更多飞牛、NAS、Docker、AList / OpenList 用户发现它。
 
 ![OpenSync 任务总览](docs/images/tasks-overview.png)
 
@@ -196,11 +198,7 @@ services:
       GIN_MODE: release
 ```
 
-如需固定版本，可以把镜像改为：
-
-```yaml
-image: chenbin3625/opensync:1.13.2
-```
+每次发布同时推送版本号标签和 `latest`，`latest` 始终指向最新的稳定版本。
 
 ## Docker 命令部署
 

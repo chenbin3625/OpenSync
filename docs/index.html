@@ -3,60 +3,92 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenSync | AList / OpenList 自动同步工具</title>
+    <title>OpenSync — 飞牛 NAS / Docker 的 AList / OpenList 自动同步任务台</title>
     <meta
       name="description"
-      content="OpenSync 是面向飞牛 fnOS、NAS 和 Docker 环境的 AList / OpenList 自动同步工具，支持备份、归档、迁移、定时任务、实时进度和通知。"
+      content="OpenSync 给 AList / OpenList 加一层可视化同步任务台：多源到多目标、三种同步模式、Cron 定时、实时进度、失败重试与五路通知。支持 amd64 / arm64 / armv7，Docker Compose 五分钟部署。"
     />
-    <meta property="og:title" content="OpenSync | AList / OpenList 自动同步工具" />
+    <meta name="theme-color" content="#080b11" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="keywords" content="OpenSync,AList,OpenList,飞牛 NAS,fnOS,NAS 同步,Docker 同步,Cloud Sync,WebDAV,对象存储,备份,归档,迁移" />
+    <link rel="canonical" href="https://opensync.u1n1.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://opensync.u1n1.com/" />
+    <meta property="og:title" content="OpenSync — AList / OpenList 可视化同步任务台" />
     <meta
       property="og:description"
-      content="用可视化任务把本地目录、网盘、对象存储、WebDAV 等存储端统一接入 AList / OpenList，完成自动备份、归档和迁移。"
+      content="把本地目录、网盘、对象存储、WebDAV 组织成自动运行、可追踪、可重试的同步任务。开源 MIT，Docker 一行部署。"
     />
-    <meta property="og:type" content="website" />
-    <meta property="og:image" content="images/tasks-overview.png" />
+    <meta property="og:image" content="https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/tasks-overview.png" />
+    <meta property="og:image:alt" content="OpenSync 任务总览界面截图" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="OpenSync — AList / OpenList 可视化同步任务台" />
+    <meta
+      name="twitter:description"
+      content="给飞牛 NAS、普通 NAS 和 Docker 环境的 AList / OpenList 自动同步任务台。"
+    />
+    <meta name="twitter:image" content="https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/tasks-overview.png" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23080b11'/%3E%3Cpath d='M8 12h6l3-5 5 13 2-4h1' stroke='%2334e5c8' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
     <style>
       :root {
-        --ink: #17202a;
-        --ink-soft: #46515d;
-        --muted: #6d7a86;
-        --line: #d7e0e6;
-        --paper: #f7f4ee;
-        --paper-deep: #ece6dc;
-        --surface: #ffffff;
-        --night: #111927;
-        --teal: #0f766e;
-        --blue: #2563eb;
-        --amber: #d98a1b;
-        --green: #2f855a;
-        --code: #0d1522;
-        --shadow: 0 18px 48px rgba(23, 32, 42, 0.12);
-        --radius: 8px;
+        --bg: #080b11;
+        --bg-2: #0b1017;
+        --panel: #111823;
+        --panel-2: #161f2c;
+        --line: #1f2b3a;
+        --line-soft: #18222f;
+        --text: #e8eef6;
+        --text-2: #a4b3c4;
+        --text-3: #6f8093;
+        --mint: #34e5c8;
+        --mint-dim: #14b8a6;
+        --sky: #56a8ff;
+        --amber: #f5b13d;
+        --rose: #f2688c;
+        --violet: #a78bfa;
+        --r-sm: 6px;
+        --r: 12px;
+        --r-lg: 18px;
+        --mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, "Menlo", "Consolas", monospace;
+        --sans: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC",
+          "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", system-ui, sans-serif;
+        --wrap: 1180px;
       }
 
-      * {
+      *,
+      *::before,
+      *::after {
         box-sizing: border-box;
       }
 
       html {
         scroll-behavior: smooth;
+        -webkit-text-size-adjust: 100%;
       }
 
       body {
         margin: 0;
-        color: var(--ink);
-        font-family: "MiSans", "HarmonyOS Sans SC", "Avenir Next", "PingFang SC",
-          "Microsoft YaHei", sans-serif;
-        background:
-          linear-gradient(90deg, rgba(23, 32, 42, 0.045) 1px, transparent 1px),
-          linear-gradient(rgba(23, 32, 42, 0.035) 1px, transparent 1px),
-          var(--paper);
-        background-size: 34px 34px, 34px 34px, auto;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--sans);
+        font-size: 16px;
+        line-height: 1.65;
+        -webkit-font-smoothing: antialiased;
+        overflow-x: hidden;
       }
 
-      img {
-        display: block;
-        max-width: 100%;
+      h1,
+      h2,
+      h3,
+      h4 {
+        margin: 0;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+        font-weight: 650;
+      }
+
+      p {
+        margin: 0;
       }
 
       a {
@@ -64,1275 +96,2227 @@
         text-decoration: none;
       }
 
-      a:hover {
-        color: var(--blue);
+      ul,
+      ol {
+        margin: 0;
+        padding: 0;
+        list-style: none;
       }
 
-      button,
-      a {
-        -webkit-tap-highlight-color: transparent;
+      img {
+        display: block;
+        max-width: 100%;
+        height: auto;
+      }
+
+      code,
+      pre,
+      kbd {
+        font-family: var(--mono);
       }
 
       :focus-visible {
-        outline: 3px solid rgba(37, 99, 235, 0.35);
+        outline: 2px solid var(--mint);
         outline-offset: 3px;
+        border-radius: 4px;
       }
 
-      .skip-link {
-        position: fixed;
-        top: 12px;
-        left: 12px;
+      .wrap {
+        width: 100%;
+        max-width: var(--wrap);
+        margin-inline: auto;
+        padding-inline: 24px;
+      }
+
+      .skip {
+        position: absolute;
+        left: -9999px;
+        top: 0;
         z-index: 100;
-        padding: 10px 14px;
-        border-radius: var(--radius);
-        color: #fff;
-        background: var(--night);
-        transform: translateY(-140%);
+        padding: 12px 18px;
+        background: var(--mint);
+        color: #04120f;
+        font-weight: 600;
+        border-radius: 0 0 var(--r-sm) 0;
       }
 
-      .skip-link:focus {
-        transform: translateY(0);
+      .skip:focus {
+        left: 0;
       }
 
-      .site-header {
+      .mono-label {
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--mint);
+      }
+
+      /* ---------- header ---------- */
+      .topbar {
         position: sticky;
         top: 0;
-        z-index: 20;
-        border-bottom: 1px solid rgba(215, 224, 230, 0.82);
-        background: rgba(247, 244, 238, 0.88);
-        backdrop-filter: blur(16px);
+        z-index: 40;
+        background: rgba(8, 11, 17, 0.78);
+        backdrop-filter: blur(14px);
+        border-bottom: 1px solid transparent;
+        transition: border-color 0.25s ease, background 0.25s ease;
       }
 
-      .nav {
+      .topbar.is-stuck {
+        border-bottom-color: var(--line);
+        background: rgba(8, 11, 17, 0.94);
+      }
+
+      .topbar-in {
         display: flex;
-        width: min(1180px, calc(100% - 32px));
-        min-height: 64px;
-        margin: 0 auto;
         align-items: center;
-        justify-content: space-between;
-        gap: 18px;
+        gap: 28px;
+        height: 64px;
       }
 
       .brand {
         display: inline-flex;
         align-items: center;
         gap: 10px;
-        color: var(--ink);
-        font-weight: 800;
+        font-weight: 680;
+        font-size: 17px;
+        letter-spacing: -0.02em;
+        flex-shrink: 0;
       }
 
-      .brand-mark {
-        display: grid;
-        width: 34px;
-        height: 34px;
-        place-items: center;
-        border: 1px solid rgba(15, 118, 110, 0.32);
-        border-radius: var(--radius);
-        color: var(--teal);
-        background: linear-gradient(135deg, #ffffff, #e4f4ef);
-        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+      .brand svg {
+        width: 26px;
+        height: 26px;
+        color: var(--mint);
       }
 
-      .brand-mark svg {
-        width: 20px;
-        height: 20px;
-      }
-
-      .nav-links {
-        display: flex;
-        align-items: center;
-        justify-content: flex-end;
-        gap: 4px;
-      }
-
-      .nav-links a {
-        padding: 9px 11px;
-        border-radius: var(--radius);
-        color: var(--ink-soft);
-        font-size: 14px;
-        font-weight: 700;
-      }
-
-      .nav-links a:hover {
-        color: var(--ink);
-        background: rgba(23, 32, 42, 0.06);
-      }
-
-      .nav-github {
+      .brand-tag {
+        font-family: var(--mono);
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        color: var(--text-3);
         border: 1px solid var(--line);
-        background: rgba(255, 255, 255, 0.72);
+        border-radius: 999px;
+        padding: 2px 7px;
       }
 
-      .hero {
-        position: relative;
-        min-height: min(650px, calc(100vh - 152px));
-        overflow: hidden;
-        padding: 0;
-        color: #fff;
-        background: var(--night);
-        isolation: isolate;
-      }
-
-      .hero::before {
-        position: absolute;
-        inset: 0;
-        z-index: -2;
-        content: "";
-        background:
-          linear-gradient(90deg, rgba(13, 21, 34, 0.9), rgba(13, 21, 34, 0.5) 46%, rgba(13, 21, 34, 0.12)),
-          url("images/tasks-overview.png") center / cover no-repeat;
-      }
-
-      .hero::after {
-        position: absolute;
-        inset: 0;
-        z-index: -1;
-        content: "";
-        background:
-          linear-gradient(180deg, rgba(17, 25, 39, 0.22), transparent 40%, rgba(17, 25, 39, 0.72)),
-          repeating-linear-gradient(
-            90deg,
-            rgba(255, 255, 255, 0.045) 0,
-            rgba(255, 255, 255, 0.045) 1px,
-            transparent 1px,
-            transparent 84px
-          );
-      }
-
-      .hero-inner {
-        display: grid;
-        width: min(1180px, calc(100% - 32px));
-        min-height: min(650px, calc(100vh - 152px));
-        margin: 0 auto;
-        align-content: center;
-        padding: 58px 0 68px;
-      }
-
-      .hero-copy {
-        max-width: 720px;
-      }
-
-      .eyebrow {
-        display: inline-flex;
-        align-items: center;
-        gap: 9px;
-        margin: 0 0 18px;
-        color: #d8f8ee;
-        font-size: 14px;
-        font-weight: 800;
-      }
-
-      .eyebrow::before {
-        width: 34px;
-        height: 2px;
-        background: var(--amber);
-        content: "";
-      }
-
-      h1,
-      h2,
-      h3,
-      p {
-        margin-top: 0;
-      }
-
-      h1 {
-        max-width: 700px;
-        margin-bottom: 22px;
-        font-family: "DIN Alternate", "Avenir Next Condensed", "MiSans", sans-serif;
-        font-size: 76px;
-        line-height: 0.96;
-        letter-spacing: 0;
-      }
-
-      .hero-lede {
-        max-width: 650px;
-        margin-bottom: 28px;
-        color: rgba(255, 255, 255, 0.9);
-        font-size: 20px;
-        line-height: 1.8;
-      }
-
-      .hero-actions,
-      .section-actions {
+      .topnav {
         display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        align-items: center;
+        gap: 26px;
+        margin-left: auto;
+        font-size: 14px;
+        color: var(--text-2);
       }
 
-      .button {
+      .topnav a {
+        position: relative;
+        transition: color 0.18s ease;
+      }
+
+      .topnav a::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 100%;
+        bottom: -6px;
+        height: 1.5px;
+        background: var(--mint);
+        transition: right 0.22s ease;
+      }
+
+      .topnav a:hover {
+        color: var(--text);
+      }
+
+      .topnav a:hover::after {
+        right: 0;
+      }
+
+      .ghost-star {
         display: inline-flex;
-        min-height: 44px;
         align-items: center;
-        justify-content: center;
-        gap: 9px;
-        padding: 12px 16px;
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        border-radius: var(--radius);
-        font-weight: 800;
-        line-height: 1;
-        transition:
-          transform 0.18s ease,
-          box-shadow 0.18s ease,
-          background 0.18s ease;
+        gap: 8px;
+        padding: 8px 15px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        font-size: 13.5px;
+        font-weight: 560;
+        color: var(--text);
+        background: var(--panel);
+        transition: border-color 0.2s ease, transform 0.2s ease, color 0.2s ease;
+        flex-shrink: 0;
       }
 
-      .button svg {
-        width: 18px;
-        height: 18px;
+      .ghost-star svg {
+        width: 16px;
+        height: 16px;
       }
 
-      .button:hover {
+      .ghost-star:hover {
+        border-color: var(--mint-dim);
+        color: var(--mint);
         transform: translateY(-1px);
       }
 
-      .button.primary {
-        color: #101820;
-        background: #fff;
-        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.18);
-      }
-
-      .button.primary:hover {
-        color: #101820;
-        background: #f0fbf8;
-      }
-
-      .button.secondary {
-        color: #fff;
-        background: rgba(255, 255, 255, 0.1);
-      }
-
-      .button.secondary:hover {
-        color: #fff;
-        background: rgba(255, 255, 255, 0.18);
-      }
-
-      .section-light .button.primary,
-      .section-paper .button.primary {
-        color: #fff;
-        background: var(--night);
-        box-shadow: 0 16px 34px rgba(17, 25, 39, 0.15);
-      }
-
-      .section-light .button.primary:hover,
-      .section-paper .button.primary:hover {
-        color: #fff;
-        background: #243248;
-      }
-
-      .section-light .button.secondary,
-      .section-paper .button.secondary {
-        color: var(--ink);
-        border-color: var(--line);
-        background: #fff;
-      }
-
-      .section-light .button.secondary:hover,
-      .section-paper .button.secondary:hover {
-        color: var(--ink);
-        background: #eef7f5;
-      }
-
-      .quick-strip {
-        border-bottom: 1px solid var(--line);
-        background: var(--night);
-      }
-
-      .quick-strip-inner {
-        display: grid;
-        width: min(1180px, calc(100% - 32px));
-        margin: 0 auto;
-        grid-template-columns: repeat(4, 1fr);
-        border-left: 1px solid rgba(255, 255, 255, 0.12);
-      }
-
-      .metric {
-        min-width: 0;
-        padding: 20px;
-        border-right: 1px solid rgba(255, 255, 255, 0.12);
-        color: rgba(255, 255, 255, 0.78);
-      }
-
-      .metric strong {
-        display: block;
-        margin-bottom: 6px;
-        color: #fff;
-        font-family: "DIN Alternate", "Avenir Next Condensed", "MiSans", sans-serif;
-        font-size: 30px;
-        letter-spacing: 0;
-      }
-
-      main {
+      /* ---------- hero ---------- */
+      .hero {
+        position: relative;
+        padding: 96px 0 76px;
         overflow: hidden;
       }
 
-      section {
-        padding: 88px 0;
+      .hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(760px 420px at 14% 8%, rgba(52, 229, 200, 0.13), transparent 62%),
+          radial-gradient(680px 400px at 88% 26%, rgba(86, 168, 255, 0.11), transparent 60%);
+        pointer-events: none;
       }
 
-      .section-dark {
-        color: #edf6f5;
-        background: #101820;
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+        background-size: 56px 56px;
+        mask-image: radial-gradient(circle at 50% 22%, #000 0%, transparent 76%);
+        pointer-events: none;
       }
 
-      .section-paper {
-        background: var(--paper);
-      }
-
-      .section-light {
-        background: var(--surface);
-      }
-
-      .wrap {
-        width: min(1180px, calc(100% - 32px));
-        margin: 0 auto;
-      }
-
-      .section-head {
+      .hero-in {
+        position: relative;
+        z-index: 1;
         display: grid;
-        max-width: 780px;
-        gap: 12px;
-        margin-bottom: 34px;
+        grid-template-columns: minmax(0, 1.04fr) minmax(0, 0.96fr);
+        gap: 56px;
+        align-items: center;
       }
 
-      .kicker {
-        color: var(--teal);
-        font-size: 13px;
-        font-weight: 900;
-      }
-
-      .section-dark .kicker {
-        color: #70e0cf;
-      }
-
-      h2 {
-        margin-bottom: 0;
-        font-family: "Avenir Next", "MiSans", "PingFang SC", sans-serif;
-        font-size: 42px;
-        line-height: 1.15;
-        letter-spacing: 0;
-      }
-
-      .section-head p,
-      .feature-card p,
-      .workflow-step p,
-      .release-panel p,
-      .github-panel p {
-        color: var(--muted);
-        font-size: 16px;
-        line-height: 1.8;
-      }
-
-      .section-dark .section-head p,
-      .section-dark .workflow-step p,
-      .section-dark .release-panel p {
-        color: rgba(237, 246, 245, 0.72);
-      }
-
-      .problem-grid {
-        display: grid;
-        grid-template-columns: 0.88fr 1.12fr;
-        gap: 28px;
-        align-items: stretch;
-      }
-
-      .problem-note {
-        padding: 28px;
+      .hero-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--text-2);
         border: 1px solid var(--line);
-        border-radius: var(--radius);
-        background: var(--surface);
-        box-shadow: var(--shadow);
+        background: var(--panel);
+        border-radius: 999px;
+        padding: 5px 13px;
+        margin-bottom: 26px;
       }
 
-      .problem-note h3 {
-        margin-bottom: 12px;
-        font-size: 22px;
-        line-height: 1.3;
+      .pulse {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--mint);
+        box-shadow: 0 0 0 0 rgba(52, 229, 200, 0.55);
+        animation: pulse 2.4s ease-out infinite;
       }
 
-      .problem-note p {
-        margin-bottom: 0;
-        color: var(--ink-soft);
-        line-height: 1.85;
+      @keyframes pulse {
+        70% {
+          box-shadow: 0 0 0 9px rgba(52, 229, 200, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(52, 229, 200, 0);
+        }
       }
 
-      .feature-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 14px;
+      .hero h1 {
+        font-size: clamp(38px, 5.4vw, 62px);
+        letter-spacing: -0.035em;
+        margin-bottom: 20px;
       }
 
-      .feature-card,
-      .workflow-step,
-      .release-panel,
-      .github-panel,
-      .shot,
-      .quick-card {
-        border: 1px solid var(--line);
-        border-radius: var(--radius);
-        background: var(--surface);
+      .hero h1 em {
+        font-style: normal;
+        background: linear-gradient(96deg, var(--mint), var(--sky));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
       }
 
-      .feature-card {
-        min-height: 230px;
-        padding: 22px;
-      }
-
-      .feature-card h3,
-      .workflow-step h3,
-      .release-panel h3,
-      .github-panel h3,
-      .quick-card h3 {
-        margin-bottom: 10px;
-        font-size: 19px;
-        line-height: 1.35;
-      }
-
-      .feature-icon {
-        display: grid;
-        width: 42px;
-        height: 42px;
+      .hero-lede {
+        font-size: 17.5px;
+        color: var(--text-2);
+        max-width: 40ch;
         margin-bottom: 18px;
-        place-items: center;
-        border: 1px solid rgba(15, 118, 110, 0.26);
-        border-radius: var(--radius);
-        color: var(--teal);
-        background: #effbf7;
       }
 
-      .feature-icon svg {
-        width: 22px;
-        height: 22px;
+      .hero-sub {
+        font-size: 15px;
+        color: var(--text-3);
+        max-width: 46ch;
+        margin-bottom: 32px;
       }
 
-      .workflow {
+      .hero-cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 38px;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        padding: 13px 22px;
+        border-radius: var(--r-sm);
+        font-size: 15px;
+        font-weight: 600;
+        border: 1px solid transparent;
+        cursor: pointer;
+        transition: transform 0.18s ease, box-shadow 0.22s ease, background 0.2s ease,
+          border-color 0.2s ease;
+      }
+
+      .btn svg {
+        width: 17px;
+        height: 17px;
+        flex-shrink: 0;
+      }
+
+      .btn-primary {
+        background: linear-gradient(180deg, var(--mint), var(--mint-dim));
+        color: #04120f;
+        box-shadow: 0 10px 26px -10px rgba(52, 229, 200, 0.6);
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 16px 34px -12px rgba(52, 229, 200, 0.7);
+      }
+
+      .btn-ghost {
+        background: var(--panel);
+        border-color: var(--line);
+        color: var(--text);
+      }
+
+      .btn-ghost:hover {
+        border-color: #2f4257;
+        background: var(--panel-2);
+        transform: translateY(-2px);
+      }
+
+      .hero-stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 30px 40px;
+        padding-top: 26px;
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .hero-stats div strong {
+        display: block;
+        font-family: var(--mono);
+        font-size: 25px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: var(--text);
+      }
+
+      .hero-stats div span {
+        font-size: 12.5px;
+        color: var(--text-3);
+      }
+
+      /* ---------- hero pipeline card ---------- */
+      .pipe-card {
+        position: relative;
+        background: linear-gradient(168deg, var(--panel), #0d141d);
+        border: 1px solid var(--line);
+        border-radius: var(--r-lg);
+        padding: 20px;
+        box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 0.9);
+      }
+
+      .pipe-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--line-soft);
+        margin-bottom: 20px;
+      }
+
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #23303f;
+      }
+
+      .dot.live {
+        background: var(--mint);
+      }
+
+      .pipe-title {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text-3);
+        margin-left: 6px;
+      }
+
+      .pipe-mode {
+        margin-left: auto;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        letter-spacing: 0.08em;
+        color: var(--mint);
+        border: 1px solid rgba(52, 229, 200, 0.32);
+        background: rgba(52, 229, 200, 0.08);
+        border-radius: 999px;
+        padding: 3px 9px;
+      }
+
+      .pipe-svg {
+        width: 100%;
+        height: auto;
+      }
+
+      .flow-dot {
+        fill: var(--mint);
+      }
+
+      .pipe-rows {
+        margin-top: 18px;
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1px;
+        gap: 9px;
+      }
+
+      .pipe-row {
+        display: grid;
+        grid-template-columns: 15px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 11px;
+        padding: 9px 12px;
+        background: rgba(255, 255, 255, 0.022);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--r-sm);
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+
+      .pipe-row .name {
+        color: var(--text-2);
         overflow: hidden;
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        border-radius: var(--radius);
-        background: rgba(255, 255, 255, 0.16);
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
-      .workflow-step {
-        min-height: 245px;
-        padding: 28px;
-        border: 0;
-        color: #edf6f5;
-        background: rgba(255, 255, 255, 0.06);
+      .pipe-row .state {
+        font-size: 10.5px;
+        letter-spacing: 0.05em;
       }
 
-      .workflow-step span {
-        display: inline-grid;
-        width: 34px;
-        height: 34px;
-        margin-bottom: 48px;
-        place-items: center;
-        border: 1px solid rgba(112, 224, 207, 0.36);
-        border-radius: var(--radius);
-        color: #70e0cf;
-        font-weight: 900;
+      .tick {
+        width: 15px;
+        height: 15px;
       }
 
-      .workflow-step h3 {
-        color: #fff;
+      .s-done .state {
+        color: var(--mint);
       }
 
-      .screens {
+      .s-run .state {
+        color: var(--sky);
+      }
+
+      .s-wait .state {
+        color: var(--text-3);
+      }
+
+      .s-fail .state {
+        color: var(--rose);
+      }
+
+      .bar {
+        margin-top: 16px;
+        height: 4px;
+        border-radius: 999px;
+        background: #16202c;
+        overflow: hidden;
+      }
+
+      .bar i {
+        display: block;
+        height: 100%;
+        width: 68%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--mint-dim), var(--mint));
+      }
+
+      .bar-meta {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 9px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-3);
+      }
+
+      /* ---------- generic section ---------- */
+      section {
+        position: relative;
+      }
+
+      .band {
+        padding: 88px 0;
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .band-alt {
+        background: var(--bg-2);
+      }
+
+      .sec-head {
+        max-width: 62ch;
+        margin-bottom: 46px;
+      }
+
+      .sec-head.center {
+        margin-inline: auto;
+        text-align: center;
+      }
+
+      .sec-head h2 {
+        font-size: clamp(26px, 3.3vw, 38px);
+        margin: 14px 0 16px;
+      }
+
+      .sec-head p {
+        color: var(--text-2);
+        font-size: 16.5px;
+      }
+
+      /* ---------- pain / gain ---------- */
+      .pain-grid {
         display: grid;
-        grid-template-columns: 1.08fr 0.92fr;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 16px;
+      }
+
+      .pain {
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        background: var(--panel);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .pain::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: var(--rose);
+        opacity: 0.65;
+      }
+
+      .pain.gain::before {
+        background: var(--mint);
+      }
+
+      .pain h3 {
+        font-size: 16px;
+        margin-bottom: 9px;
+      }
+
+      .pain p {
+        font-size: 14.5px;
+        color: var(--text-2);
+      }
+
+      .pain-q {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--text-3);
+        display: block;
+        margin-bottom: 12px;
+      }
+
+      /* ---------- features ---------- */
+      .feat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(288px, 1fr));
+        gap: 1px;
+        background: var(--line-soft);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--r);
+        overflow: hidden;
+      }
+
+      .feat {
+        background: var(--bg);
+        padding: 30px 26px;
+        transition: background 0.25s ease;
+      }
+
+      .band-alt .feat {
+        background: var(--bg-2);
+      }
+
+      .feat:hover {
+        background: var(--panel);
+      }
+
+      .feat-ico {
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+        border-radius: 9px;
+        background: rgba(52, 229, 200, 0.09);
+        border: 1px solid rgba(52, 229, 200, 0.2);
+        color: var(--mint);
+        margin-bottom: 18px;
+      }
+
+      .feat-ico svg {
+        width: 19px;
+        height: 19px;
+      }
+
+      .feat.c-sky .feat-ico {
+        background: rgba(86, 168, 255, 0.09);
+        border-color: rgba(86, 168, 255, 0.22);
+        color: var(--sky);
+      }
+
+      .feat.c-amber .feat-ico {
+        background: rgba(245, 177, 61, 0.09);
+        border-color: rgba(245, 177, 61, 0.22);
+        color: var(--amber);
+      }
+
+      .feat.c-violet .feat-ico {
+        background: rgba(167, 139, 250, 0.1);
+        border-color: rgba(167, 139, 250, 0.22);
+        color: var(--violet);
+      }
+
+      .feat.c-rose .feat-ico {
+        background: rgba(242, 104, 140, 0.09);
+        border-color: rgba(242, 104, 140, 0.22);
+        color: var(--rose);
+      }
+
+      .feat h3 {
+        font-size: 16.5px;
+        margin-bottom: 10px;
+      }
+
+      .feat p {
+        font-size: 14.5px;
+        color: var(--text-2);
+      }
+
+      .feat ul {
+        margin-top: 14px;
+        display: grid;
+        gap: 7px;
+      }
+
+      .feat li {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text-3);
+        padding-left: 14px;
+        position: relative;
+      }
+
+      .feat li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 8px;
+        width: 5px;
+        height: 5px;
+        border-radius: 1px;
+        background: currentColor;
+        opacity: 0.6;
+      }
+
+      /* ---------- sync modes ---------- */
+      .modes {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
         gap: 18px;
+      }
+
+      .mode {
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        background: var(--panel);
+        padding: 26px 24px 24px;
+      }
+
+      .mode-top {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+
+      .mode-top h3 {
+        font-size: 18px;
+      }
+
+      .mode-en {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-3);
+        letter-spacing: 0.06em;
+      }
+
+      .mode-viz {
+        display: grid;
+        gap: 7px;
+        margin-bottom: 18px;
+        font-family: var(--mono);
+        font-size: 11.5px;
+      }
+
+      .viz-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--text-3);
+      }
+
+      .viz-chip {
+        min-width: 62px;
+        text-align: center;
+        padding: 4px 8px;
+        border-radius: 4px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.02);
+        color: var(--text-2);
+      }
+
+      .viz-chip.keep {
+        border-color: rgba(52, 229, 200, 0.35);
+        color: var(--mint);
+        background: rgba(52, 229, 200, 0.07);
+      }
+
+      .viz-chip.gone {
+        border-color: rgba(242, 104, 140, 0.32);
+        color: var(--rose);
+        background: rgba(242, 104, 140, 0.06);
+        text-decoration: line-through;
+      }
+
+      .viz-arrow {
+        color: var(--text-3);
+        flex-shrink: 0;
+      }
+
+      .mode p {
+        font-size: 14.5px;
+        color: var(--text-2);
+      }
+
+      .mode-use {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid var(--line-soft);
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text-3);
+      }
+
+      /* ---------- workflow ---------- */
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 20px;
+        counter-reset: step;
+      }
+
+      .step {
+        position: relative;
+        padding-top: 26px;
+        border-top: 2px solid var(--line);
+        counter-increment: step;
+      }
+
+      .step::before {
+        content: "0" counter(step);
+        position: absolute;
+        top: -13px;
+        left: 0;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        color: var(--mint);
+        background: var(--bg);
+        padding-right: 12px;
+      }
+
+      .band-alt .step::before {
+        background: var(--bg-2);
+      }
+
+      .step h3 {
+        font-size: 17px;
+        margin-bottom: 10px;
+      }
+
+      .step p {
+        font-size: 14.5px;
+        color: var(--text-2);
+      }
+
+      /* ---------- demo ---------- */
+      .demo {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.65fr);
+        gap: 30px;
         align-items: start;
       }
 
-      .shot {
+      .demo-frame {
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: var(--r);
         overflow: hidden;
-        background: #fff;
-        box-shadow: 0 12px 32px rgba(23, 32, 42, 0.08);
+        background: #0a0f16;
+        box-shadow: 0 26px 60px -30px rgba(0, 0, 0, 0.85);
+      }
+
+      .demo-frame img {
+        width: 100%;
+      }
+
+      .demo-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .demo-item {
+        padding: 15px 17px;
+        border: 1px solid var(--line);
+        border-left: 2px solid var(--mint);
+        border-radius: 0 var(--r-sm) var(--r-sm) 0;
+        background: var(--panel);
+      }
+
+      .demo-item strong {
+        display: block;
+        font-size: 14.5px;
+        margin-bottom: 4px;
+      }
+
+      .demo-item span {
+        font-size: 13.5px;
+        color: var(--text-3);
+      }
+
+      @media (max-width: 900px) {
+        .demo {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* ---------- gallery tabs ---------- */
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 22px;
+      }
+
+      .tab {
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        padding: 8px 15px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text-2);
+        cursor: pointer;
+        transition: all 0.18s ease;
+      }
+
+      .tab:hover {
+        color: var(--text);
+        border-color: #2c3d50;
+      }
+
+      .tab[aria-selected="true"] {
+        background: rgba(52, 229, 200, 0.1);
+        border-color: rgba(52, 229, 200, 0.4);
+        color: var(--mint);
+      }
+
+      .shot {
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        background: var(--panel);
+        overflow: hidden;
+      }
+
+      .shot-bar {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--line-soft);
+        background: #0d141d;
+      }
+
+      .shot-bar span:last-child {
+        margin-left: 8px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-3);
       }
 
       .shot figcaption {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        min-height: 58px;
-        padding: 0 16px;
-        border-top: 1px solid var(--line);
-        color: var(--ink-soft);
+        padding: 14px 18px 18px;
         font-size: 14px;
-        font-weight: 800;
+        color: var(--text-2);
+        border-top: 1px solid var(--line-soft);
       }
 
       .shot img {
         width: 100%;
-        aspect-ratio: 16 / 9.6;
-        object-fit: cover;
-        object-position: top left;
-        background: #eef2f5;
+        background: #0a0f16;
       }
 
-      .shot-large img {
-        aspect-ratio: 16 / 10.2;
+      .shot[hidden] {
+        display: none;
       }
 
-      .shot-stack {
-        display: grid;
-        gap: 18px;
+      /* ---------- comparison ---------- */
+      .table-scroll {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        background: var(--panel);
       }
 
-      .quick-layout {
-        display: grid;
-        grid-template-columns: 0.72fr 1.28fr;
-        gap: 22px;
-        align-items: start;
-        min-width: 0;
+      table {
+        width: 100%;
+        min-width: 720px;
+        border-collapse: collapse;
+        font-size: 14px;
       }
 
-      .quick-card {
-        position: sticky;
-        top: 88px;
-        min-width: 0;
-        padding: 24px;
+      th,
+      td {
+        text-align: left;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--line-soft);
+        vertical-align: top;
       }
 
-      .quick-card p {
-        margin-bottom: 18px;
-        color: var(--ink-soft);
-        line-height: 1.8;
+      thead th {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+        background: #0d141d;
+        white-space: nowrap;
       }
 
-      .check-list,
-      .plain-list {
-        display: grid;
-        gap: 11px;
-        margin: 0;
-        padding: 0;
-        list-style: none;
+      thead th:first-child {
+        color: var(--text-2);
       }
 
-      .check-list li,
-      .plain-list li {
-        display: grid;
-        grid-template-columns: 22px 1fr;
-        gap: 10px;
-        color: var(--ink-soft);
-        line-height: 1.55;
+      thead th.hl {
+        color: var(--mint);
       }
 
-      .check-list li::before {
-        display: grid;
-        width: 22px;
-        height: 22px;
-        place-items: center;
-        border-radius: 50%;
-        color: #fff;
-        background: var(--green);
-        content: "✓";
+      tbody th {
+        font-weight: 520;
+        color: var(--text-2);
+        font-size: 14px;
+        white-space: nowrap;
+      }
+
+      td.hl {
+        color: var(--text);
+        background: rgba(52, 229, 200, 0.045);
+        font-weight: 520;
+      }
+
+      td {
+        color: var(--text-3);
+      }
+
+      tbody tr:last-child th,
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+
+      .table-note {
+        margin-top: 14px;
         font-size: 13px;
-        font-weight: 900;
+        color: var(--text-3);
       }
 
-      .plain-list li::before {
+      /* ---------- quickstart ---------- */
+      .qs {
         display: grid;
-        width: 22px;
-        height: 22px;
-        place-items: center;
-        border: 1px solid rgba(37, 99, 235, 0.3);
-        border-radius: 50%;
-        color: var(--blue);
-        content: attr(data-step);
-        font-size: 12px;
-        font-weight: 900;
+        grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+        gap: 34px;
+        align-items: start;
       }
 
-      .docs-flow {
-        display: grid;
-        gap: 18px;
-        min-width: 0;
+      .code-card {
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        overflow: hidden;
+        background: #0a0f16;
       }
 
-      .doc-block {
-        min-width: 0;
-        border: 1px solid #243248;
-        border-radius: var(--radius);
-        background: var(--code);
-        box-shadow: 0 18px 45px rgba(13, 21, 34, 0.22);
-      }
-
-      .doc-title {
+      .code-head {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 14px 16px;
-        border-bottom: 1px solid #243248;
-        color: #edf6f5;
-        font-size: 14px;
-        font-weight: 900;
+        gap: 10px;
+        padding: 10px 12px 10px 16px;
+        background: #0d141d;
+        border-bottom: 1px solid var(--line-soft);
       }
 
-      .copy-btn {
+      .code-head .fname {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text-3);
+      }
+
+      .copy {
+        margin-left: auto;
         display: inline-flex;
-        min-height: 34px;
         align-items: center;
-        justify-content: center;
-        gap: 8px;
-        padding: 8px 10px;
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        border-radius: var(--radius);
-        color: #dbeafe;
-        background: rgba(255, 255, 255, 0.06);
+        gap: 6px;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        padding: 6px 11px;
+        border-radius: var(--r-sm);
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text-2);
         cursor: pointer;
-        font: inherit;
-        font-size: 13px;
-        font-weight: 800;
+        transition: all 0.18s ease;
       }
 
-      .copy-btn:hover {
-        background: rgba(255, 255, 255, 0.12);
+      .copy svg {
+        width: 13px;
+        height: 13px;
+      }
+
+      .copy:hover {
+        color: var(--mint);
+        border-color: rgba(52, 229, 200, 0.4);
+      }
+
+      .copy.ok {
+        color: var(--mint);
+        border-color: rgba(52, 229, 200, 0.5);
       }
 
       pre {
         margin: 0;
-        overflow-x: auto;
         padding: 18px;
+        overflow-x: auto;
+        font-size: 13px;
+        line-height: 1.75;
+        color: #cddae8;
       }
 
-      code {
-        font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 14px;
-        line-height: 1.7;
+      pre .c {
+        color: #56728c;
       }
 
-      pre code {
-        color: #e7eef8;
+      pre .k {
+        color: var(--mint);
       }
 
-      .inline-code {
-        padding: 2px 6px;
-        border-radius: 5px;
-        color: #0f3f3a;
-        background: #dff7ee;
-        font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-        font-size: 0.92em;
+      pre .s {
+        color: var(--amber);
       }
 
-      .release-grid {
+      .qs-steps {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 16px;
+        gap: 14px;
       }
 
-      .release-panel {
-        padding: 22px;
-        background: rgba(255, 255, 255, 0.06);
-        border-color: rgba(255, 255, 255, 0.14);
+      .qs-step {
+        display: grid;
+        grid-template-columns: 26px minmax(0, 1fr);
+        gap: 14px;
+        padding: 16px 18px;
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        background: var(--panel);
       }
 
-      .release-panel h3 {
-        color: #fff;
+      .qs-num {
+        width: 26px;
+        height: 26px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        border: 1px solid rgba(52, 229, 200, 0.35);
+        background: rgba(52, 229, 200, 0.08);
+        color: var(--mint);
+        font-family: var(--mono);
+        font-size: 11.5px;
       }
 
-      .tag-row {
+      .qs-step h3 {
+        font-size: 15px;
+        margin-bottom: 6px;
+      }
+
+      .qs-step p {
+        font-size: 14px;
+        color: var(--text-2);
+      }
+
+      .qs-step code {
+        font-size: 12.5px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--mint);
+      }
+
+      .warn {
+        margin-top: 16px;
+        padding: 16px 18px;
+        border-radius: var(--r);
+        border: 1px solid rgba(245, 177, 61, 0.28);
+        background: rgba(245, 177, 61, 0.06);
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr);
+        gap: 12px;
+      }
+
+      .warn svg {
+        width: 18px;
+        height: 18px;
+        color: var(--amber);
+        margin-top: 2px;
+      }
+
+      .warn p {
+        font-size: 13.5px;
+        color: #e3d3b4;
+      }
+
+      /* ---------- channels + platforms ---------- */
+      .chips {
         display: flex;
         flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 18px;
-      }
-
-      .tag {
-        display: inline-flex;
-        min-height: 30px;
-        align-items: center;
-        padding: 6px 10px;
-        border: 1px solid rgba(112, 224, 207, 0.26);
-        border-radius: 999px;
-        color: #d8f8ee;
-        font-size: 13px;
-        font-weight: 800;
-      }
-
-      .github-layout {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 18px;
-        align-items: stretch;
-      }
-
-      .github-panel {
-        display: grid;
-        align-content: start;
-        gap: 14px;
-        padding: 26px;
-      }
-
-      .github-panel strong {
-        color: var(--ink);
-      }
-
-      .link-list {
-        display: grid;
         gap: 10px;
-        margin: 8px 0 0;
-        padding: 0;
-        list-style: none;
       }
 
-      .link-list a {
-        display: flex;
+      .chip {
+        display: inline-flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        min-height: 44px;
-        padding: 11px 12px;
+        gap: 8px;
+        padding: 10px 16px;
+        border-radius: 999px;
         border: 1px solid var(--line);
-        border-radius: var(--radius);
-        color: var(--ink-soft);
-        font-weight: 800;
-        background: #fbfcfd;
-      }
-
-      .link-list a:hover {
-        color: var(--ink);
-        border-color: rgba(37, 99, 235, 0.4);
-      }
-
-      .site-footer {
-        padding: 32px 0;
-        color: rgba(255, 255, 255, 0.72);
-        background: var(--night);
-      }
-
-      .footer-inner {
-        display: flex;
-        width: min(1180px, calc(100% - 32px));
-        margin: 0 auto;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
+        background: var(--panel);
         font-size: 14px;
+        color: var(--text-2);
+        transition: border-color 0.2s ease, color 0.2s ease;
       }
 
-      .footer-inner a {
-        color: #d8f8ee;
-        font-weight: 800;
+      .chip:hover {
+        border-color: rgba(52, 229, 200, 0.36);
+        color: var(--text);
       }
 
-      @media (max-width: 940px) {
-        .nav {
-          min-height: auto;
-          padding: 13px 0;
-          align-items: flex-start;
-        }
+      .chip b {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--mint);
+      }
 
-        .nav-links {
-          max-width: 460px;
-          flex-wrap: wrap;
-        }
+      .plat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 14px;
+        margin-top: 8px;
+      }
 
-        h1 {
-          font-size: 58px;
-        }
+      .plat {
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        background: var(--panel);
+      }
 
-        h2 {
-          font-size: 34px;
-        }
+      .plat strong {
+        display: block;
+        font-family: var(--mono);
+        font-size: 13.5px;
+        color: var(--mint);
+        margin-bottom: 6px;
+      }
 
-        .quick-strip-inner,
-        .feature-grid,
-        .workflow,
-        .release-grid,
-        .github-layout,
-        .problem-grid,
-        .screens,
-        .quick-layout {
+      .plat span {
+        font-size: 13.5px;
+        color: var(--text-3);
+      }
+
+      /* ---------- star cta ---------- */
+      .cta {
+        position: relative;
+        padding: 84px 0;
+        overflow: hidden;
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .cta::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(620px 300px at 50% 0%, rgba(52, 229, 200, 0.14), transparent 70%);
+        pointer-events: none;
+      }
+
+      .cta-in {
+        position: relative;
+        text-align: center;
+        max-width: 640px;
+        margin-inline: auto;
+      }
+
+      .cta h2 {
+        font-size: clamp(26px, 3.4vw, 36px);
+        margin: 16px 0 16px;
+      }
+
+      .cta p {
+        color: var(--text-2);
+        margin-bottom: 30px;
+      }
+
+      .cta-row {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      /* ---------- footer ---------- */
+      footer {
+        padding: 44px 0;
+        border-top: 1px solid var(--line-soft);
+        background: var(--bg-2);
+      }
+
+      .foot-in {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px 34px;
+        align-items: center;
+        font-size: 13.5px;
+        color: var(--text-3);
+      }
+
+      .foot-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 22px;
+        margin-left: auto;
+      }
+
+      .foot-links a:hover {
+        color: var(--mint);
+      }
+
+      /* ---------- reveal ---------- */
+      .rv {
+        opacity: 0;
+        transform: translateY(18px);
+        transition: opacity 0.6s cubic-bezier(0.2, 0.7, 0.3, 1),
+          transform 0.6s cubic-bezier(0.2, 0.7, 0.3, 1);
+      }
+
+      .rv.in {
+        opacity: 1;
+        transform: none;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      /* ---------- responsive ---------- */
+      @media (max-width: 980px) {
+        .hero-in,
+        .qs {
           grid-template-columns: 1fr;
         }
 
-        .quick-card {
-          position: static;
+        .hero {
+          padding: 68px 0 60px;
+        }
+
+        .topnav {
+          display: none;
+        }
+
+        .ghost-star {
+          margin-left: auto;
         }
       }
 
-      @media (max-width: 680px) {
-        .site-header {
-          position: static;
+      @media (max-width: 620px) {
+        .band {
+          padding: 64px 0;
         }
 
-        .nav {
-          width: min(100% - 24px, 1180px);
-          display: grid;
+        .wrap {
+          padding-inline: 18px;
         }
 
-        .nav-links {
-          justify-content: flex-start;
+        .hero-stats {
+          gap: 22px 30px;
         }
 
-        .hero,
-        .hero-inner {
-          min-height: min(560px, calc(100vh - 150px));
+        .hero-stats div strong {
+          font-size: 21px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
         }
 
-        .hero-inner {
-          width: min(100% - 24px, 1180px);
-          padding: 44px 0 52px;
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.001ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.001ms !important;
         }
 
-        h1 {
-          font-size: 44px;
-          line-height: 1.05;
-        }
-
-        .hero-lede {
-          font-size: 17px;
-        }
-
-        section {
-          padding: 62px 0;
-        }
-
-        .wrap,
-        .quick-strip-inner,
-        .footer-inner {
-          width: min(100% - 24px, 1180px);
-        }
-
-        .metric {
-          padding: 16px;
-        }
-
-        .feature-card,
-        .workflow-step,
-        .release-panel,
-        .github-panel,
-        .quick-card,
-        .problem-note {
-          padding: 18px;
-        }
-
-        .shot figcaption,
-        .doc-title,
-        .footer-inner {
-          align-items: flex-start;
-          flex-direction: column;
+        .rv {
+          opacity: 1;
+          transform: none;
         }
       }
     </style>
   </head>
+
   <body>
-    <a class="skip-link" href="#main">跳到正文</a>
-    <header class="site-header" aria-label="OpenSync 导航">
-      <nav class="nav">
-        <a class="brand" href="#top" aria-label="OpenSync 首页">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M4 12h5l2-4 4 8 2-4h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M5 18h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-              <path d="M5 6h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-            </svg>
-          </span>
+    <a class="skip" href="#main">跳到正文</a>
+
+    <header class="topbar" id="topbar">
+      <div class="wrap topbar-in">
+        <a class="brand" href="#top">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 12h5l3-6 5 13 2-4h1" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
           <span>OpenSync</span>
+          <span class="brand-tag">latest</span>
         </a>
-        <div class="nav-links" aria-label="页面章节">
-          <a href="#features">功能</a>
-          <a href="#screenshots">界面</a>
-          <a href="#quickstart">快速开始</a>
-          <a href="#release">发布</a>
-          <a class="nav-github" href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noreferrer">GitHub</a>
-        </div>
-      </nav>
+        <nav class="topnav" aria-label="页面章节">
+          <a href="#why">为什么</a>
+          <a href="#features">能力</a>
+          <a href="#modes">同步模式</a>
+          <a href="#demo">演示</a>
+          <a href="#gallery">界面</a>
+          <a href="#compare">对比</a>
+          <a href="#start">部署</a>
+        </nav>
+        <a class="ghost-star" href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 .5C5.7.5.5 5.7.5 12c0 5 3.3 9.3 7.8 10.8.6.1.8-.2.8-.6v-2.2c-3.2.7-3.8-1.4-3.8-1.4-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.7 2.7 1.2 3.3.9.1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C18.4 3.4 19.4 3.7 19.4 3.7c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.8-5.8 7.8-10.8C23.5 5.7 18.3.5 12 .5Z" />
+          </svg>
+          Star on GitHub
+        </a>
+      </div>
     </header>
 
     <main id="main">
       <section class="hero" id="top">
-        <div class="hero-inner">
-          <div class="hero-copy">
-            <p class="eyebrow">飞牛 fnOS / NAS / Docker</p>
-            <h1>OpenSync</h1>
+        <div class="wrap hero-in">
+          <div>
+            <span class="hero-eyebrow"><i class="pulse" aria-hidden="true"></i>飞牛 fnOS · NAS · Docker</span>
+            <h1>给 AList 装上<br /><em>会自己干活的同步任务台</em></h1>
             <p class="hero-lede">
-              面向 AList / OpenList 的自动同步工具，把本地目录、网盘、对象存储、WebDAV 等存储端接入同一个可视化任务台，用来做备份、归档和迁移。
+              AList / OpenList 帮你把网盘、对象存储、WebDAV 都接进来了，剩下的定时备份、镜像、归档和迁移，交给 OpenSync。
             </p>
-            <div class="hero-actions">
-              <a class="button primary" href="#quickstart">
+            <p class="hero-sub">
+              不用再写一串 rclone 命令，也不用守着终端看日志。配好一次任务，它按点执行、实时报进度、失败能重试、结束发通知。
+            </p>
+            <div class="hero-cta">
+              <a class="btn btn-primary" href="#start">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path d="M5 12h13" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
                   <path d="m13 6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
                 5 分钟部署
               </a>
-              <a class="button secondary" href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noreferrer">
+              <a class="btn btn-ghost" href="#gallery">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M9 19c-4 1.5-4-2.5-5-3m10 6v-3.9c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6A4.6 4.6 0 0 0 17.7 7 4.2 4.2 0 0 0 17.6 4s-1.1-.3-3.6 1.3a12.4 12.4 0 0 0-6.5 0C5 3.7 3.9 4 3.9 4a4.2 4.2 0 0 0-.1 3A4.6 4.6 0 0 0 2.5 10c0 4.6 2.7 5.7 5.5 6-.5.5-.8 1.1-.8 2V22" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                  <rect x="3" y="4" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.8" />
+                  <path d="m10 9 5 3-5 3V9Z" fill="currentColor" />
                 </svg>
-                查看仓库
+                看真实界面
               </a>
             </div>
+            <div class="hero-stats">
+              <div>
+                <strong>12k+</strong>
+                <span>Docker Hub 拉取</span>
+              </div>
+              <div>
+                <strong>3</strong>
+                <span>同步模式</span>
+              </div>
+              <div>
+                <strong>5+</strong>
+                <span>通知渠道</span>
+              </div>
+              <div>
+                <strong>MIT</strong>
+                <span>完全开源</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="pipe-card" role="img" aria-label="OpenSync 任务运行示意：本地相册目录通过 OpenSync 同步到网盘与对象存储，界面显示每个文件的完成、进行中、等待和失败状态">
+            <div class="pipe-head">
+              <span class="dot"></span><span class="dot"></span><span class="dot live"></span>
+              <span class="pipe-title">task / 相册月度备份</span>
+              <span class="pipe-mode">运行中</span>
+            </div>
+
+            <svg class="pipe-svg" viewBox="0 0 420 132" fill="none" aria-hidden="true">
+              <rect x="1" y="24" width="104" height="40" rx="8" fill="#161f2c" stroke="#1f2b3a" />
+              <text x="53" y="41" fill="#a4b3c4" font-size="10.5" font-family="monospace" text-anchor="middle">/photos</text>
+              <text x="53" y="55" fill="#6f8093" font-size="9" font-family="monospace" text-anchor="middle">本地目录</text>
+
+              <rect x="1" y="76" width="104" height="40" rx="8" fill="#161f2c" stroke="#1f2b3a" />
+              <text x="53" y="93" fill="#a4b3c4" font-size="10.5" font-family="monospace" text-anchor="middle">/downloads</text>
+              <text x="53" y="107" fill="#6f8093" font-size="9" font-family="monospace" text-anchor="middle">下载目录</text>
+
+              <rect x="158" y="44" width="104" height="48" rx="10" fill="#0f2b28" stroke="#34e5c8" stroke-opacity="0.5" />
+              <text x="210" y="65" fill="#34e5c8" font-size="11" font-family="monospace" text-anchor="middle">OpenSync</text>
+              <text x="210" y="79" fill="#6f8093" font-size="8.5" font-family="monospace" text-anchor="middle">调度 · 过滤 · 重试</text>
+
+              <rect x="315" y="8" width="104" height="36" rx="8" fill="#161f2c" stroke="#1f2b3a" />
+              <text x="367" y="30" fill="#a4b3c4" font-size="10" font-family="monospace" text-anchor="middle">网盘</text>
+
+              <rect x="315" y="50" width="104" height="36" rx="8" fill="#161f2c" stroke="#1f2b3a" />
+              <text x="367" y="72" fill="#a4b3c4" font-size="10" font-family="monospace" text-anchor="middle">对象存储</text>
+
+              <rect x="315" y="92" width="104" height="36" rx="8" fill="#161f2c" stroke="#1f2b3a" />
+              <text x="367" y="114" fill="#a4b3c4" font-size="10" font-family="monospace" text-anchor="middle">WebDAV</text>
+
+              <path id="w1" d="M105 44 C132 44 132 60 158 62" stroke="#1f2b3a" stroke-width="1.6" />
+              <path id="w2" d="M105 96 C132 96 132 76 158 74" stroke="#1f2b3a" stroke-width="1.6" />
+              <path id="w3" d="M262 58 C288 58 288 26 315 26" stroke="#1f2b3a" stroke-width="1.6" />
+              <path id="w4" d="M262 68 L315 68" stroke="#1f2b3a" stroke-width="1.6" />
+              <path id="w5" d="M262 78 C288 78 288 110 315 110" stroke="#1f2b3a" stroke-width="1.6" />
+
+              <circle class="flow-dot" r="2.6">
+                <animateMotion dur="2.6s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear">
+                  <mpath href="#w1" />
+                </animateMotion>
+              </circle>
+              <circle class="flow-dot" r="2.6">
+                <animateMotion dur="2.6s" begin="1.3s" repeatCount="indefinite">
+                  <mpath href="#w2" />
+                </animateMotion>
+              </circle>
+              <circle class="flow-dot" r="2.6">
+                <animateMotion dur="2.2s" begin="0.5s" repeatCount="indefinite">
+                  <mpath href="#w3" />
+                </animateMotion>
+              </circle>
+              <circle class="flow-dot" r="2.6">
+                <animateMotion dur="2.2s" begin="1.1s" repeatCount="indefinite">
+                  <mpath href="#w4" />
+                </animateMotion>
+              </circle>
+              <circle class="flow-dot" r="2.6">
+                <animateMotion dur="2.2s" begin="1.7s" repeatCount="indefinite">
+                  <mpath href="#w5" />
+                </animateMotion>
+              </circle>
+            </svg>
+
+            <div class="pipe-rows">
+              <div class="pipe-row s-done">
+                <svg class="tick" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke="#34e5c8" stroke-width="2" />
+                  <path d="m8.5 12 2.4 2.4 4.6-5" stroke="#34e5c8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <span class="name">IMG_20260812_family.heic</span>
+                <span class="state">已完成</span>
+              </div>
+              <div class="pipe-row s-run">
+                <svg class="tick" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke="#56a8ff" stroke-width="2" stroke-dasharray="14 30" />
+                </svg>
+                <span class="name">2026-08-summer.mp4</span>
+                <span class="state">62% · 18.4 MB/s</span>
+              </div>
+              <div class="pipe-row s-wait">
+                <svg class="tick" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke="#6f8093" stroke-width="2" />
+                  <path d="M12 8v4.4l2.6 1.6" stroke="#6f8093" stroke-width="2" stroke-linecap="round" />
+                </svg>
+                <span class="name">docs/年度报表.xlsx</span>
+                <span class="state">等待中</span>
+              </div>
+              <div class="pipe-row s-fail">
+                <svg class="tick" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke="#f2688c" stroke-width="2" />
+                  <path d="M12 8v5m0 3h.01" stroke="#f2688c" stroke-width="2" stroke-linecap="round" />
+                </svg>
+                <span class="name">raw/DSC_0912.NEF</span>
+                <span class="state">失败 · 可重试</span>
+              </div>
+            </div>
+
+            <div class="bar"><i></i></div>
+            <div class="bar-meta">
+              <span>已同步 1,284 / 1,890</span>
+              <span>剩余约 4 分 12 秒</span>
+            </div>
           </div>
         </div>
       </section>
 
-      <aside class="quick-strip" aria-label="OpenSync 关键指标">
-        <div class="quick-strip-inner">
-          <div class="metric"><strong>8023</strong>默认 Web 访问端口</div>
-          <div class="metric"><strong>3</strong>同步模式覆盖备份、镜像、迁移</div>
-          <div class="metric"><strong>5+</strong>通知渠道与自定义 Webhook</div>
-          <div class="metric"><strong>7</strong>常见平台二进制产物</div>
-        </div>
-      </aside>
-
-      <section class="section-paper" id="features">
+      <section class="band" id="why">
         <div class="wrap">
-          <div class="section-head">
-            <span class="kicker">为什么是 OpenSync</span>
-            <h2>给 NAS 用户的可视化同步中枢</h2>
+          <div class="sec-head rv">
+            <span class="mono-label">为什么需要它</span>
+            <h2>存储已经接好了，缺的是一个会自己跑的调度层</h2>
             <p>
-              如果你在飞牛 NAS 上想找一个类似群晖 Cloud Sync 的同步工具，OpenSync 把 AList / OpenList 已接入的各种存储变成可调度、可观察、可重试的同步任务。
+              AList / OpenList 解决了「怎么连上」，但没解决「什么时候同步、同步了什么、失败了怎么办」。这几件事以前只能靠手动复制或者自己写脚本。
             </p>
           </div>
-          <div class="problem-grid">
-            <article class="problem-note">
-              <h3>为家庭与小团队的真实目录工作流设计</h3>
+          <div class="pain-grid">
+            <article class="pain rv">
+              <span class="pain-q">以前</span>
+              <h3>每次都要手动复制</h3>
+              <p>相册满了、下载完了，都得自己想起来、自己点一遍，忘了就断档。</p>
+            </article>
+            <article class="pain rv">
+              <span class="pain-q">以前</span>
+              <h3>脚本跑完不知道结果</h3>
+              <p>命令行刷过一屏日志，哪些文件成功、哪些失败、传了多少，全靠翻记录。</p>
+            </article>
+            <article class="pain gain rv">
+              <span class="pain-q">现在</span>
+              <h3>任务按点自己执行</h3>
+              <p>按分钟间隔或 Cron 表达式定时跑，也能一键执行所有启用的任务。</p>
+            </article>
+            <article class="pain gain rv">
+              <span class="pain-q">现在</span>
+              <h3>进度、失败、历史都留痕</h3>
+              <p>实时看到扫描数、速度、剩余时间和每个文件的状态，失败项可以单独重试。</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="band band-alt" id="features">
+        <div class="wrap">
+          <div class="sec-head rv">
+            <span class="mono-label">核心能力</span>
+            <h2>一个任务能配的东西，比一条命令能记住的多</h2>
+            <p>路径、规则、调度、并发、通知、历史，都收在同一个 Web 控制台里。</p>
+          </div>
+          <div class="feat-grid rv">
+            <article class="feat">
+              <div class="feat-ico">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 6h5l2 3h9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M4 12h5l2 3h9M4 18h5l2 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" />
+                </svg>
+              </div>
+              <h3>多源到多目标</h3>
+              <p>一个任务里可以挂多个源目录和多个目标目录，不用为每条路径单独建任务。</p>
+              <ul>
+                <li>跨引擎组合</li>
+                <li>本地 / 网盘 / 对象存储 / WebDAV</li>
+              </ul>
+            </article>
+
+            <article class="feat c-sky">
+              <div class="feat-ico">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="13" r="8" stroke="currentColor" stroke-width="2" />
+                  <path d="M12 9v4l2.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M9 2h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </div>
+              <h3>定时与手动并行</h3>
+              <p>支持手动触发、按分钟间隔执行和标准 Cron 表达式，也能一键跑完所有启用任务。</p>
+              <ul>
+                <li>interval · cron · manual</li>
+                <li>可随时停止运行中的任务</li>
+              </ul>
+            </article>
+
+            <article class="feat c-amber">
+              <div class="feat-ico">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 5h16l-6 7v6l-4 2v-8L4 5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </div>
+              <h3>精确过滤</h3>
+              <p>Gitignore 风格的排除规则，加上最小 / 最大文件大小限制，缩略图和临时文件不用带走。</p>
+              <ul>
+                <li>*.tmp · .DS_Store · @eaDir/</li>
+                <li>min / max size 阈值</li>
+              </ul>
+            </article>
+
+            <article class="feat c-violet">
+              <div class="feat-ico">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 19V5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path d="M4 19h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path d="M8 16v-5M13 16V7M18 16v-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </div>
+              <h3>实时进度</h3>
+              <p>扫描数量、传输速度、预计剩余时间，以及已完成 / 运行中 / 等待 / 失败四类文件明细。</p>
+              <ul>
+                <li>per-file 状态</li>
+                <li>任务结束自动刷新</li>
+              </ul>
+            </article>
+
+            <article class="feat c-rose">
+              <div class="feat-ico">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 8V6a2 2 0 0 1 2-2h2" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path d="M20 5v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M19.5 10A8 8 0 1 0 12 20a8 8 0 0 0 7-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </div>
+              <h3>历史与重试</h3>
+              <p>每次运行的开始时间、耗时和结果都留档，可以查看详情、只重试未完成项，或删除记录。</p>
+              <ul>
+                <li>自动重试次数可配</li>
+                <li>历史保留天数可配</li>
+              </ul>
+            </article>
+
+            <article class="feat">
+              <div class="feat-ico">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M9.5 19a2.8 2.8 0 0 0 5 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </div>
+              <h3>通知不吵人</h3>
+              <p>内置 Server 酱、钉钉、企业微信、飞书 / Lark，也支持任意自定义 Webhook；没有文件变化时可以保持安静。</p>
+              <ul>
+                <li>GET / POST / PUT</li>
+                <li>JSON 模板 + 自定义请求头</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="band" id="modes">
+        <div class="wrap">
+          <div class="sec-head rv">
+            <span class="mono-label">三种同步模式</span>
+            <h2>先想清楚目标端「该留什么」，再选模式</h2>
+            <p>这是配任务时最关键的一个选择，也是最容易搞反的地方，所以单独说明。</p>
+          </div>
+          <div class="modes">
+            <article class="mode rv">
+              <div class="mode-top">
+                <h3>仅新增</h3>
+                <span class="mode-en">add-only</span>
+              </div>
+              <div class="mode-viz" aria-hidden="true">
+                <div class="viz-row"><span class="viz-chip">源 A</span><span class="viz-arrow">→</span><span class="viz-chip keep">A</span></div>
+                <div class="viz-row"><span class="viz-chip">源 B</span><span class="viz-arrow">→</span><span class="viz-chip keep">B</span></div>
+                <div class="viz-row"><span class="viz-chip" style="opacity:.35">—</span><span class="viz-arrow">　</span><span class="viz-chip keep">旧 C 保留</span></div>
+              </div>
+              <p>只往目标端添加和更新，源端删掉的文件在目标端依然保留。</p>
+              <div class="mode-use">适合：照片、文档等只增不减的备份</div>
+            </article>
+
+            <article class="mode rv">
+              <div class="mode-top">
+                <h3>全同步</h3>
+                <span class="mode-en">full-sync</span>
+              </div>
+              <div class="mode-viz" aria-hidden="true">
+                <div class="viz-row"><span class="viz-chip">源 A</span><span class="viz-arrow">→</span><span class="viz-chip keep">A</span></div>
+                <div class="viz-row"><span class="viz-chip">源 B</span><span class="viz-arrow">→</span><span class="viz-chip keep">B</span></div>
+                <div class="viz-row"><span class="viz-chip" style="opacity:.35">—</span><span class="viz-arrow">　</span><span class="viz-chip gone">旧 C 清除</span></div>
+              </div>
+              <p>让目标端和源端保持一致，源端不存在的文件会在目标端被删除。</p>
+              <div class="mode-use">适合：影音库镜像、目标端要求严格一致</div>
+            </article>
+
+            <article class="mode rv">
+              <div class="mode-top">
+                <h3>移动</h3>
+                <span class="mode-en">move</span>
+              </div>
+              <div class="mode-viz" aria-hidden="true">
+                <div class="viz-row"><span class="viz-chip gone">源 A</span><span class="viz-arrow">→</span><span class="viz-chip keep">A</span></div>
+                <div class="viz-row"><span class="viz-chip gone">源 B</span><span class="viz-arrow">→</span><span class="viz-chip keep">B</span></div>
+                <div class="viz-row"><span class="viz-chip" style="opacity:.35">源端腾空</span><span class="viz-arrow">　</span><span class="viz-chip keep">全部就位</span></div>
+              </div>
+              <p>传输成功后从源端移除，用来腾空间或做一次性搬迁。</p>
+              <div class="mode-use">适合：下载目录归档、网盘之间迁移</div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="band band-alt">
+        <div class="wrap">
+          <div class="sec-head rv">
+            <span class="mono-label">怎么用起来</span>
+            <h2>三步之后就不用再管了</h2>
+            <p>从接入存储到看结果，是一条闭合的链路。</p>
+          </div>
+          <div class="flow">
+            <article class="step rv">
+              <h3>接入引擎</h3>
               <p>
-                照片库、影音库、下载目录、文档目录往往分散在本机、网盘、对象存储和 WebDAV。OpenSync 让这些路径以任务形式沉淀下来，减少手动搬运和重复检查。
+                填 AList / OpenList 的地址和令牌，保存前会先验证连通性。可以同时管理多个实例，已保存的令牌不会再回显到界面上。
               </p>
             </article>
-            <div class="feature-grid">
-              <article class="feature-card">
-                <div class="feature-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path d="M4 7h16M4 12h16M4 17h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                  </svg>
-                </div>
-                <h3>多源到多目标</h3>
-                <p>支持单个或多个源目录同步到单个或多个目标目录，适合备份、镜像同步和归档迁移。</p>
-              </article>
-              <article class="feature-card">
-                <div class="feature-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path d="M12 8v5l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    <path d="M4 13a8 8 0 1 0 2.3-5.7" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path d="M4 5v4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </div>
-                <h3>定时与手动并行</h3>
-                <p>支持手动执行、按分钟间隔执行、Cron 定时执行和一键执行全部启用任务。</p>
-              </article>
-              <article class="feature-card">
-                <div class="feature-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path d="M4 6h16M7 12h10M10 18h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                  </svg>
-                </div>
-                <h3>规则过滤</h3>
-                <p>支持 Gitignore 风格排除规则，也能按最小和最大文件大小过滤不需要同步的内容。</p>
-              </article>
-              <article class="feature-card">
-                <div class="feature-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path d="M4 19V5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path d="M8 17v-6M13 17V7M18 17v-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path d="M4 19h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                  </svg>
-                </div>
-                <h3>实时进度</h3>
-                <p>展示扫描进度、传输速度、剩余时间，以及已完成、失败、等待和运行中明细。</p>
-              </article>
-              <article class="feature-card">
-                <div class="feature-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    <path d="M9.5 19a2.8 2.8 0 0 0 5 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                  </svg>
-                </div>
-                <h3>通知集成</h3>
-                <p>内置 Server 酱、钉钉、企业微信、飞书 / Lark，并支持任意 GET / POST / PUT Webhook。</p>
-              </article>
-              <article class="feature-card">
-                <div class="feature-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path d="M12 3 5 6v5c0 4.4 3 8.4 7 10 4-1.6 7-5.6 7-10V6l-7-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                    <path d="m9.5 12 1.8 1.8 3.6-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </div>
-                <h3>账号与恢复密钥</h3>
-                <p>首次启动引导创建管理员账号，并提供 24 位恢复密钥用于 Web 端重置密码。</p>
-              </article>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="section-dark">
-        <div class="wrap">
-          <div class="section-head">
-            <span class="kicker">任务如何流动</span>
-            <h2>从存储接入到任务复盘，保持一条清晰链路</h2>
-            <p>OpenSync 不只是复制文件，它把路径、规则、调度、进度、失败项和通知都收束在同一个管理界面里。</p>
-          </div>
-          <div class="workflow">
-            <article class="workflow-step">
-              <span>1</span>
-              <h3>连接 AList / OpenList</h3>
-              <p>添加多个引擎，保存前验证连接，令牌不会在列表中展示。</p>
+            <article class="step rv">
+              <h3>建一个任务</h3>
+              <p>
+                选好源目录和目标目录，挑同步模式，配排除规则、大小过滤、并发数和执行计划。可以先手动跑一次确认行为符合预期。
+              </p>
             </article>
-            <article class="workflow-step">
-              <span>2</span>
-              <h3>创建同步任务</h3>
-              <p>选择仅新增、全同步或移动模式，配置排除规则、大小过滤、并发和计划执行。</p>
-            </article>
-            <article class="workflow-step">
-              <span>3</span>
-              <h3>观察、重试、通知</h3>
-              <p>实时查看任务明细，失败后可重试未完成项。</p>
+            <article class="step rv">
+              <h3>之后只看通知</h3>
+              <p>
+                任务按计划执行，有变化才推送。真出了问题就去历史记录里查详情、重试未完成项，不用整个任务重跑。
+              </p>
             </article>
           </div>
         </div>
       </section>
 
-      <section class="section-light" id="screenshots">
+      <section class="band" id="demo">
         <div class="wrap">
-          <div class="section-head">
-            <span class="kicker">界面预览</span>
-            <h2>真实控制台截图，不靠想象补全</h2>
-            <p>任务总览、实时进度、通知配置，一目了然。</p>
+          <div class="sec-head rv">
+            <span class="mono-label">60 秒演示</span>
+            <h2>从添加引擎到收到通知，完整走一遍</h2>
+            <p>不用先装一遍才知道流程长什么样。</p>
           </div>
-          <div class="screens">
-            <figure class="shot shot-large">
-              <img src="images/tasks-overview.png" alt="OpenSync 任务总览界面截图" loading="lazy" />
-              <figcaption>
-                <span>任务总览</span>
-                <span>路径、调度、状态集中展示</span>
-              </figcaption>
+          <div class="demo">
+            <figure class="demo-frame rv">
+              <img src="https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/demo/opensync-demo.gif" alt="OpenSync 60 秒演示动图：添加 AList 引擎、创建同步任务、手动运行、查看实时进度并收到通知" loading="lazy" decoding="async" />
             </figure>
-            <div class="shot-stack">
-              <figure class="shot">
-                <img src="images/realtime-task.png" alt="OpenSync 实时任务界面截图" loading="lazy" />
-                <figcaption>
-                  <span>实时任务</span>
-                  <span>进度、速度、队列明细</span>
-                </figcaption>
-              </figure>
-              <figure class="shot">
-                <img src="images/notifications.png" alt="OpenSync 通知配置界面截图" loading="lazy" />
-                <figcaption>
-                  <span>通知配置</span>
-                  <span>多渠道与自定义 Webhook</span>
-                </figcaption>
-              </figure>
+            <div class="demo-list rv">
+              <div class="demo-item">
+                <strong>接入存储引擎</strong>
+                <span>填 AList / OpenList 地址和令牌，保存前先验证连通性。</span>
+              </div>
+              <div class="demo-item">
+                <strong>创建同步任务</strong>
+                <span>选源目录、目标目录、同步模式，配排除规则和执行计划。</span>
+              </div>
+              <div class="demo-item">
+                <strong>运行并观察</strong>
+                <span>实时看扫描、传输和失败明细，历史里能重试未完成项。</span>
+              </div>
+              <div class="demo-item">
+                <strong>收到通知</strong>
+                <span>同步结束推送到 Server 酱、钉钉、企业微信、飞书或自定义 Webhook。</span>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section-paper" id="quickstart">
+      <section class="band band-alt" id="gallery">
         <div class="wrap">
-          <div class="section-head">
-            <span class="kicker">快速开始</span>
-            <h2>推荐用 Docker Compose 部署</h2>
-            <p>默认数据保存在当前目录的 <span class="inline-code">data/</span> 文件夹。升级、迁移和排查问题前，请先备份这个目录。</p>
+          <div class="sec-head rv">
+            <span class="mono-label">界面预览</span>
+            <h2>都是真实控制台截图</h2>
+            <p>部署之前先看清楚长什么样、能配什么，省得装完才发现不是想要的。</p>
           </div>
-          <div class="quick-layout">
-            <aside class="quick-card" aria-label="部署前检查">
-              <h3>部署前确认</h3>
-              <p>适合飞牛 fnOS、NAS、家用服务器、Linux 主机和 Docker 环境。</p>
-              <ul class="check-list">
-                <li>已准备 Docker 与 Docker Compose。</li>
-                <li>设备可以访问需要同步的 AList / OpenList 服务。</li>
-                <li>准备持久化保存 <span class="inline-code">data/</span> 目录。</li>
-                <li>首次启动后立即保存 24 位恢复密钥。</li>
-              </ul>
-            </aside>
 
-            <div class="docs-flow">
-              <article class="doc-block">
-                <div class="doc-title">
-                  <span>1. 创建目录并启动容器</span>
-                  <button class="copy-btn" type="button" data-copy="#code-compose">复制</button>
+          <div class="tabs rv" role="tablist" aria-label="界面截图分类">
+            <button class="tab" role="tab" id="tab-tasks" aria-controls="p-tasks" aria-selected="true">任务总览</button>
+            <button class="tab" role="tab" id="tab-live" aria-controls="p-live" aria-selected="false" tabindex="-1">实时进度</button>
+            <button class="tab" role="tab" id="tab-hist" aria-controls="p-hist" aria-selected="false" tabindex="-1">历史记录</button>
+            <button class="tab" role="tab" id="tab-detail" aria-controls="p-detail" aria-selected="false" tabindex="-1">任务详情</button>
+            <button class="tab" role="tab" id="tab-eng" aria-controls="p-eng" aria-selected="false" tabindex="-1">引擎管理</button>
+            <button class="tab" role="tab" id="tab-notify" aria-controls="p-notify" aria-selected="false" tabindex="-1">通知配置</button>
+            <button class="tab" role="tab" id="tab-set" aria-controls="p-set" aria-selected="false" tabindex="-1">系统设置</button>
+          </div>
+
+          <figure class="shot rv" id="p-tasks" role="tabpanel" aria-labelledby="tab-tasks" tabindex="0">
+            <div class="shot-bar"><span class="dot"></span><span class="dot"></span><span class="dot live"></span><span>任务总览</span></div>
+            <img src="https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/tasks-overview.png" alt="OpenSync 任务总览页面，卡片形式展示各个同步任务的源目录、目标目录、同步模式和执行计划" loading="lazy" decoding="async" />
+            <figcaption>任务以卡片呈现，源、目标、模式、计划一眼看到，运行、停止、编辑、删除都在卡片上。</figcaption>
+          </figure>
+
+          <figure class="shot rv" id="p-live" role="tabpanel" aria-labelledby="tab-live" tabindex="0" hidden>
+            <div class="shot-bar"><span class="dot"></span><span class="dot"></span><span class="dot live"></span><span>实时进度</span></div>
+            <img src="https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/realtime-task.png" alt="OpenSync 实时任务页面，显示扫描文件数、传输速度、剩余时间以及各文件的同步状态" loading="lazy" decoding="async" />
+            <figcaption>任务运行中可以看到扫描进度、传输速度、剩余时间，以及每个文件当前处在哪个状态。</figcaption>
+          </figure>
+
+          <figure class="shot rv" id="p-hist" role="tabpanel" aria-labelledby="tab-hist" tabindex="0" hidden>
+            <div class="shot-bar"><span class="dot"></span><span class="dot"></span><span class="dot live"></span><span>历史记录</span></div>
+            <img src="https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/task-history.png" alt="OpenSync 任务历史页面，按时间列出每次运行的开始时间、耗时和执行结果" loading="lazy" decoding="async" />
+            <figcaption>每次运行都留档，支持查看详情、重试未完成项，或者清掉不需要的记录。</figcaption>
+          </figure>
+
+          <figure class="shot rv" id="p-detail" role="tabpanel" aria-labelledby="tab-detail" tabindex="0" hidden>
+            <div class="shot-bar"><span class="dot"></span><span class="dot"></span><span class="dot live"></span><span>任务详情</span></div>
+            <img src="https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/task-detail.png" alt="OpenSync 任务详情页面，汇总扫描结果与传输统计，并逐个列出文件的同步状态和错误信息" loading="lazy" decoding="async" />
+            <figcaption>汇总扫描和传输统计，逐个文件列出同步状态与出错原因，方便定位问题。</figcaption>
+          </figure>
+
+          <figure class="shot rv" id="p-eng" role="tabpanel" aria-labelledby="tab-eng" tabindex="0" hidden>
+            <div class="shot-bar"><span class="dot"></span><span class="dot"></span><span class="dot live"></span><span>引擎管理</span></div>
+            <img src="https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/engines.png" alt="OpenSync 引擎管理页面，列出已接入的 AList / OpenList 实例及其连接状态" loading="lazy" decoding="async" />
+            <figcaption>管理多个 AList / OpenList 实例，添加时验证地址和令牌，已保存的令牌不再回显。</figcaption>
+          </figure>
+
+          <figure class="shot rv" id="p-notify" role="tabpanel" aria-labelledby="tab-notify" tabindex="0" hidden>
+            <div class="shot-bar"><span class="dot"></span><span class="dot"></span><span class="dot live"></span><span>通知配置</span></div>
+            <img src="https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/notifications.png" alt="OpenSync 通知配置页面，可添加 Server 酱、钉钉、企业微信、飞书和自定义 Webhook 渠道" loading="lazy" decoding="async" />
+            <figcaption>配好渠道可以先发一条测试消息，确认能收到再保存。</figcaption>
+          </figure>
+
+          <figure class="shot rv" id="p-set" role="tabpanel" aria-labelledby="tab-set" tabindex="0" hidden>
+            <div class="shot-bar"><span class="dot"></span><span class="dot"></span><span class="dot live"></span><span>系统设置</span></div>
+            <img src="https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/settings.png" alt="OpenSync 系统设置页面，可在线调整历史保留天数、任务超时、并发数和自动重试次数" loading="lazy" decoding="async" />
+            <figcaption>历史保留天数、任务超时、复制与扫描并发、自动重试次数，都能在线改，不用重启容器。</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="band" id="compare">
+        <div class="wrap">
+          <div class="sec-head rv">
+            <span class="mono-label">和其他方案比</span>
+            <h2>它不取代 rclone，而是补上可视化调度这一层</h2>
+            <p>如果你习惯写脚本，rclone 依然很好用。OpenSync 面向的是想少维护、要界面、要留痕的那批人。</p>
+          </div>
+          <div class="table-scroll rv">
+            <table>
+              <caption class="sr-only">OpenSync 与 rclone、群晖 Cloud Sync、AList 内置复制的能力对比</caption>
+              <thead>
+                <tr>
+                  <th scope="col">能力</th>
+                  <th scope="col" class="hl">OpenSync</th>
+                  <th scope="col">rclone</th>
+                  <th scope="col">群晖 Cloud Sync</th>
+                  <th scope="col">AList 内置复制</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">面向人群</th>
+                  <td class="hl">飞牛 / NAS / Docker 用户</td>
+                  <td>命令行与脚本用户</td>
+                  <td>群晖用户</td>
+                  <td>AList 用户</td>
+                </tr>
+                <tr>
+                  <th scope="row">可视化任务管理</th>
+                  <td class="hl">是</td>
+                  <td>需自行套一层 UI</td>
+                  <td>是</td>
+                  <td>只能手动操作</td>
+                </tr>
+                <tr>
+                  <th scope="row">AList / OpenList 集成</th>
+                  <td class="hl">一等公民，多引擎管理</td>
+                  <td>靠 WebDAV 或自行配置</td>
+                  <td>不针对</td>
+                  <td>原生，但没有调度</td>
+                </tr>
+                <tr>
+                  <th scope="row">多源到多目标</th>
+                  <td class="hl">单任务即可配置</td>
+                  <td>可脚本实现</td>
+                  <td>受产品限制</td>
+                  <td>手动</td>
+                </tr>
+                <tr>
+                  <th scope="row">实时逐文件进度</th>
+                  <td class="hl">是</td>
+                  <td>命令行输出 / 日志</td>
+                  <td>产品界面</td>
+                  <td>有限</td>
+                </tr>
+                <tr>
+                  <th scope="row">历史里重试未完成项</th>
+                  <td class="hl">是</td>
+                  <td>可脚本实现</td>
+                  <td>视产品而定</td>
+                  <td>无</td>
+                </tr>
+                <tr>
+                  <th scope="row">通知渠道</th>
+                  <td class="hl">Webhook / Server 酱 / 钉钉 / 企业微信 / 飞书</td>
+                  <td>可脚本实现</td>
+                  <td>视产品而定</td>
+                  <td>无</td>
+                </tr>
+                <tr>
+                  <th scope="row">硬件与平台</th>
+                  <td class="hl">amd64 / arm64 / armv7</td>
+                  <td>跨平台二进制</td>
+                  <td>仅群晖设备</td>
+                  <td>跟随 AList 部署</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="table-note rv">对比基于各方案的公开定位与常见用法，具体能力可能随版本变化。</p>
+        </div>
+      </section>
+
+      <section class="band band-alt" id="start">
+        <div class="wrap">
+          <div class="sec-head rv">
+            <span class="mono-label">快速部署</span>
+            <h2>一份 compose 文件，起来就能用</h2>
+            <p>数据落在挂载出来的 <code>./data</code> 目录，升级只需要拉新镜像重启。</p>
+          </div>
+
+          <div class="qs">
+            <div class="rv">
+              <div class="code-card">
+                <div class="code-head">
+                  <span class="fname">terminal</span>
+                  <button class="copy" type="button" data-copy="cmd">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <rect x="9" y="9" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2" />
+                      <path d="M15 5H5v10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    <span>复制</span>
+                  </button>
                 </div>
-                <pre><code id="code-compose">mkdir -p opensync
-cd opensync
+                <pre><code id="cmd">mkdir -p opensync <span class="c">&amp;&amp;</span> cd opensync
 curl -O https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docker-compose.yml
 docker compose up -d</code></pre>
-              </article>
+              </div>
 
-              <article class="doc-block">
-                <div class="doc-title">
-                  <span>2. docker-compose.yml 示例</span>
-                  <button class="copy-btn" type="button" data-copy="#code-yml">复制</button>
+              <div class="code-card" style="margin-top: 16px">
+                <div class="code-head">
+                  <span class="fname">docker-compose.yml</span>
+                  <button class="copy" type="button" data-copy="yml">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <rect x="9" y="9" width="12" height="12" rx="2" stroke="currentColor" stroke-width="2" />
+                      <path d="M15 5H5v10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    <span>复制</span>
+                  </button>
                 </div>
-                <pre><code id="code-yml">services:
-  opensync:
-    image: chenbin3625/opensync:latest
-    container_name: opensync
-    restart: unless-stopped
-    ports:
-      - "8023:8023"
-    volumes:
+                <pre><code id="yml"><span class="k">services:</span>
+  <span class="k">opensync:</span>
+    <span class="k">image:</span> chenbin3625/opensync:latest
+    <span class="k">container_name:</span> opensync
+    <span class="k">restart:</span> unless-stopped
+    <span class="k">ports:</span>
+      - <span class="s">"8023:8023"</span>
+    <span class="k">volumes:</span>
       - ./data:/app/data
-    environment:
-      TZ: Asia/Shanghai
-      PUID: ${PUID:-1000}
-      PGID: ${PGID:-1000}
-      OPENSYNC_BIND: 0.0.0.0
-      OPENSYNC_PORT: 8023
-      GIN_MODE: release</code></pre>
-              </article>
+    <span class="k">tmpfs:</span>
+      - /tmp:mode=1777
+    <span class="k">environment:</span>
+      <span class="k">TZ:</span> Asia/Shanghai
+      <span class="k">PUID:</span> <span class="s">${PUID:-1000}</span>
+      <span class="k">PGID:</span> <span class="s">${PGID:-1000}</span>
+      <span class="k">SQLITE_TMPDIR:</span> /tmp
+      <span class="k">TMPDIR:</span> /tmp
+      <span class="k">OPENSYNC_BIND:</span> 0.0.0.0
+      <span class="k">OPENSYNC_PORT:</span> 8023
+      <span class="k">GIN_MODE:</span> release</code></pre>
+              </div>
+            </div>
 
-              <article class="doc-block">
-                <div class="doc-title">
-                  <span>3. 访问 Web 页面</span>
-                  <button class="copy-btn" type="button" data-copy="#code-url">复制</button>
+            <div class="qs-steps rv">
+              <div class="qs-step">
+                <span class="qs-num">1</span>
+                <div>
+                  <h3>打开控制台</h3>
+                  <p>浏览器访问 <code>http://设备IP:8023/</code></p>
                 </div>
-                <pre><code id="code-url">http://你的设备IP:8023/</code></pre>
-              </article>
+              </div>
+              <div class="qs-step">
+                <span class="qs-num">2</span>
+                <div>
+                  <h3>创建管理员账号</h3>
+                  <p>首次启动按页面引导设置用户名和密码。</p>
+                </div>
+              </div>
+              <div class="qs-step">
+                <span class="qs-num">3</span>
+                <div>
+                  <h3>保存 24 位恢复密钥</h3>
+                  <p>只显示一次，忘记密码时用「用户名 + 恢复密钥」在网页上重置。</p>
+                </div>
+              </div>
+              <div class="qs-step">
+                <span class="qs-num">4</span>
+                <div>
+                  <h3>添加引擎，建第一个任务</h3>
+                  <p>填 AList / OpenList 地址和令牌，然后配置源、目标和同步模式。</p>
+                </div>
+              </div>
 
-              <article class="quick-card">
-                <h3>首次登录与密码恢复</h3>
-                <ul class="plain-list">
-                  <li data-step="1">打开 Web 页面，根据引导创建管理员用户名和密码。</li>
-                  <li data-step="2">创建完成时页面会一次性展示 24 位恢复密钥，请立即保存。</li>
-                  <li data-step="3">忘记密码时，可用用户名和恢复密钥在 Web 端设置新密码。</li>
-                  <li data-step="4">恢复密钥丢失时，可在服务器执行 <span class="inline-code">reset-password</span> 兜底重置。</li>
-                </ul>
-              </article>
+              <div class="warn">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 9v5m0 3h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path d="M10.3 3.8 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.8a2 2 0 0 0-3.4 0Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                </svg>
+                <p>
+                  恢复密钥也丢了的话，还有 CLI 兜底：<code>docker compose exec opensync ./opensync reset-password --user admin</code>。首次跑「全同步」或「移动」模式前，建议先在小目录上试一次。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="plat-grid rv" style="margin-top: 40px">
+            <div class="plat">
+              <strong>linux/amd64</strong>
+              <span>x86_64 NAS、小主机、常规服务器</span>
+            </div>
+            <div class="plat">
+              <strong>linux/arm64</strong>
+              <span>ARM64 NAS、树莓派 4 及以上</span>
+            </div>
+            <div class="plat">
+              <strong>linux/arm/v7</strong>
+              <span>老一些的 ARM 设备</span>
+            </div>
+            <div class="plat">
+              <strong>二进制发布</strong>
+              <span>不想用 Docker 就去 Releases 下对应架构</span>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section-dark" id="release">
+      <section class="band">
         <div class="wrap">
-          <div class="section-head">
-            <span class="kicker">发布与平台</span>
-            <h2>容器镜像和二进制产物都能覆盖常见 NAS 架构</h2>
-            <p>Docker 镜像适合常驻服务，GitHub Release 二进制适合不方便使用容器的环境。二进制文件已内嵌前端静态资源。</p>
+          <div class="sec-head rv">
+            <span class="mono-label">通知渠道</span>
+            <h2>同步完了，用你已经在看的那个 App 告诉你</h2>
+            <p>没有文件变化的时候可以选择不发，避免每天收一堆「本次同步 0 个文件」。</p>
           </div>
-          <div class="release-grid">
-            <article class="release-panel">
-              <h3>Docker 镜像</h3>
-              <p>推荐使用 <span class="inline-code">chenbin3625/opensync:latest</span>，也可以固定到版本标签。</p>
-              <div class="tag-row" aria-label="Docker 镜像标签">
-                <span class="tag">latest</span>
-                <span class="tag">1.11.2</span>
-                <span class="tag">1.10</span>
-              </div>
-            </article>
-            <article class="release-panel">
-              <h3>镜像平台</h3>
-              <p>覆盖常见 x86_64、ARM64 和 ARMv7 架构的飞牛系统、NAS 和服务器设备。</p>
-              <div class="tag-row" aria-label="镜像平台">
-                <span class="tag">linux/amd64</span>
-                <span class="tag">linux/arm64</span>
-                <span class="tag">linux/arm/v7</span>
-              </div>
-            </article>
-            <article class="release-panel">
-              <h3>二进制发布</h3>
-              <p>Release 上传 Linux、macOS、Windows 的 amd64 与 arm64 产物，并提供 linux-armv7。</p>
-              <div class="tag-row" aria-label="二进制产物平台">
-                <span class="tag">Linux</span>
-                <span class="tag">macOS</span>
-                <span class="tag">Windows</span>
-              </div>
-            </article>
+          <div class="chips rv">
+            <span class="chip"><b></b>Server 酱</span>
+            <span class="chip"><b></b>钉钉</span>
+            <span class="chip"><b></b>企业微信</span>
+            <span class="chip"><b></b>飞书 / Lark</span>
+            <span class="chip"><b></b>自定义 Webhook</span>
+            <span class="chip"><b></b>GET / POST / PUT</span>
+            <span class="chip"><b></b>JSON 模板</span>
+            <span class="chip"><b></b>自定义请求头</span>
           </div>
         </div>
       </section>
 
-      <section class="section-light" id="github">
-        <div class="wrap">
-          <div class="section-head">
-            <span class="kicker">项目链接</span>
-            <h2>连接 GitHub 仓库、Release 和问题反馈</h2>
-            <p>获取源码、下载发布包、阅读文档或提交问题反馈。</p>
-          </div>
-          <div class="github-layout">
-            <article class="github-panel">
-              <h3>GitHub 仓库</h3>
-              <p>
-                源码地址：<strong>github.com/chenbin3625/OpenSync</strong>。页面中的快速开始命令也直接引用该仓库的 <span class="inline-code">docker-compose.yml</span>。
-              </p>
-              <div class="section-actions">
-                <a class="button primary" href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noreferrer">打开仓库</a>
-                <a class="button secondary" href="https://github.com/chenbin3625/OpenSync/releases" target="_blank" rel="noreferrer">查看 Release</a>
-              </div>
-            </article>
-            <article class="github-panel">
-              <h3>常用入口</h3>
-              <ul class="link-list">
-                <li><a href="https://github.com/chenbin3625/OpenSync/blob/main/README.md" target="_blank" rel="noreferrer"><span>README 文档</span><span aria-hidden="true">→</span></a></li>
-                <li><a href="https://github.com/chenbin3625/OpenSync/releases" target="_blank" rel="noreferrer"><span>下载正式版本</span><span aria-hidden="true">→</span></a></li>
-                <li><a href="https://github.com/chenbin3625/OpenSync/issues" target="_blank" rel="noreferrer"><span>提交问题反馈</span><span aria-hidden="true">→</span></a></li>
-              </ul>
-            </article>
+      <section class="cta" id="star">
+        <div class="wrap cta-in rv">
+          <span class="mono-label">开源项目</span>
+          <h2>如果它正好补上了你 NAS 上缺的那一环</h2>
+          <p>
+            点个 Star 就是最直接的支持，能让更多有同样需求的人找到它。有问题、有想法，也欢迎去 Issues 或 Discussions 聊。
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8-6.2-3.3-6.2 3.3L7 14.2l-5-4.9 6.9-1L12 2Z" />
+              </svg>
+              去 GitHub 点 Star
+            </a>
+            <a class="btn btn-ghost" href="https://hub.docker.com/r/chenbin3625/opensync" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="3" y="10" width="3" height="3" stroke="currentColor" stroke-width="1.6" />
+                <rect x="7.5" y="10" width="3" height="3" stroke="currentColor" stroke-width="1.6" />
+                <rect x="12" y="10" width="3" height="3" stroke="currentColor" stroke-width="1.6" />
+                <rect x="7.5" y="6" width="3" height="3" stroke="currentColor" stroke-width="1.6" />
+                <path d="M3 15c3 2.4 12 2.6 15.5-1.6 1.6.9 2.5.6 3.5-.4-1-1.6-2.6-1.4-3.6-1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              Docker Hub
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/chenbin3625/OpenSync/discussions" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M20 15a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              Discussions
+            </a>
           </div>
         </div>
       </section>
     </main>
 
-    <footer class="site-footer">
-      <div class="footer-inner">
-        <span>OpenSync, AList / OpenList 自动同步工具。</span>
-        <a href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noreferrer">GitHub: chenbin3625/OpenSync</a>
+    <footer>
+      <div class="wrap foot-in">
+        <span>OpenSync · MIT License</span>
+        <nav class="foot-links" aria-label="相关链接">
+          <a href="https://github.com/chenbin3625/OpenSync" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/chenbin3625/OpenSync/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://hub.docker.com/r/chenbin3625/opensync" target="_blank" rel="noopener">Docker Hub</a>
+          <a href="https://github.com/chenbin3625/OpenSync/issues" target="_blank" rel="noopener">Issues</a>
+          <a href="https://github.com/chenbin3625/OpenSync/blob/main/README.md" target="_blank" rel="noopener">English</a>
+        </nav>
       </div>
     </footer>
 
+    <div class="sr-only" role="status" aria-live="polite" id="live"></div>
+
     <script>
-      const copyButtons = document.querySelectorAll("[data-copy]");
+      (function () {
+        // sticky header border
+        var bar = document.getElementById("topbar");
+        var onScroll = function () {
+          bar.classList.toggle("is-stuck", window.scrollY > 8);
+        };
+        onScroll();
+        window.addEventListener("scroll", onScroll, { passive: true });
 
-      const selectTargetText = (target) => {
-        const range = document.createRange();
-        range.selectNodeContents(target);
-        const selection = window.getSelection();
-        selection.removeAllRanges();
-        selection.addRange(range);
-      };
-
-      const copyText = async (text) => {
-        if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(text);
-          return;
+        // reveal on scroll
+        var items = document.querySelectorAll(".rv");
+        if (!("IntersectionObserver" in window)) {
+          items.forEach(function (el) {
+            el.classList.add("in");
+          });
+        } else {
+          var io = new IntersectionObserver(
+            function (entries) {
+              entries.forEach(function (e) {
+                if (e.isIntersecting) {
+                  e.target.classList.add("in");
+                  io.unobserve(e.target);
+                }
+              });
+            },
+            { rootMargin: "0px 0px -12% 0px", threshold: 0.06 }
+          );
+          items.forEach(function (el) {
+            io.observe(el);
+          });
         }
 
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        textarea.setAttribute("readonly", "");
-        textarea.style.position = "fixed";
-        textarea.style.left = "-9999px";
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        const copied = document.execCommand("copy");
-        textarea.remove();
-        if (!copied) {
-          throw new Error("Copy command was rejected");
-        }
-      };
-
-      copyButtons.forEach((button) => {
-        button.addEventListener("click", async () => {
-          const target = document.querySelector(button.dataset.copy);
-          if (!target) {
-            return;
-          }
-
-          const originalText = button.textContent;
-          try {
-            await copyText(target.textContent.trim());
-            button.textContent = "已复制";
-          } catch {
-            selectTargetText(target);
-            button.textContent = "已选中";
-          }
-
-          window.setTimeout(() => {
-            button.textContent = originalText;
-          }, 1600);
+        // gallery tabs
+        var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+        var select = function (tab) {
+          tabs.forEach(function (t) {
+            var on = t === tab;
+            t.setAttribute("aria-selected", on ? "true" : "false");
+            t.tabIndex = on ? 0 : -1;
+            var panel = document.getElementById(t.getAttribute("aria-controls"));
+            if (panel) panel.hidden = !on;
+          });
+        };
+        tabs.forEach(function (tab, i) {
+          tab.addEventListener("click", function () {
+            select(tab);
+          });
+          tab.addEventListener("keydown", function (ev) {
+            var next = null;
+            if (ev.key === "ArrowRight") next = tabs[(i + 1) % tabs.length];
+            if (ev.key === "ArrowLeft") next = tabs[(i - 1 + tabs.length) % tabs.length];
+            if (ev.key === "Home") next = tabs[0];
+            if (ev.key === "End") next = tabs[tabs.length - 1];
+            if (next) {
+              ev.preventDefault();
+              select(next);
+              next.focus();
+            }
+          });
         });
-      });
+
+        // copy buttons
+        var live = document.getElementById("live");
+        document.querySelectorAll(".copy").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var src = document.getElementById(btn.getAttribute("data-copy"));
+            if (!src) return;
+            var text = src.innerText;
+            var label = btn.querySelector("span");
+            var done = function () {
+              btn.classList.add("ok");
+              label.textContent = "已复制";
+              if (live) live.textContent = "命令已复制到剪贴板";
+              setTimeout(function () {
+                btn.classList.remove("ok");
+                label.textContent = "复制";
+              }, 1800);
+            };
+            if (navigator.clipboard && window.isSecureContext) {
+              navigator.clipboard.writeText(text).then(done).catch(function () {
+                fallback(text, done);
+              });
+            } else {
+              fallback(text, done);
+            }
+          });
+        });
+
+        function fallback(text, done) {
+          var ta = document.createElement("textarea");
+          ta.value = text;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand("copy");
+            done();
+          } catch (e) {
+            /* ignore */
+          }
+          document.body.removeChild(ta);
+        }
+      })();
     </script>
   </body>
 </html>
