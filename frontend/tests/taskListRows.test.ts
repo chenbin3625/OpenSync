@@ -176,7 +176,7 @@ test('sortTaskItemsByCreateTimeDesc sorts by create time and id fallback', () =>
   assert.notEqual(sorted, rows);
 });
 
-test('pageTaskItems keeps realtime patch order without sorting', () => {
+test('pageTaskItems paginates running snapshots and preserves server-paged rows', () => {
   const rows: TaskItem[] = [
     { id: 1, status: 1, createTime: 100 },
     { id: 2, status: 1, createTime: 300 },
@@ -184,7 +184,10 @@ test('pageTaskItems keeps realtime patch order without sorting', () => {
   ];
 
   assert.deepEqual(pageTaskItems(rows, 1, 1, 3).map((row) => row.id), [1, 2, 3]);
-  assert.deepEqual(pageTaskItems(rows, 2, 1, 3).map((row) => row.id), [2, 3, 1]);
+  assert.deepEqual(pageTaskItems(rows, 1, 2, 2).map((row) => row.id), [3]);
+
+  const serverPage = rows.map((row) => ({ ...row, status: 2 }));
+  assert.deepEqual(pageTaskItems(serverPage, 2, 3, 20).map((row) => row.id), [1, 2, 3]);
 });
 
 test('getRealtimeTaskIdentity combines task id and create time', () => {
