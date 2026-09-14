@@ -1,6 +1,9 @@
 package service
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 func (jt *JobTask) taskSubmit() {
 	jt.runCopyExecutor()
@@ -91,21 +94,50 @@ func (jt *JobTask) doingLen() int {
 }
 
 func (jt *JobTask) startCopyItem(item *CopyItem) {
+	jt.startCopyItemTracked(item, nil)
+}
+
+// startCopyItemTracked starts item and, when batch is non-nil, also reports
+// completion to it. Callers outside the submit executor use the batch handle to
+// wait for their own items instead of every copy in flight.
+func (jt *JobTask) startCopyItemTracked(item *CopyItem, batch *sync.WaitGroup) {
 	if jt.FirstSync.Load() == 0 {
 		jt.FirstSync.CompareAndSwap(0, time.Now().Unix())
 	}
-	jt.QueueNum++
-	item.DoingKey = jt.QueueNum
+	key := jt.QueueNum.Add(1)
+	item.DoingKey = key
 
 	jt.DoingMu.Lock()
-	jt.Doing[jt.QueueNum] = item
+	jt.Doing[key] = item
 	jt.DoingMu.Unlock()
 
 	jt.copyWG.Add(1)
+	if batch != nil {
+		batch.Add(1)
+	}
 	go func() {
 		defer jt.copyWG.Done()
+		if batch != nil {
+			defer batch.Done()
+		}
 		jt.runCopyItem(item)
 	}()
+}
+
+// waitForCopySlot blocks until the number of in-flight copies drops below limit.
+// It reports false when the task was stopped or cancelled while waiting.
+func (jt *JobTask) waitForCopySlot(limit int) bool {
+	for {
+		if jt.isBreak() || jt.context().Err() != nil {
+			return false
+		}
+		if jt.doingLen() < limit {
+			return true
+		}
+		if !jt.waitForBreak(50 * time.Millisecond) {
+			return false
+		}
+	}
 }
 
 func (jt *JobTask) runCopyItem(item *CopyItem) {

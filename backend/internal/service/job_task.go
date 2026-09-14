@@ -28,9 +28,12 @@ type JobTask struct {
 	DoingMu        sync.Mutex
 	Waiting        *copyQueue
 
-	LastWatching  atomic.Int64
-	QueueNum      int64
-	ScanFinish    atomic.Bool
+	LastWatching atomic.Int64
+	// QueueNum is incremented by both the submit executor and the full-sync
+	// relocation path, so it has to be atomic: a plain ++ let two items share a
+	// DoingKey and silently overwrite each other in Doing.
+	QueueNum   atomic.Int64
+	ScanFinish atomic.Bool
 	FirstSync     atomic.Int64
 	BreakFlag     atomic.Bool
 	scanSem       chan struct{}
@@ -78,7 +81,6 @@ func newJobTask(taskID int64, jc *JobClient) *JobTask {
 		FinishedSizes:  make(map[taskStatus]int64),
 		Doing:          make(map[int64]*CopyItem),
 		Waiting:        newCopyQueue(),
-		QueueNum:       0,
 		scanSem:        make(chan struct{}, scanConcurrencyLimit()),
 		scanBranchSem:  make(chan struct{}, scanConcurrencyLimit()),
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -298,7 +299,7 @@ func decodeFileListContent(dec *json.Decoder, result FileListResult) (int, error
 }
 
 func addFileListEntry(result FileListResult, item FileListEntry) {
-	if item.Name == "" {
+	if !isSafeListedName(item.Name) {
 		return
 	}
 	if item.IsDir {
@@ -306,6 +307,18 @@ func addFileListEntry(result FileListResult, item FileListEntry) {
 		return
 	}
 	result[item.Name] = item.metadata()
+}
+
+// isSafeListedName rejects entry names that are not plain file names. Names come
+// from the AList server, which may itself be proxying untrusted third-party
+// storage, and they are concatenated onto directory paths when building scan
+// work. A name carrying a separator or a parent reference would address a
+// different directory than the one being scanned.
+func isSafeListedName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	return !strings.ContainsAny(name, "/\\")
 }
 
 func consumeDelim(dec *json.Decoder, want json.Delim) error {

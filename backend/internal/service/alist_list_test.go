@@ -123,3 +123,27 @@ func TestFileListLimitExceededAllowsExactLimit(t *testing.T) {
 		t.Fatal("entry count above limit was accepted")
 	}
 }
+
+// Entry names come from the AList server, which may proxy untrusted third-party
+// storage. Names that are not plain file names are dropped rather than being
+// concatenated onto a scan path.
+func TestAddFileListEntryRejectsUnsafeNames(t *testing.T) {
+	unsafe := []string{"", ".", "..", "../escape", "a/b", "a\\b", "/abs"}
+	for _, name := range unsafe {
+		result := make(FileListResult)
+		addFileListEntry(result, FileListEntry{Name: name, Size: 10})
+		if len(result) != 0 {
+			t.Errorf("addFileListEntry(%q) kept %#v, want dropped", name, result)
+		}
+	}
+
+	result := make(FileListResult)
+	addFileListEntry(result, FileListEntry{Name: "normal file.txt", Size: 10})
+	addFileListEntry(result, FileListEntry{Name: "dir", IsDir: true})
+	if _, ok := result["normal file.txt"]; !ok {
+		t.Errorf("plain file name was dropped: %#v", result)
+	}
+	if _, ok := result["dir/"]; !ok {
+		t.Errorf("plain directory name was dropped: %#v", result)
+	}
+}

@@ -221,10 +221,41 @@ func srcSelectionSuffix(srcPath string, srcPaths []string) string {
 	// so nested branches still reach the destination with their hierarchy.
 	commonParent := commonSrcSelectionParent(srcPaths)
 	if commonParent == "" || commonParent == "." || commonParent == "/" {
+		// Sources with no shared parent keep the historical base-name layout,
+		// but only while the base names stay unique. Two selections that share
+		// one (/a/docs and /b/docs) would otherwise collapse into the same
+		// destination directory and, in mirror mode, delete each other's files
+		// on every run. Those fall back to the full path instead.
+		if srcSelectionBaseNameIsAmbiguous(cleanSrc, srcPaths) {
+			return strings.TrimPrefix(cleanSrc, "/")
+		}
 		return path.Base(cleanSrc)
 	}
 
+	// A selected path that *is* the shared parent has no suffix of its own.
+	// Without this the TrimPrefix below misses (the prefix carries a trailing
+	// slash the path lacks) and the leftover leading slash produces "dst//src".
+	if cleanSrc == commonParent {
+		return ""
+	}
+
 	return strings.TrimPrefix(cleanSrc, normalizeDirPath(commonParent))
+}
+
+// srcSelectionBaseNameIsAmbiguous reports whether another selected source path
+// resolves to the same base name as cleanSrc.
+func srcSelectionBaseNameIsAmbiguous(cleanSrc string, srcPaths []string) bool {
+	base := path.Base(cleanSrc)
+	for _, other := range srcPaths {
+		cleanOther := path.Clean(strings.TrimSpace(other))
+		if cleanOther == cleanSrc {
+			continue
+		}
+		if path.Base(cleanOther) == base {
+			return true
+		}
+	}
+	return false
 }
 
 // commonSrcSelectionParent returns the deepest directory that contains every
@@ -429,7 +460,16 @@ func (jt *JobTask) listSrcAndDst(srcPath, dstPath string, spec *ignore.GitIgnore
 		return nil, nil, srcErr
 	}
 	if dstErr != nil {
-		return nil, nil, dstErr
+		// A destination directory that does not exist yet is not a failure: the
+		// job's whole purpose is to populate it. Create it and retry once so the
+		// run proceeds instead of reporting "destination scan failed".
+		if !jt.ensureDstDirAfterListError(dstPath, dstErr) {
+			return nil, nil, dstErr
+		}
+		dstFiles, dstErr = jt.listDir(dstPath, firstDst, spec, dstRootPath, false)
+		if dstErr != nil {
+			return nil, nil, dstErr
+		}
 	}
 	if srcFiles == nil {
 		srcFiles = make(FileListResult)
@@ -438,6 +478,21 @@ func (jt *JobTask) listSrcAndDst(srcPath, dstPath string, spec *ignore.GitIgnore
 		dstFiles = make(FileListResult)
 	}
 	return srcFiles, dstFiles, nil
+}
+
+// ensureDstDirAfterListError creates dstPath when listErr says it does not
+// exist. It reports whether the caller should retry the listing. Any other error
+// (auth, network, permissions) is left alone so real failures still surface.
+func (jt *JobTask) ensureDstDirAfterListError(dstPath string, listErr error) bool {
+	if listErr == nil || !isAlistObjectNotFound(listErr) || jt.isBreak() {
+		return false
+	}
+	scanIntervalT := util.ToInt(jt.Job["scanIntervalT"])
+	if err := jt.AlistClient.MkdirContext(jt.context(), dstPath, scanIntervalT); err != nil {
+		log.Printf("Failed to create missing destination directory %q: %v", dstPath, err)
+		return false
+	}
+	return true
 }
 
 func (jt *JobTask) runScanWork(work scanWork, spec *ignore.GitIgnore) {
@@ -487,7 +542,6 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 	children := make([]scanWork, 0)
 	dstIndex := newDstNameMatchIndex(dstFiles)
 	srcIndex := newSrcNameMatchIndex(srcFiles)
-	matchedDstKeys := make(map[string]struct{})
 	for key, srcVal := range srcFiles {
 		if jt.isBreak() {
 			break
@@ -498,32 +552,12 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 			if !jobAllowsFileSize(jt.Job, srcSize) {
 				continue
 			}
-			if util.ToInt(jt.Job["method"]) == 1 {
-				if dstDirKey, dstDirVal, exists := dstIndex.find(key+"/", srcIndex); exists {
-					if jt.delFile(work.DstPath, dstDirKey, fileSize(dstDirVal)) != taskStatusSuccess {
-						continue
-					}
-					delete(dstFiles, dstDirKey)
-				}
-			}
-			dstKey, dstVal, exists := dstIndex.find(key, srcIndex)
-			if exists {
-				matchedDstKeys[dstKey] = struct{}{}
-			}
+			_, dstVal, exists := dstIndex.find(key, srcIndex)
 			if !exists || fileChanged(srcVal, dstVal) {
 				jt.copyFile(work.SrcPath, work.DstPath, key, srcSize)
 			}
 		} else {
 			// Directory
-			if util.ToInt(jt.Job["method"]) == 1 {
-				fileKey := strings.TrimSuffix(key, "/")
-				if dstFileKey, dstFileVal, exists := dstIndex.find(fileKey, srcIndex); exists {
-					if jt.delFile(work.DstPath, dstFileKey, fileSize(dstFileVal)) != taskStatusSuccess {
-						continue
-					}
-					delete(dstFiles, dstFileKey)
-				}
-			}
 			dstKey, _, exists := dstIndex.find(key, srcIndex)
 			if !exists {
 				jt.addChildScanWork(&children, scanWork{
@@ -535,7 +569,6 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 					Mode:        scanWorkMissingDst,
 				})
 			} else {
-				matchedDstKeys[dstKey] = struct{}{}
 				jt.addChildScanWork(&children, scanWork{
 					SrcPath:     work.SrcPath + key,
 					DstPath:     work.DstPath + dstKey,
@@ -554,14 +587,6 @@ func (jt *JobTask) syncWithHave(work scanWork, spec *ignore.GitIgnore) {
 		return
 	}
 
-	if util.ToInt(jt.Job["method"]) == 1 {
-		for dstKey, dstVal := range dstFiles {
-			if _, matched := matchedDstKeys[dstKey]; matched {
-				continue
-			}
-			jt.delFile(work.DstPath, dstKey, fileSize(dstVal))
-		}
-	}
 	jt.finishScanWork()
 	jt.runChildScanWorks(children, spec)
 }
@@ -636,10 +661,33 @@ func jobAllowsFileSize(job map[string]interface{}, size int64) bool {
 func fileChanged(srcVal, dstVal interface{}) bool {
 	src := toFileMetadata(srcVal)
 	dst := toFileMetadata(dstVal)
-	if src.MD5 != "" && dst.MD5 != "" {
+	// Size is checked first and unconditionally: differing sizes always mean the
+	// file changed, whatever the hashes claim. Only then is a hash comparison
+	// allowed to declare same-size files identical, and only for well-formed
+	// digests -- some drivers return a constant placeholder for every file, which
+	// would otherwise make every changed file look unchanged.
+	if src.Size != dst.Size {
+		return true
+	}
+	if isMD5Digest(src.MD5) && isMD5Digest(dst.MD5) {
 		return src.MD5 != dst.MD5
 	}
-	return src.Size != dst.Size
+	return false
+}
+
+// isMD5Digest reports whether value looks like a real MD5 hex digest. AList
+// normalizes case but does not validate the shape.
+func isMD5Digest(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func fileSize(val interface{}) int64 {

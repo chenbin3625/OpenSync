@@ -231,3 +231,54 @@ func movedFileFullSyncPlan(metadata FileMetadata) *fullSyncPlan {
 	plan.build(map[string]interface{}{"method": 1})
 	return plan
 }
+
+// A source file excluded by the size filter must not be deleted from the
+// destination: the filter decides what gets copied, never what gets deleted.
+func TestFullSyncPlanKeepsSizeFilteredDestinationFile(t *testing.T) {
+	small := FileMetadata{Size: 500 * 1024}
+	src := &fullSyncSnapshot{
+		root: "/src/",
+		dirs: map[string]FileListResult{"": {"small.txt": small}},
+	}
+	dst := &fullSyncSnapshot{
+		root: "/dst/",
+		dirs: map[string]FileListResult{"": {"small.txt": small}},
+	}
+	plan := newFullSyncPlan(src, dst)
+	plan.build(map[string]interface{}{
+		"method":      1,
+		"minFileSize": int64(1024 * 1024),
+	})
+
+	if len(plan.extraDeletes) != 0 {
+		t.Fatalf("extraDeletes = %#v, want none: the file still exists at the source", plan.extraDeletes)
+	}
+	if len(plan.extraFiles) != 0 {
+		t.Fatalf("extraFiles = %#v, want none", plan.extraFiles)
+	}
+	if len(plan.newFiles) != 0 || len(plan.changed) != 0 {
+		t.Fatalf("newFiles=%#v changed=%#v, want none: the file is filtered out of copying", plan.newFiles, plan.changed)
+	}
+}
+
+// A destination file with no source counterpart is still deleted when a size
+// filter is configured, so the filter fix does not disable mirror deletes.
+func TestFullSyncPlanStillDeletesUnmatchedDestinationFileWithSizeFilter(t *testing.T) {
+	src := &fullSyncSnapshot{
+		root: "/src/",
+		dirs: map[string]FileListResult{"": {}},
+	}
+	dst := &fullSyncSnapshot{
+		root: "/dst/",
+		dirs: map[string]FileListResult{"": {"orphan.txt": {Size: 500 * 1024}}},
+	}
+	plan := newFullSyncPlan(src, dst)
+	plan.build(map[string]interface{}{
+		"method":      1,
+		"minFileSize": int64(1024 * 1024),
+	})
+
+	if len(plan.extraDeletes) != 1 {
+		t.Fatalf("extraDeletes = %#v, want the orphaned destination file", plan.extraDeletes)
+	}
+}

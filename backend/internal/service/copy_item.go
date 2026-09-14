@@ -255,15 +255,27 @@ func (ci *CopyItem) startTransfer(ctx context.Context, client copyItemClient) (s
 
 // confirmSynchronousCopy handles a copy/move response with no task id: some
 // backends complete the operation synchronously. The destination is verified so
-// "no task" is only treated as success when the file actually arrived. A
-// verification error keeps the legacy assume-success behavior instead of
-// failing items on a flaky existence check.
+// "no task" is only treated as success when the file actually arrived.
+//
+// A definitive "absent" answer fails the attempt. An erroring check is retried a
+// few times so a network blip does not decide the outcome; if it keeps failing
+// the legacy assume-success behavior is kept, because some drivers do not
+// support the existence probe at all and every such copy would otherwise be
+// reported as failed.
 func (ci *CopyItem) confirmSynchronousCopy(runtime copyItemRuntime, client copyItemClient) bool {
-	exists, err := ci.verifyDstExists(runtime, client)
-	if err != nil {
-		return true
+	for attempt := 0; attempt < maxTransientPollErrors; attempt++ {
+		exists, err := ci.verifyDstExists(runtime, client)
+		if err == nil {
+			return exists
+		}
+		if runtime.isBreak() {
+			return false
+		}
+		if attempt < maxTransientPollErrors-1 && !runtime.waitForBreak(copyRetryDelay(attempt)) {
+			return false
+		}
 	}
-	return exists
+	return true
 }
 
 func defaultCopyRetryDelay(attempt int) time.Duration {

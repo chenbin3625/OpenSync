@@ -34,3 +34,7 @@ backend/cmd/server/web/*
 # Test and coverage output
 coverage/
 *.out
+
+# AI 工具本地配置（客户端生成，与产品无关）
+AGENTS.md
+CLAUDE.md

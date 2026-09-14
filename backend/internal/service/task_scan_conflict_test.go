@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestFullSyncDeletesConflictingDestinationDirectoryBeforeQueueingFile(t *testing.T) {
@@ -28,6 +29,10 @@ func TestFullSyncDeletesConflictingDestinationDirectoryBeforeQueueingFile(t *tes
 				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"foo","is_dir":false,"size":10}]}}`))
 			case "/dst/":
 				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"foo","is_dir":true,"size":0}]}}`))
+			case "/dst/foo/":
+				// Full sync walks the destination tree, so the conflicting
+				// directory is listed too. It is empty.
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[]}}`))
 			default:
 				t.Fatalf("unexpected list path %q", req.Path)
 			}
@@ -50,25 +55,20 @@ func TestFullSyncDeletesConflictingDestinationDirectoryBeforeQueueingFile(t *tes
 	}))
 	defer server.Close()
 
-	jt := &JobTask{
-		TaskID:  42,
-		Job:     map[string]interface{}{"method": 1},
-		Waiting: newCopyQueue(),
-		AlistClient: &AlistClient{
-			URL:    server.URL,
-			client: server.Client(),
-		},
-	}
-	jt.initRuntime()
+	// Mirror (method=1) jobs run through syncFull, so drive the job entry point
+	// rather than the incremental scanner: the dir-vs-file conflict is resolved
+	// by the full-sync plan's blockers, which run before anything is queued.
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{
+		"method":        1,
+		"srcPath":       "/src/",
+		"dstPath":       "/dst/",
+		"useCacheS":     0,
+		"useCacheT":     0,
+		"scanIntervalS": 0,
+		"scanIntervalT": 0,
+	})
 
-	jt.syncWithHave(scanWork{
-		SrcPath:     "/src/",
-		DstPath:     "/dst/",
-		SrcRootPath: "/src/",
-		DstRootPath: "/dst/",
-		FirstDst:    true,
-		Mode:        scanWorkCompare,
-	}, nil)
+	jt.sync()
 
 	if len(removeCalls) != 1 || removeCalls[0] != "/dst/foo/" {
 		t.Fatalf("removeCalls = %#v, want /dst/foo/", removeCalls)
@@ -280,4 +280,70 @@ func scanTestTask(serverURL string, client *http.Client, job map[string]interfac
 	}
 	jt.initRuntime()
 	return jt
+}
+
+// A destination root that does not exist yet must be created rather than
+// failing the whole job with "destination scan failed".
+func TestSyncCreatesMissingDestinationRoot(t *testing.T) {
+	oldDelay := scanListRetryDelay
+	scanListRetryDelay = func(int) time.Duration { return 0 }
+	defer func() { scanListRetryDelay = oldDelay }()
+
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	var mkdirCalls []string
+	dstCreated := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var req struct {
+			Path string `json:"path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
+		switch r.URL.Path {
+		case "/api/fs/list":
+			switch req.Path {
+			case "/src/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"a.txt","is_dir":false,"size":10}]}}`))
+			case "/dst/":
+				if !dstCreated {
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"code":500,"message":"failed get objs: failed get dir: object not found","data":null}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[]}}`))
+			default:
+				t.Errorf("unexpected list path %q", req.Path)
+			}
+		case "/api/fs/mkdir":
+			mkdirCalls = append(mkdirCalls, req.Path)
+			dstCreated = true
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		case "/api/fs/copy":
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"tasks":[]}}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{
+		"method":        0,
+		"srcPath":       "/src/",
+		"dstPath":       "/dst/",
+		"scanIntervalS": 0,
+		"scanIntervalT": 0,
+	})
+
+	jt.sync()
+
+	if len(mkdirCalls) != 1 || mkdirCalls[0] != "/dst/" {
+		t.Fatalf("mkdirCalls = %#v, want one /dst/", mkdirCalls)
+	}
+	waiting := jt.Waiting.snapshot()
+	if len(waiting) != 1 || waiting[0].FileName != "a.txt" {
+		t.Fatalf("waiting = %#v, want the source file queued after the root was created", waiting)
+	}
 }

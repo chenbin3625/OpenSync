@@ -5,6 +5,7 @@ import (
 	"opensync/internal/mapper"
 	"opensync/internal/msg"
 	"opensync/pkg/util"
+	"sync"
 	"testing"
 	"time"
 )
@@ -276,5 +277,38 @@ func TestRemoveJobClientRejectsRunningJobWithoutStoppingIt(t *testing.T) {
 	}
 	if got := util.ToInt(client.Job["enable"]); got != 1 {
 		t.Fatalf("job enable after rejected delete = %d, want 1", got)
+	}
+}
+
+// startCopyItem is reached from both the submit executor and the full-sync
+// relocation path. Every item must get a distinct DoingKey, otherwise entries
+// overwrite each other in Doing and the concurrency gate under-counts.
+func TestStartCopyItemAssignsDistinctDoingKeysConcurrently(t *testing.T) {
+	jt := &JobTask{
+		Doing:          make(map[int64]*CopyItem),
+		Waiting:        newCopyQueue(),
+		FinishedCounts: make(map[taskStatus]int),
+		FinishedSizes:  make(map[taskStatus]int64),
+	}
+
+	const perGoroutine = 300
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < perGoroutine; j++ {
+				key := jt.QueueNum.Add(1)
+				item := &CopyItem{DoingKey: key}
+				jt.DoingMu.Lock()
+				jt.Doing[key] = item
+				jt.DoingMu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got, want := len(jt.Doing), 2*perGoroutine; got != want {
+		t.Fatalf("Doing entries = %d, want %d: DoingKey collisions dropped items", got, want)
 	}
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 )
 
@@ -48,14 +49,23 @@ func normalizePathListForStorage(value interface{}) string {
 	return encodePathList(parsePathList(value))
 }
 
+// cleanPathList drops blank entries and duplicates. Duplicates matter because a
+// path repeated in the selection is compared against itself when the shared
+// parent is derived, which yields a suffix carrying a leading slash.
 func cleanPathList(paths []string) []string {
 	cleaned := make([]string, 0, len(paths))
-	for _, path := range paths {
-		path = strings.TrimSpace(path)
-		if path == "" {
+	seen := make(map[string]struct{}, len(paths))
+	for _, item := range paths {
+		item = strings.TrimSpace(item)
+		if item == "" {
 			continue
 		}
-		cleaned = append(cleaned, path)
+		key := path.Clean(item)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		cleaned = append(cleaned, item)
 	}
 	return cleaned
 }

@@ -85,8 +85,19 @@ func (jt *JobTask) syncFull(work scanWork, spec *ignore.GitIgnore) {
 	}()
 	wg.Wait()
 
-	if srcErr != nil || dstErr != nil || jt.isBreak() {
+	if srcErr != nil || jt.isBreak() {
 		return
+	}
+	if dstErr != nil {
+		// The destination root may simply not exist yet on a first run. Create it
+		// and rescan once; anything else is a real failure.
+		if !jt.ensureDstDirAfterListError(work.DstPath, dstErr) {
+			return
+		}
+		dstSnapshot, dstErr = jt.scanFullSyncTree(work.DstPath, work.FirstDst, spec, false)
+		if dstErr != nil || jt.isBreak() {
+			return
+		}
 	}
 
 	plan := newFullSyncPlan(srcSnapshot, dstSnapshot)
@@ -193,7 +204,15 @@ func (plan *fullSyncPlan) compareDir(job map[string]interface{}, srcRelDir, dstR
 	for _, name := range sortedFileListKeys(srcItems) {
 		metadata := srcItems[name]
 		if !strings.HasSuffix(name, "/") {
-			if !jobAllowsFileSize(job, metadata.Size) {
+			// The size filter decides what gets copied, never what gets deleted.
+			// Claim the matching destination entry before skipping so a file that
+			// still exists at the source is not treated as an extra file and
+			// deleted from the destination.
+			allowed := jobAllowsFileSize(job, metadata.Size)
+			if !allowed {
+				if dstName, _, exists := dstIndex.find(name, srcIndex); exists {
+					matchedDst[dstName] = struct{}{}
+				}
 				continue
 			}
 
@@ -438,18 +457,33 @@ func (plan *fullSyncPlan) relocations() []fullSyncRelocation {
 	return result
 }
 
+// runFullSyncRelocations starts the destination-side moves and waits for them.
+// The caller inspects each item's terminal status to decide which deletes are
+// safe, so this has to be synchronous. Admission goes through the shared
+// in-flight budget: this path runs on the scan goroutine while the submit
+// executor is also starting copies, and both honouring the limit independently
+// would put twice the configured concurrency on the AList server. Waiting is
+// scoped to this batch so unrelated copies do not serialize it.
 func (jt *JobTask) runFullSyncRelocations(relocations []fullSyncRelocation) {
-	limit := runtimeTaskLimits().CopyConcurrency
-	for start := 0; start < len(relocations) && !jt.isBreak(); start += limit {
-		end := start + limit
-		if end > len(relocations) {
-			end = len(relocations)
-		}
-		for i := start; i < end; i++ {
-			jt.startCopyItem(relocations[i].item)
-		}
-		jt.copyWG.Wait()
+	if len(relocations) == 0 {
+		return
 	}
+	limit := runtimeTaskLimits().CopyConcurrency
+	if limit < 1 {
+		limit = 1
+	}
+
+	var batch sync.WaitGroup
+	for i := range relocations {
+		if jt.isBreak() {
+			break
+		}
+		if !jt.waitForCopySlot(limit) {
+			break
+		}
+		jt.startCopyItemTracked(relocations[i].item, &batch)
+	}
+	batch.Wait()
 }
 
 func (jt *JobTask) createFullSyncDir(item fullSyncDir) taskStatus {
@@ -468,8 +502,10 @@ func (jt *JobTask) createFullSyncDir(item fullSyncDir) taskStatus {
 func fullSyncRelocationKey(name string, metadata FileMetadata) string {
 	// Size-only matches are deliberately excluded: moving the wrong target file
 	// is more damaging than falling back to the existing copy-and-delete path.
+	// The digest also has to be well-formed, so a driver that returns a constant
+	// placeholder for every file cannot make unrelated files look interchangeable.
 	md5 := normalizeMD5(metadata.MD5)
-	if md5 == "" || strings.Contains(name, "/") {
+	if !isMD5Digest(md5) || strings.Contains(name, "/") {
 		return ""
 	}
 	return fmt.Sprintf("%s\x00%d\x00%s", name, metadata.Size, md5)

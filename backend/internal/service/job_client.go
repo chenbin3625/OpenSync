@@ -264,7 +264,9 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 	if err != nil {
 		sched.Stop()
 		if addJobID != 0 {
-			log.Printf("Error during job setup, deleting job: %v", job)
+			// Log the identifier and the cause, not the whole config: the config
+			// carries source/destination paths and dumping it loses the error.
+			log.Printf("Error during job setup, deleting job %d: %v", jc.JobID, err)
 			mapper.DeleteJob(jc.JobID)
 		} else if isInit {
 			log.Printf("Error during job setup, disabling job %d: %v", jc.JobID, err)

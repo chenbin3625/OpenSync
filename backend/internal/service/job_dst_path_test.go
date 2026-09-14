@@ -269,3 +269,58 @@ func TestCommonSrcSelectionParentReturnsDeepestSharedDirectory(t *testing.T) {
 		})
 	}
 }
+
+// Sources that share a base name must not collapse into one destination: in
+// mirror mode each run would delete the other selection's files.
+func TestDstPathForSrcSelectionDisambiguatesCollidingBaseNames(t *testing.T) {
+	srcPaths := []string{"/a/docs", "/b/docs"}
+	tests := []struct {
+		srcPath string
+		want    string
+	}{
+		{srcPath: "/a/docs", want: "/google/a/docs/"},
+		{srcPath: "/b/docs", want: "/google/b/docs/"},
+	}
+
+	for _, tt := range tests {
+		if got := dstPathForSrcSelection("/google", tt.srcPath, srcPaths); got != tt.want {
+			t.Errorf("dstPathForSrcSelection(%q) = %q, want %q", tt.srcPath, got, tt.want)
+		}
+	}
+}
+
+// Selecting a directory together with one of its own children must not emit a
+// doubled separator for the parent entry.
+func TestDstPathForSrcSelectionHandlesParentSelectedWithChild(t *testing.T) {
+	srcPaths := []string{"/nas", "/nas/photos"}
+	tests := []struct {
+		srcPath string
+		want    string
+	}{
+		{srcPath: "/nas", want: "/google/"},
+		{srcPath: "/nas/photos", want: "/google/photos/"},
+	}
+
+	for _, tt := range tests {
+		if got := dstPathForSrcSelection("/google", tt.srcPath, srcPaths); got != tt.want {
+			t.Errorf("dstPathForSrcSelection(%q) = %q, want %q", tt.srcPath, got, tt.want)
+		}
+	}
+}
+
+// Distinct base names keep the historical layout.
+func TestDstPathForSrcSelectionKeepsBaseNameWhenUnique(t *testing.T) {
+	srcPaths := []string{"/media/photos", "/archive/videos"}
+	if got := dstPathForSrcSelection("/backup/", "/media/photos", srcPaths); got != "/backup/photos/" {
+		t.Errorf("dstPathForSrcSelection = %q, want /backup/photos/", got)
+	}
+}
+
+// A repeated selection entry is deduped, so it cannot be treated as two
+// sources and produce a doubled separator.
+func TestParsePathListDropsDuplicates(t *testing.T) {
+	got := parsePathList([]string{"/nas/a", "/nas/a", " /nas/a "})
+	if len(got) != 1 || got[0] != "/nas/a" {
+		t.Fatalf("parsePathList = %#v, want one /nas/a", got)
+	}
+}
