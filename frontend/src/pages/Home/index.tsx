@@ -184,7 +184,6 @@ export default function Home() {
         onRunAll={handleRunAll}
         onSelectJob={(jobId) => updateHomeRouteState({ jobId })}
         onClearTaskDetail={() => setTaskDetailDrawerTaskId('')}
-        onToggle={handleToggle}
         setPage={handlePageChange}
       />
 

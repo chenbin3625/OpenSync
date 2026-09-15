@@ -8,7 +8,6 @@ import {
 } from './homeUtils';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { Switch } from '../../components/ui/switch';
 import { CompactPagination } from '../../components/common/Pagination';
 import { EmptyState } from '../../components/common/StatePlaceholder';
 import { cn } from '../../lib/utils';
@@ -25,7 +24,6 @@ export interface HomeSidebarProps {
   onRunAll: () => void;
   onSelectJob: (jobId: number) => void;
   onClearTaskDetail: () => void;
-  onToggle: (job: JobItem) => void;
   setPage: (page: number) => void;
 }
 
@@ -40,7 +38,6 @@ export default function HomeSidebar({
   onRunAll,
   onSelectJob,
   onClearTaskDetail,
-  onToggle,
   setPage,
 }: HomeSidebarProps) {
   return (
@@ -102,19 +99,9 @@ export default function HomeSidebar({
                   >
                     {getJobName(job)}
                   </span>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Badge variant={isEnabled ? 'success' : 'secondary'}>
-                      {isEnabled ? '已启用' : '已暂停'}
-                    </Badge>
-                    {job.isCron !== 2 && (
-                      <Switch
-                        checked={isEnabled}
-                        onCheckedChange={() => onToggle(job)}
-                        onClick={(event) => event.stopPropagation()}
-                        aria-label={`${isEnabled ? '暂停' : '启用'}${getJobName(job)}`}
-                      />
-                    )}
-                  </div>
+                  <Badge variant={isEnabled ? 'success' : 'secondary'}>
+                    {isEnabled ? '已启用' : '已暂停'}
+                  </Badge>
                 </div>
 
                 <div className="flex items-center justify-between text-xs text-slate-500 min-w-0">

@@ -90,14 +90,19 @@ test('home dashboard exposes scannable task workspace sections', () => {
   assert.match(homeSource, /<main className=\{cn\(surface\.card/);
 });
 
-test('task management sidebar exposes job enable switches in the list', () => {
-  assert.match(homeSidebarSource, /import \{ Switch \} from '..\/..\/components\/ui\/switch';/);
-  assert.match(homeSidebarSource, /onToggle: \(job: JobItem\) => void;/);
-  assert.match(homeSource, /<HomeSidebar[\s\S]*onToggle=\{handleToggle\}/);
-  assert.match(homeSidebarSource, /<Switch[\s\S]*checked=\{isEnabled\}/);
-  assert.match(homeSidebarSource, /onCheckedChange=\{\(\) => onToggle\(job\)\}/);
-  assert.match(homeSidebarSource, /onClick=\{\(event\) => event\.stopPropagation\(\)\}/);
-  assert.match(homeSidebarSource, /aria-label=\{`\$\{isEnabled \? '暂停' : '启用'\}\$\{getJobName\(job\)\}`\}/);
+test('task management overview exposes the job enable switch in the right action area', () => {
+  assert.doesNotMatch(homeSidebarSource, /import \{ Switch \} from '..\/..\/components\/ui\/switch';/);
+  assert.doesNotMatch(homeSidebarSource, /onToggle: \(job: JobItem\) => void;/);
+  assert.doesNotMatch(homeSidebarSource, /<Switch/);
+  assert.doesNotMatch(homeSource, /<HomeSidebar\b(?:(?!\/>).|\n)*onToggle=/);
+
+  assert.match(
+    homeOverviewSource,
+    /\{\/\* 操作按钮组 \*\/\}\s*<div className="flex items-center gap-2 shrink-0 flex-wrap">\s*\{selectedJob\.isCron !== 2 && \(/
+  );
+  assert.match(homeOverviewSource, /任务开关/);
+  assert.match(homeOverviewSource, /onCheckedChange=\{\(\) => onToggle\(selectedJob\)\}/);
+  assert.doesNotMatch(homeOverviewSource, /className="ml-1 shrink-0"/);
 });
 
 test('app shell fills the available viewport without viewport-math overflow', () => {
