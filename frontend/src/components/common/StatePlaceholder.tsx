@@ -25,7 +25,7 @@ export function EmptyState({ icon: Icon, title, size = 'md', className }: EmptyS
       )}
     >
       <Icon
-        className={cn('mx-auto text-slate-300', compact ? icon.lg : icon.placeholder)}
+        className={cn('mx-auto text-line-strong', compact ? icon.lg : icon.placeholder)}
         aria-hidden="true"
       />
       <p className={compact ? text.subtle : text.muted}>{title}</p>

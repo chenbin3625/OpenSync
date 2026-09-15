@@ -257,7 +257,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
               setPage(1);
             }}
           >
-            <SelectTrigger className={cn(control.compact, 'w-24')}>
+            <SelectTrigger className={cn(control.compact, 'w-28')}>
               <SelectValue placeholder="文件/目录" />
             </SelectTrigger>
             <SelectContent>
@@ -345,11 +345,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
                           return (
                             <Badge
                               variant={
-                                itemType === 1
-                                  ? 'destructive'
-                                  : itemType === 2
-                                  ? 'warning'
-                                  : 'default'
+                                itemType === 1 ? 'error' : itemType === 2 ? 'warning' : 'default'
                               }
                             >
                               {itemType === 0 && record.isPath ? '创建' : (taskTypeNames[itemType] || String(itemType))}

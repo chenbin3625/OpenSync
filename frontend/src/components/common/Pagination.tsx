@@ -52,7 +52,7 @@ export function Pagination({
             value={String(pageSize)}
             onValueChange={(value) => onPageSizeChange(Number(value))}
           >
-            <SelectTrigger className={cn(control.dense, 'w-24')} aria-label="每页条数">
+            <SelectTrigger className={cn(control.dense, 'w-28')} aria-label="每页条数">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

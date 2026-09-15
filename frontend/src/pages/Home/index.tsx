@@ -169,8 +169,10 @@ export default function Home() {
 
   const selectedJob = list.find((job) => job.id === selectedJobId) || null;
 
+  // 桌面端两栏铺满 main 的剩余高度：md:grow 让容器高度等于 max(内容, 可用空间)，
+  // 既不像按视口高度手算那样多出十几像素的整页滚动条，也不会压缩长内容。
   return (
-    <div className="grid gap-4 grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)] min-h-[calc(100vh-90px)]">
+    <div className="grid gap-4 grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)] md:grow md:min-h-0">
       <HomeSidebar
         list={list}
         loading={loading}

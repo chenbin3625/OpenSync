@@ -34,6 +34,21 @@
   /* 品牌主色（翡翠青），与 App.tsx themeConfig.colorPrimary 保持一致 */
   --color-brand: var(--color-teal-700);
   --color-brand-strong: var(--color-teal-800);
+  /*
+   * 中性骨架（描边、分隔线、浅底）一律由主题色推导，而不是与主色无关的灰。
+   *
+   * 约定：结构性外框、分隔线、浅底、悬浮态都从这里取值，
+   * 组件与页面不再直接写 slate-100/200/300 —— 换主题色时只改这四行。
+   * 文字色仍走 slate（深灰在浅底上比深青更易读），不并入此处。
+   *
+   * 分工不能混：tint 同时也是页面底色，所以它只能用于「画布」与不参与交互的内嵌面板；
+   * 一切悬浮 / 选中 / 聚焦填充必须用 line-soft —— 在画布上拿 tint 当填充，
+   * 前后景同色，控件会直接看不见（对比度 1.000）。
+   */
+  --color-line: var(--color-teal-200);
+  --color-line-strong: var(--color-teal-300);
+  --color-line-soft: var(--color-teal-100);
+  --color-tint: var(--color-teal-50);
   /* 语义状态色：危险统一走 rose，成功走 emerald，警告走 amber */
   --color-danger: var(--color-rose-600);
   --color-danger-strong: var(--color-rose-700);
@@ -64,7 +79,7 @@ body {
    */
   font-size: 14px;
   line-height: 1.5714285714285714;
-  background: var(--color-slate-50);
+  background: var(--color-tint);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -83,10 +98,10 @@ select {
   background: var(--color-brand);
 }
 
-/* 统一滚动条：细、圆角（WebKit / Chromium / Firefox） */
+/* 统一滚动条：细、圆角、取自主题色（WebKit / Chromium / Firefox） */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-slate-100) transparent;
+  scrollbar-color: var(--color-line-soft) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -101,11 +116,11 @@ select {
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 8px;
-  background: var(--color-slate-100);
+  background: var(--color-line-soft);
   background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-slate-200);
+  background: var(--color-line);
   background-clip: padding-box;
 }

@@ -392,7 +392,7 @@ export default function JobFormDrawer({
             </Field>
 
             {/* 同步配置分隔 */}
-            <div className="pt-2 border-t border-slate-200">
+            <div className="pt-2 border-t border-line">
               <h3 className={cn(text.groupLabel, 'mb-3')}>同步与调度</h3>
 
               <div className={layout.formGrid}>
@@ -482,7 +482,7 @@ export default function JobFormDrawer({
             </div>
 
             {/* 文件大小过滤 */}
-            <div className="pt-2 border-t border-slate-200 space-y-3">
+            <div className="pt-2 border-t border-line space-y-3">
               <h3 className={text.groupLabel}>文件过滤</h3>
               <div className={layout.formGrid}>
                 <Field
@@ -551,7 +551,7 @@ export default function JobFormDrawer({
             </div>
 
             {/* 缓存与扫描设置 */}
-            <div className="pt-2 border-t border-slate-200 space-y-3">
+            <div className="pt-2 border-t border-line space-y-3">
               <h3 className={text.groupLabel}>缓存加速</h3>
               <div className="grid grid-cols-2 gap-4">
                 <SwitchRow label="源端缓存" checked={useCacheS} onCheckedChange={setUseCacheS} />
@@ -560,7 +560,7 @@ export default function JobFormDrawer({
             </div>
 
             {/* 启用开关 */}
-            <div className="pt-2 border-t border-slate-200">
+            <div className="pt-2 border-t border-line">
               <SwitchRow
                 label="任务启用状态"
                 description="是否开启定时自动触发（手动任务默认始终保持就绪）"
@@ -570,7 +570,7 @@ export default function JobFormDrawer({
               />
             </div>
 
-            <SheetFooter className="pt-4 border-t border-slate-200">
+            <SheetFooter className="pt-4 border-t border-line">
               <Button type="button" variant="outline" onClick={onClose}>
                 取消
               </Button>

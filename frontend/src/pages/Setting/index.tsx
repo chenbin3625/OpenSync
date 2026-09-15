@@ -277,7 +277,7 @@ export default function Setting() {
 
         {/* 修改密码 Dialog */}
         <Dialog open={passwordVisible} onOpenChange={setPasswordVisible}>
-          <DialogContent className="max-w-md" title="修改密码">
+          <DialogContent className="max-w-md">
             <DialogHeader>
               <div className="flex items-center gap-2 text-slate-900">
                 <Shield className={cn(icon.lg, 'text-teal-700')} />

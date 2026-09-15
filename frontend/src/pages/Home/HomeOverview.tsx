@@ -80,21 +80,22 @@ export default function HomeOverview({
             </div>
 
             <div className="space-y-2 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className={cn(text.pageTitle, 'truncate')}>
+              {/* 标题行固定单行：任务名过长时省略，标签与开关不再被挤到第二行 */}
+              <div className="flex items-center gap-2 min-w-0">
+                <h1 className={cn(text.pageTitle, 'truncate min-w-0')} title={getJobName(selectedJob)}>
                   {getJobName(selectedJob)}
                 </h1>
                 <Badge variant={isEnabled ? 'success' : 'secondary'}>
                   {isEnabled ? '已启用' : '已暂停'}
                 </Badge>
-                <Badge variant="outline" className="bg-slate-50">
+                <Badge variant="outline">
                   {methodNames[selectedJob.method] || selectedJob.method}
                 </Badge>
                 {selectedJob.isCron !== 2 && (
                   <Switch
                     checked={isEnabled}
                     onCheckedChange={() => onToggle(selectedJob)}
-                    className="ml-1"
+                    className="ml-1 shrink-0"
                     aria-label="切换启用状态"
                   />
                 )}
@@ -174,7 +175,8 @@ export default function HomeOverview({
                         {formatExcludePreview(selectedJob.exclude)}
                       </span>
                     </TooltipTrigger>
-                    <TooltipContent className="max-w-xs font-mono text-xs whitespace-pre-wrap">
+                    {/* 排除规则是用户手写的模式串，保留等宽；限高与换行由 ui/tooltip 统一处理 */}
+                    <TooltipContent className="font-mono">
                       {selectedJob.exclude}
                     </TooltipContent>
                   </Tooltip>

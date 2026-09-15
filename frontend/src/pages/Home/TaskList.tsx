@@ -30,7 +30,7 @@ import { EmptyState, ErrorState, PlaceholderCard } from '../../components/common
 import { Pagination } from '../../components/common/Pagination';
 import { SearchInput } from '../../components/common/SearchInput';
 import { StatusBadge } from '../../components/common/StatusBadge';
-import { control, icon, layout, surface, table } from '../../lib/styles';
+import { badge, control, icon, layout, surface, table } from '../../lib/styles';
 import {
   Select,
   SelectContent,
@@ -111,7 +111,7 @@ function RealtimeTaskCard({
     <div>
       <TaskRealtimeHero currentTask={currentTask} onStop={onStop}>
         <div className="space-y-3 pt-2">
-          <div className="flex border-b border-slate-200 gap-2 overflow-x-auto">
+          <div className="flex border-b border-line gap-2 overflow-x-auto">
             {statusTabs.map((tab) => {
               const isActive = tab.key === activeTab;
               return (
@@ -127,10 +127,12 @@ function RealtimeTaskCard({
                   )}
                 >
                   <span>{tab.label}</span>
+                  {/* 计数胶囊复用标签配方，只有语义色调随选中态变化 */}
                   <span
                     className={cn(
-                      'px-1.5 py-0.5 rounded-full text-2xs',
-                      isActive ? 'bg-teal-100 text-teal-800 font-bold' : 'bg-slate-100 text-slate-600'
+                      badge.base,
+                      isActive ? badge.tone.brand : badge.tone.neutral,
+                      isActive && 'font-semibold'
                     )}
                   >
                     {getTabCount(tab.key)}

@@ -512,7 +512,7 @@ export default function Notify() {
 
         {/* 新增 / 编辑 通知弹窗 */}
         <Dialog open={modalVisible} onOpenChange={setModalVisible}>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" title={editingItem ? '编辑通知' : '新增通知'}>
+          <DialogContent className="max-w-lg max-h-[90vh]">
             <DialogHeader>
               <DialogTitle>{editingItem ? '编辑通知' : '新增通知'}</DialogTitle>
             </DialogHeader>

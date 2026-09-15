@@ -1,32 +1,35 @@
 import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '../../lib/utils';
+import { badge } from '../../lib/styles';
 
-export const badgeVariants = cva(
-  'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2',
-  {
-    variants: {
-      variant: {
-        default: 'border-transparent bg-teal-700 text-white shadow hover:bg-teal-800',
-        secondary: 'border-transparent bg-slate-100 text-slate-900 hover:bg-slate-200',
-        destructive: 'border-transparent bg-rose-600 text-white shadow hover:bg-rose-700',
-        outline: 'text-slate-800 border-slate-300',
-        success: 'border-transparent bg-emerald-100 text-emerald-800 border border-emerald-200',
-        warning: 'border-transparent bg-amber-100 text-amber-800 border border-amber-200',
-        error: 'border-transparent bg-rose-100 text-rose-800 border border-rose-200',
-        processing: 'border-transparent bg-blue-100 text-blue-800 border border-blue-200',
-      },
+/**
+ * 徽标形状与尺寸来自 lib/styles 的 badge 配方，此处只做「语义色名 -> 色调」的映射。
+ * variant 名保持与状态色体系一致：success / warning / error / processing 由 StatusBadge
+ * 直接映射，default / secondary / outline 供页面按语义选用。
+ */
+export const badgeVariants = cva(badge.base, {
+  variants: {
+    variant: {
+      default: badge.tone.brand,
+      secondary: badge.tone.neutral,
+      outline: badge.tone.outline,
+      success: badge.tone.success,
+      warning: badge.tone.warning,
+      error: badge.tone.danger,
+      processing: badge.tone.info,
     },
-    defaultVariants: {
-      variant: 'default',
-    },
-  }
-);
+  },
+  defaultVariants: {
+    variant: 'default',
+  },
+});
 
 export interface BadgeProps
-  extends React.HTMLAttributes<HTMLDivElement>,
+  extends React.HTMLAttributes<HTMLSpanElement>,
     VariantProps<typeof badgeVariants> {}
 
 export function Badge({ className, variant, ...props }: BadgeProps) {
-  return <div className={cn(badgeVariants({ variant }), className)} {...props} />;
+  // 用 span 承载：徽标常被放进段落或 StatusBadge 的 span 容器里，div 会造成非法嵌套
+  return <span className={cn(badgeVariants({ variant }), className)} {...props} />;
 }

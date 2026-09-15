@@ -16,7 +16,7 @@ const variants = {
     icon: CheckCircle2,
   },
   info: {
-    surface: 'bg-slate-50 border-slate-200 text-slate-700',
+    surface: 'bg-line-soft border-line text-slate-700',
     icon: Info,
   },
 } as const;

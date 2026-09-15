@@ -128,6 +128,25 @@ test('login password reset uses recovery key instead of secret key', () => {
   assert.doesNotMatch(loginSource, /加密秘钥/);
 });
 
+test('login reset dialog documents where to obtain the recovery key', () => {
+  // 恢复密钥只在展示时可见、服务端只存哈希，因此页面必须说明来源与丢失后的兜底获取方式
+  assert.match(loginSource, /找不到恢复密钥？/);
+  assert.match(loginSource, /无法再次查看或找回/);
+  assert.match(loginSource, /reset-password --user/);
+  // Docker 兜底命令需以容器内应用用户执行，避免 data 目录属主被改写
+  assert.match(loginSource, /docker compose exec --user/);
+  assert.match(loginSource, /opensync \.\/opensync reset-password --user/);
+  // 兜底命令回填已输入的用户名，非法字符回落到示例用户名
+  assert.match(loginSource, /safeResetUserName/);
+  assert.match(loginSource, /reset-password --user \$\{safeResetUserName\}/);
+  assert.doesNotMatch(loginSource, /secret\.key/);
+  // 说明是可折叠的：按钮要带上 aria-expanded，点击要真的翻转状态，
+  // 只写 onClick={() => {}} 或漏掉 aria-expanded，折叠区就是摆设（永远展开或永远不展开）
+  assert.match(loginSource, /onClick=\{\(\) => setShowRecoveryHelp\(\(prev\) => !prev\)\}/);
+  assert.match(loginSource, /aria-expanded=\{showRecoveryHelp\}/);
+  assert.match(loginSource, /\{showRecoveryHelp && \(/);
+});
+
 test('login page supports first-run web initialization', () => {
   assert.match(userApiSource, /getInitStatus/);
   assert.match(userApiSource, /initializeUser/);

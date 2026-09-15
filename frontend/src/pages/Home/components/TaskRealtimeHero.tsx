@@ -93,11 +93,12 @@ export default function TaskRealtimeHero({
         )}
       >
         <div className="space-y-1">
-          <div className="flex items-center gap-2">
+          {/* 标题行固定单行：标题过长时省略，状态标签始终完整可见 */}
+          <div className="flex items-center gap-2 min-w-0">
             <div className={cn(surface.iconTile, 'h-8 w-8')}>
               <Zap className={icon.md} />
             </div>
-            <h2 className={text.sectionTitle}>
+            <h2 className={cn(text.sectionTitle, 'truncate min-w-0')}>
               任务 #{currentTask.taskId} 实时运行状态
             </h2>
             <Badge variant={currentTask.scanFinish ? 'success' : 'processing'}>

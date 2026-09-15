@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, X, Check, Search, Loader2 } from 'lucide-react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { cn } from '../../lib/utils';
+import { badge } from '../../lib/styles';
 import type { TreeNode } from '../../types';
 
 export interface PathTreeSelectProps {
@@ -58,14 +59,14 @@ function TreeNodeItem({
     <div className="text-sm select-none">
       <div
         className={cn(
-          'flex items-center gap-1.5 py-1 px-2 rounded-md hover:bg-slate-100 cursor-pointer transition-colors',
-          isSelected && 'bg-teal-50 text-teal-900 font-medium'
+          'flex items-center gap-1.5 py-1 px-2 rounded-md hover:bg-line-soft cursor-pointer transition-colors',
+          isSelected && 'bg-line hover:bg-line text-teal-900 font-medium'
         )}
         onClick={() => onToggleSelect(node.value)}
       >
         <button
           type="button"
-          className="p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors"
+          className="p-0.5 rounded hover:bg-line text-slate-400 hover:text-slate-700 transition-colors"
           onClick={handleExpand}
         >
           {loadingChildren ? (
@@ -77,7 +78,7 @@ function TreeNodeItem({
           )}
         </button>
 
-        <div className="flex items-center justify-center h-4 w-4 rounded border border-slate-300 mr-0.5 shrink-0 transition-colors">
+        <div className="flex items-center justify-center h-4 w-4 rounded border border-line-strong mr-0.5 shrink-0 transition-colors">
           {isSelected && <Check className="h-3 w-3 text-teal-700 stroke-[3]" />}
         </div>
 
@@ -93,7 +94,7 @@ function TreeNodeItem({
       </div>
 
       {expanded && node.children && node.children.length > 0 && (
-        <div className="pl-5 border-l border-slate-200 ml-3.5 mt-0.5 space-y-0.5">
+        <div className="pl-5 border-l border-line ml-3.5 mt-0.5 space-y-0.5">
           {node.children.map((child) => (
             <TreeNodeItem
               key={child.value}
@@ -161,8 +162,8 @@ export function PathTreeSelect({
           role="button"
           tabIndex={disabled ? -1 : 0}
           className={cn(
-            'min-h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm flex items-center justify-between gap-2 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal-600 focus-visible:border-teal-600',
-            disabled && 'cursor-not-allowed opacity-50 bg-slate-50',
+            'min-h-9 w-full rounded-md border border-line-strong bg-white px-3 py-1.5 text-sm shadow-sm flex items-center justify-between gap-2 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal-600 focus-visible:border-teal-600',
+            disabled && 'cursor-not-allowed opacity-50 bg-tint',
             className
           )}
         >
@@ -170,11 +171,9 @@ export function PathTreeSelect({
             {selectedValues.length === 0 ? (
               <span className="text-slate-400 select-none text-sm">{placeholder}</span>
             ) : (
+              // 已选路径胶囊与全局标签共用同一形状与中性色调，仅保留删除按钮所需的内距
               selectedValues.map((path) => (
-                <span
-                  key={path}
-                  className="inline-flex items-center gap-1 rounded bg-slate-100 border border-slate-200 px-2 py-0.5 text-xs text-slate-700 font-medium max-w-[200px]"
-                >
+                <span key={path} className={cn(badge.base, badge.tone.neutral, 'max-w-[200px] pr-1')}>
                   <span className="truncate" title={path}>
                     {path}
                   </span>
@@ -206,7 +205,7 @@ export function PathTreeSelect({
         <PopoverPrimitive.Content
           sideOffset={4}
           align="start"
-          className="z-50 w-[var(--radix-popover-trigger-width)] min-w-[320px] max-w-[500px] rounded-lg border border-slate-200 bg-white p-2.5 shadow-xl animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+          className="z-50 w-[var(--radix-popover-trigger-width)] min-w-[320px] max-w-[500px] rounded-lg border border-line bg-white p-2.5 shadow-xl animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
         >
           <div className="relative mb-2 flex items-center">
             <Search className="absolute left-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
@@ -215,7 +214,7 @@ export function PathTreeSelect({
               placeholder="快速搜索路径..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-8 w-full rounded-md border border-slate-200 bg-slate-50 pl-8 pr-3 text-xs placeholder:text-slate-400 focus:outline-none focus:border-teal-600 focus:bg-white transition-colors"
+              className="h-8 w-full rounded-md border border-line bg-tint pl-8 pr-3 text-xs placeholder:text-slate-400 focus:outline-none focus:border-teal-600 focus:bg-white transition-colors"
             />
           </div>
 

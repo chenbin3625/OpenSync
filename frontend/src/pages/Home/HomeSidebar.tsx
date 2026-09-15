@@ -60,8 +60,9 @@ export default function HomeSidebar({
         </Button>
       </div>
 
-      {/* 任务列表 */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-1.5 min-h-[300px] max-h-[calc(100vh-240px)]">
+      {/* 任务列表：高度交给 flex 分配（窄屏保底 240px，桌面端跟随卡片高度），
+          超出时只在本容器内滚动，不再按视口高度手算 max-height 把整页撑高 */}
+      <div className="flex-1 min-h-[240px] md:min-h-0 overflow-y-auto p-2 space-y-1.5">
         {list.length === 0 && !loading ? (
           <EmptyState icon={FolderSync} title="暂无同步任务，点击上方新建" size="sm" />
         ) : (
@@ -82,19 +83,19 @@ export default function HomeSidebar({
                 }}
                 className={cn(
                   'w-full text-left p-3 rounded-lg border transition-all cursor-pointer select-none space-y-1.5',
+                  // 卡片落在白底上：悬浮用 line-soft，选中必须再深一档（line），
+                  // 否则「悬浮到别的任务」比「当前任务」还像被选中；
+                  // 也不再用 teal-50/70、tint/80 这类透明度变体，浅底统一取令牌
                   isSelected
-                    ? 'bg-teal-50/70 border-teal-200 shadow-xs'
-                    : 'bg-white border-slate-100 hover:border-slate-200 hover:bg-slate-50/80'
+                    ? 'bg-line border-line-strong shadow-xs'
+                    : 'bg-white border-line-soft hover:border-line hover:bg-line-soft'
                 )}
               >
                 <div className="flex items-center justify-between gap-2 min-w-0">
                   <span className={cn('text-sm font-semibold truncate', isSelected ? 'text-teal-950' : 'text-slate-800')}>
                     {getJobName(job)}
                   </span>
-                  <Badge
-                    variant={isEnabled ? 'success' : 'secondary'}
-                    className="text-2xs px-1.5 py-0 shrink-0"
-                  >
+                  <Badge variant={isEnabled ? 'success' : 'secondary'}>
                     {isEnabled ? '已启用' : '已暂停'}
                   </Badge>
                 </div>

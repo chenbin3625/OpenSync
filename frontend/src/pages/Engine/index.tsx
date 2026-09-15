@@ -297,7 +297,7 @@ export default function Engine() {
 
       {/* 新增 / 编辑 引擎 Dialog */}
       <Dialog open={modalVisible} onOpenChange={setModalVisible}>
-        <DialogContent className="max-w-md" title={editingItem ? '编辑引擎' : '新增引擎'}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{editingItem ? '编辑引擎' : '新增引擎'}</DialogTitle>
           </DialogHeader>

@@ -38,8 +38,8 @@ function navItemClass(isActive: boolean, mobile = false) {
     'flex items-center text-sm font-medium rounded-md transition-colors',
     mobile ? 'w-full gap-3 px-3 py-2' : 'gap-2 px-3 py-1.5',
     isActive
-      ? 'bg-teal-50 text-teal-800 font-semibold'
-      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+      ? 'bg-line text-teal-800 font-semibold hover:bg-line'
+      : 'text-slate-600 hover:text-slate-900 hover:bg-line-soft'
   );
 }
 
@@ -63,10 +63,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     navigate('/login');
   };
 
+  // 窄屏保持文档流（保留移动端地址栏收起行为）；
+  // 桌面端把外壳固定为一屏高，滚动交给内容区，页面本身不再出现整页滚动条。
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-dvh flex flex-col md:h-dvh md:overflow-hidden">
       {/* 顶部导航栏 */}
-      <header className="sticky top-0 z-40 h-14 border-b border-slate-200 bg-white/85 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between shadow-xs">
+      <header className="sticky top-0 z-40 h-14 border-b border-line bg-white/85 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-6">
           {/* 品牌标识 */}
           <div
@@ -144,7 +146,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             onClick={() => setMobileMenuOpen((prev) => !prev)}
-            className="md:hidden p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+            className="md:hidden p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-line-soft"
             aria-label="切换移动菜单"
           >
             {mobileMenuOpen ? <X className={icon.lg} /> : <MenuIcon className={icon.lg} />}
@@ -154,7 +156,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* 移动端下拉折叠菜单 */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-b border-slate-200 bg-white px-4 py-3 space-y-1 shadow-sm animate-in slide-in-from-top-2">
+        <div className="md:hidden border-b border-line bg-white px-4 py-3 space-y-1 shadow-sm animate-in slide-in-from-top-2">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentSection === item.path;
@@ -176,8 +178,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* 主体内容 */}
-      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6">
+      {/* 主体内容：宽度铺满可视区（不再设 max-w 上限），纵向作为 flex 容器
+          向下传递剩余高度，页面内部无需再按视口高度手算可用空间；
+          桌面端由本区域承担滚动，页头因此始终可见 */}
+      <main className="flex-1 min-h-0 w-full p-4 sm:p-6 flex flex-col md:overflow-y-auto">
         {children}
       </main>
 

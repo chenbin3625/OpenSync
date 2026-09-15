@@ -84,7 +84,7 @@ export function Toaster() {
             ? 'border-rose-200 bg-white text-rose-950'
             : item.type === 'warning'
             ? 'border-amber-200 bg-white text-amber-950'
-            : 'border-slate-200 bg-white text-slate-900';
+            : 'border-line bg-white text-slate-900';
 
         const iconColor =
           item.type === 'success'

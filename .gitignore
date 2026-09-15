@@ -38,3 +38,6 @@ coverage/
 # AI 工具本地配置（客户端生成，与产品无关）
 AGENTS.md
 CLAUDE.md
+# .claude/worktrees 下是整棵仓库的副本（还带自己的 .git），
+# 不收进忽略名单的话，一次 git add -A 就会把重复仓库整个提交进来
+.claude/
