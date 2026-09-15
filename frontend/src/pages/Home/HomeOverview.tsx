@@ -34,6 +34,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '../../components/ui/tooltip';
+import { SectionHeading } from '../../components/common/PageHeader';
+import { InfoRow } from '../../components/common/InfoRow';
+import { cn } from '../../lib/utils';
+import { icon, surface, text } from '../../lib/styles';
 
 export interface HomeOverviewProps {
   selectedJob: JobItem;
@@ -60,19 +64,24 @@ export default function HomeOverview({
     <TooltipProvider>
       <div className="space-y-5">
         {/* 顶部 Hero 卡片 */}
-        <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs p-6 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="flex items-start gap-4">
-            <div className="h-12 w-12 rounded-xl bg-teal-50 text-teal-700 border border-teal-100 flex items-center justify-center shrink-0">
+        <div
+          className={cn(
+            surface.card,
+            'p-5 flex flex-col md:flex-row md:items-center justify-between gap-4'
+          )}
+        >
+          <div className="flex items-start gap-4 min-w-0">
+            <div className={cn(surface.iconTile, 'h-12 w-12')}>
               {isEnabled ? (
-                <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+                <CheckCircle2 className={cn(icon.lg, 'text-emerald-600')} />
               ) : (
-                <PauseCircle className="h-6 w-6 text-slate-400" />
+                <PauseCircle className={cn(icon.lg, 'text-slate-400')} />
               )}
             </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h1 className="text-xl font-bold text-slate-900 tracking-tight truncate">
+            <div className="space-y-2 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className={cn(text.pageTitle, 'truncate')}>
                   {getJobName(selectedJob)}
                 </h1>
                 <Badge variant={isEnabled ? 'success' : 'secondary'}>
@@ -92,17 +101,17 @@ export default function HomeOverview({
               </div>
 
               {/* 统计小标签 */}
-              <div className="flex items-center gap-4 text-xs text-slate-500 pt-0.5 flex-wrap">
+              <div className={cn('flex items-center gap-4 pt-0.5 flex-wrap', text.muted)}>
                 <span className="flex items-center gap-1.5">
-                  <Folder className="h-3.5 w-3.5 text-slate-400" />
+                  <Folder className={cn(icon.sm, 'text-slate-400')} />
                   源: <strong className="text-slate-700">{countJobPaths(selectedJob.srcPath)}</strong> 个
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <HardDrive className="h-3.5 w-3.5 text-slate-400" />
+                  <HardDrive className={cn(icon.sm, 'text-slate-400')} />
                   目标: <strong className="text-slate-700">{countJobPaths(selectedJob.dstPath)}</strong> 个
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5 text-slate-400" />
+                  <Clock className={cn(icon.sm, 'text-slate-400')} />
                   调度: <strong className="text-slate-700">{formatSchedule(selectedJob)}</strong>
                 </span>
               </div>
@@ -111,26 +120,20 @@ export default function HomeOverview({
 
           {/* 操作按钮组 */}
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            <Button
-              onClick={() => onRun(selectedJob.id)}
-              className="shadow-xs"
-            >
-              <Play className="h-4 w-4 mr-1.5 fill-current" />
+            <Button onClick={() => onRun(selectedJob.id)}>
+              <Play className={cn(icon.md, 'mr-1.5 fill-current')} />
               手动执行
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => onEdit(selectedJob)}
-            >
-              <Edit className="h-4 w-4 mr-1.5" />
+            <Button variant="outline" onClick={() => onEdit(selectedJob)}>
+              <Edit className={cn(icon.md, 'mr-1.5')} />
               编辑
             </Button>
             <Button
               variant="ghost"
-              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+              className="text-rose-600 hover:text-rose-700 hover:bg-rose-50"
               onClick={() => setDeleteDialogOpen(true)}
             >
-              <Trash2 className="h-4 w-4 mr-1.5" />
+              <Trash2 className={cn(icon.md, 'mr-1.5')} />
               删除
             </Button>
           </div>
@@ -139,59 +142,31 @@ export default function HomeOverview({
         {/* 任务详情网格 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* 路径与引擎 */}
-          <div className="bg-white rounded-xl border border-slate-200/80 p-5 space-y-3.5 shadow-xs">
-            <div className="flex items-center gap-2 pb-2.5 border-b border-slate-100 font-semibold text-sm text-slate-900">
-              <Server className="h-4 w-4 text-teal-700" />
-              <span>存储与路径</span>
-            </div>
+          <div className={cn(surface.card, surface.cardPadding, 'space-y-3.5')}>
+            <SectionHeading title="存储与路径" icon={Server} bordered />
 
-            <div className="space-y-3 text-xs">
-              <div className="flex items-start justify-between gap-4">
-                <span className="text-slate-400 shrink-0">所选引擎</span>
-                <span className="font-medium text-slate-800 text-right">{getAlistName(selectedJob.alistId)}</span>
-              </div>
-
-              <div className="flex items-start justify-between gap-4">
-                <span className="text-slate-400 shrink-0">源目录路径</span>
-                <span className="font-mono text-slate-700 text-right break-all max-w-[70%]">
-                  {formatJobPaths(selectedJob.srcPath) || '—'}
-                </span>
-              </div>
-
-              <div className="flex items-start justify-between gap-4">
-                <span className="text-slate-400 shrink-0">目标目录路径</span>
-                <span className="font-mono text-slate-700 text-right break-all max-w-[70%]">
-                  {formatJobPaths(selectedJob.dstPath) || '—'}
-                </span>
-              </div>
-
-              <div className="flex items-start justify-between gap-4">
-                <span className="text-slate-400 shrink-0">缓存加速配置</span>
-                <span className="text-slate-700">{formatCache(selectedJob.useCacheS, selectedJob.useCacheT)}</span>
-              </div>
+            <div className="space-y-3">
+              <InfoRow label="所选引擎">{getAlistName(selectedJob.alistId)}</InfoRow>
+              <InfoRow label="源目录路径" mono>
+                {formatJobPaths(selectedJob.srcPath) || '—'}
+              </InfoRow>
+              <InfoRow label="目标目录路径" mono>
+                {formatJobPaths(selectedJob.dstPath) || '—'}
+              </InfoRow>
+              <InfoRow label="缓存加速配置">
+                {formatCache(selectedJob.useCacheS, selectedJob.useCacheT)}
+              </InfoRow>
             </div>
           </div>
 
           {/* 过滤与调度 */}
-          <div className="bg-white rounded-xl border border-slate-200/80 p-5 space-y-3.5 shadow-xs">
-            <div className="flex items-center gap-2 pb-2.5 border-b border-slate-100 font-semibold text-sm text-slate-900">
-              <Filter className="h-4 w-4 text-teal-700" />
-              <span>规则与调度</span>
-            </div>
+          <div className={cn(surface.card, surface.cardPadding, 'space-y-3.5')}>
+            <SectionHeading title="规则与调度" icon={Filter} bordered />
 
-            <div className="space-y-3 text-xs">
-              <div className="flex items-start justify-between gap-4">
-                <span className="text-slate-400 shrink-0">执行方式</span>
-                <span className="font-medium text-slate-800">{formatSchedule(selectedJob)}</span>
-              </div>
-
-              <div className="flex items-start justify-between gap-4">
-                <span className="text-slate-400 shrink-0">文件大小过滤</span>
-                <span className="text-slate-700">{fileSizeRange || '不限制大小'}</span>
-              </div>
-
-              <div className="flex items-start justify-between gap-4">
-                <span className="text-slate-400 shrink-0">排除规则 (Ignore)</span>
+            <div className="space-y-3">
+              <InfoRow label="执行方式">{formatSchedule(selectedJob)}</InfoRow>
+              <InfoRow label="文件大小过滤">{fileSizeRange || '不限制大小'}</InfoRow>
+              <InfoRow label="排除规则 (Ignore)">
                 {selectedJob.exclude ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -206,14 +181,12 @@ export default function HomeOverview({
                 ) : (
                   <span className="text-slate-400">无排除规则</span>
                 )}
-              </div>
-
-              <div className="flex items-start justify-between gap-4">
-                <span className="text-slate-400 shrink-0">创建时间</span>
-                <span className="text-slate-600">
-                  {selectedJob.createTime ? dayjs.unix(selectedJob.createTime).format('YYYY-MM-DD HH:mm') : '—'}
-                </span>
-              </div>
+              </InfoRow>
+              <InfoRow label="创建时间">
+                {selectedJob.createTime
+                  ? dayjs.unix(selectedJob.createTime).format('YYYY-MM-DD HH:mm')
+                  : '—'}
+              </InfoRow>
             </div>
           </div>
         </div>

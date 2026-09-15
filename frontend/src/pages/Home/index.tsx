@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertCircle, Inbox, LayoutDashboard, PlayCircle, History } from 'lucide-react';
+import { Inbox, LayoutDashboard, PlayCircle, History } from 'lucide-react';
 import { jobGetJob, jobPut, jobDelete } from '../../api/job';
 import { alistGet } from '../../api/alist';
 import TaskList from './TaskList';
@@ -14,6 +14,10 @@ import { formatAlistLabel } from './homeUtils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/ui/sheet';
 import { toast } from '../../components/ui/toaster';
+import { Alert } from '../../components/common/Alert';
+import { EmptyState } from '../../components/common/StatePlaceholder';
+import { cn } from '../../lib/utils';
+import { icon, surface } from '../../lib/styles';
 
 const PAGE_SIZE = 12;
 
@@ -182,12 +186,7 @@ export default function Home() {
       />
 
       <main className="min-w-0">
-        {listError && (
-          <div className="flex items-center gap-2 p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium mb-4">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>同步任务列表加载失败</span>
-          </div>
-        )}
+        {listError && <Alert className="mb-4">同步任务列表加载失败</Alert>}
 
         {selectedJob ? (
           <Tabs
@@ -195,17 +194,17 @@ export default function Home() {
             onValueChange={(key) => updateHomeRouteState({ tab: key as HomeTabKey })}
             className="w-full space-y-4"
           >
-            <TabsList className="bg-slate-100 p-1 border border-slate-200/60">
+            <TabsList>
               <TabsTrigger value="overview" className="flex items-center gap-1.5 text-xs">
-                <LayoutDashboard className="h-3.5 w-3.5" />
+                <LayoutDashboard className={icon.sm} />
                 <span>总览</span>
               </TabsTrigger>
               <TabsTrigger value="realtime" className="flex items-center gap-1.5 text-xs">
-                <PlayCircle className="h-3.5 w-3.5" />
+                <PlayCircle className={icon.sm} />
                 <span>实时任务</span>
               </TabsTrigger>
               <TabsTrigger value="history" className="flex items-center gap-1.5 text-xs">
-                <History className="h-3.5 w-3.5" />
+                <History className={icon.sm} />
                 <span>历史任务</span>
               </TabsTrigger>
             </TabsList>
@@ -242,11 +241,11 @@ export default function Home() {
             </TabsContent>
           </Tabs>
         ) : (
-          <div className="grid place-items-center min-h-[360px] py-20 text-center space-y-2 bg-white rounded-xl border border-slate-200/80">
-            <Inbox className="h-10 w-10 text-slate-300 mx-auto" />
-            <p className="text-sm text-slate-400">
-              暂无同步任务，点击「新建」创建第一个同步任务
-            </p>
+          <div className={cn(surface.card, 'grid place-items-center min-h-[360px]')}>
+            <EmptyState
+              icon={Inbox}
+              title="暂无同步任务，点击「新建」创建第一个同步任务"
+            />
           </div>
         )}
       </main>
@@ -265,9 +264,9 @@ export default function Home() {
       >
         <SheetContent
           side="bottom"
-          className="h-[90vh] max-h-[90vh] overflow-hidden flex flex-col p-4 sm:p-6"
+          className="h-[90vh] overflow-hidden flex flex-col p-4 sm:p-6"
         >
-          <SheetHeader className="pb-3 border-b border-slate-100">
+          <SheetHeader className={cn('pb-3 border-b', surface.divider)}>
             <SheetTitle>任务详情 — 任务 #{taskDetailDrawerTaskId}</SheetTitle>
           </SheetHeader>
           <div className="flex-1 overflow-auto pt-3">

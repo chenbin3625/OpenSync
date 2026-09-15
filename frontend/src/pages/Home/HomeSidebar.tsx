@@ -9,7 +9,10 @@ import {
 } from './homeUtils';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
+import { CompactPagination } from '../../components/common/Pagination';
+import { EmptyState } from '../../components/common/StatePlaceholder';
 import { cn } from '../../lib/utils';
+import { icon, surface } from '../../lib/styles';
 
 export interface HomeSidebarProps {
   list: JobItem[];
@@ -38,18 +41,21 @@ export default function HomeSidebar({
   onClearTaskDetail,
   setPage,
 }: HomeSidebarProps) {
-  const totalPages = Math.ceil(total / pageSize);
-
   return (
-    <aside className="w-full flex flex-col bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden min-w-0 max-h-[380px] md:max-h-none">
+    <aside
+      className={cn(
+        surface.card,
+        'w-full flex flex-col overflow-hidden min-w-0 max-h-[380px] md:max-h-none'
+      )}
+    >
       {/* 顶部按钮工具栏 */}
-      <div className="p-3 border-b border-slate-100 flex items-center gap-2">
-        <Button size="sm" onClick={onAdd} className="flex-1 shadow-xs">
-          <Plus className="h-4 w-4 mr-1" />
+      <div className={cn('p-3 border-b flex items-center gap-2', surface.divider)}>
+        <Button size="sm" onClick={onAdd} className="flex-1">
+          <Plus className={cn(icon.md, 'mr-1')} />
           新建任务
         </Button>
-        <Button size="sm" variant="outline" onClick={onRunAll} className="flex-1 shadow-xs">
-          <PlayCircle className="h-4 w-4 mr-1 text-teal-700" />
+        <Button size="sm" variant="outline" onClick={onRunAll} className="flex-1">
+          <PlayCircle className={cn(icon.md, 'mr-1 text-teal-700')} />
           执行全部
         </Button>
       </div>
@@ -57,10 +63,7 @@ export default function HomeSidebar({
       {/* 任务列表 */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1.5 min-h-[300px] max-h-[calc(100vh-240px)]">
         {list.length === 0 && !loading ? (
-          <div className="py-16 text-center space-y-2">
-            <FolderSync className="h-8 w-8 text-slate-300 mx-auto" />
-            <p className="text-xs text-slate-400">暂无同步任务，点击上方新建</p>
-          </div>
+          <EmptyState icon={FolderSync} title="暂无同步任务，点击上方新建" size="sm" />
         ) : (
           list.map((job) => {
             const isSelected = selectedJobId === job.id;
@@ -90,7 +93,7 @@ export default function HomeSidebar({
                   </span>
                   <Badge
                     variant={isEnabled ? 'success' : 'secondary'}
-                    className="text-[10px] px-1.5 py-0 shrink-0"
+                    className="text-2xs px-1.5 py-0 shrink-0"
                   >
                     {isEnabled ? '已启用' : '已暂停'}
                   </Badge>
@@ -105,7 +108,7 @@ export default function HomeSidebar({
                   </span>
                 </div>
 
-                <div className="text-[11px] text-slate-400 truncate font-mono" title={sourcePreview}>
+                <div className="text-2xs text-slate-400 truncate font-mono" title={sourcePreview}>
                   {sourcePreview}
                 </div>
               </div>
@@ -116,30 +119,13 @@ export default function HomeSidebar({
 
       {/* 底部紧凑分页 */}
       {total > pageSize && (
-        <div className="p-2.5 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-          <span>共 {total} 个任务</span>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page <= 1}
-              onClick={() => setPage(page - 1)}
-              className="h-7 px-2 text-xs"
-            >
-              上一页
-            </Button>
-            <span className="px-1 font-medium">{page} / {totalPages}</span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page >= totalPages}
-              onClick={() => setPage(page + 1)}
-              className="h-7 px-2 text-xs"
-            >
-              下一页
-            </Button>
-          </div>
-        </div>
+        <CompactPagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          className={cn('p-2.5 border-t', surface.divider)}
+        />
       )}
     </aside>
   );
