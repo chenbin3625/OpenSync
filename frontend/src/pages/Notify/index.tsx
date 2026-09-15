@@ -43,7 +43,7 @@ import {
   PlaceholderCard,
 } from '../../components/common/StatePlaceholder';
 import { cn } from '../../lib/utils';
-import { control, icon, layout, surface } from '../../lib/styles';
+import { icon, layout, surface } from '../../lib/styles';
 
 export const methodNames: Record<number, string> = {
   0: '自定义Webhook', 1: 'Server酱', 2: '钉钉', 3: '企业微信', 4: 'Lark (飞书)',
@@ -459,7 +459,6 @@ export default function Notify() {
                           size="sm"
                           loading={testingId === item.id}
                           onClick={() => handleTestSend(item)}
-                          className={cn(control.dense, 'px-2 text-slate-600 hover:text-teal-700')}
                         >
                           <Send className={cn(icon.sm, 'mr-1')} />
                           测试发送
@@ -468,19 +467,14 @@ export default function Notify() {
                           variant="ghost"
                           size="sm"
                           onClick={() => handleEdit(item)}
-                          className={cn(control.dense, 'px-2 text-slate-600 hover:text-slate-900')}
                         >
                           <Edit className={cn(icon.sm, 'mr-1')} />
                           编辑
                         </Button>
                         <Button
-                          variant="ghost"
+                          variant="danger"
                           size="sm"
                           onClick={() => setDeleteTargetId(item.id)}
-                          className={cn(
-                            control.dense,
-                            'px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50'
-                          )}
                         >
                           <Trash2 className={cn(icon.sm, 'mr-1')} />
                           删除

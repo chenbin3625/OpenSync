@@ -118,10 +118,9 @@ export default function TaskRealtimeHero({
         </div>
 
         <Button
-          variant="outline"
+          variant="danger"
           size="sm"
           onClick={onStop}
-          className="text-rose-600 border-rose-200 hover:bg-rose-50 hover:text-rose-700"
         >
           <StopCircle className={cn(icon.md, 'mr-1.5')} />
           中止任务

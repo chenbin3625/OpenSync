@@ -80,7 +80,7 @@ export default function HomeOverview({
             </div>
 
             <div className="space-y-2 min-w-0">
-              {/* 标题行固定单行：任务名过长时省略，标签与开关不再被挤到第二行 */}
+              {/* 标题行固定单行：任务名过长时省略，状态标签不再被挤到第二行 */}
               <div className="flex items-center gap-2 min-w-0">
                 <h1 className={cn(text.pageTitle, 'truncate min-w-0')} title={getJobName(selectedJob)}>
                   {getJobName(selectedJob)}
@@ -91,14 +91,6 @@ export default function HomeOverview({
                 <Badge variant="outline">
                   {methodNames[selectedJob.method] || selectedJob.method}
                 </Badge>
-                {selectedJob.isCron !== 2 && (
-                  <Switch
-                    checked={isEnabled}
-                    onCheckedChange={() => onToggle(selectedJob)}
-                    className="ml-1 shrink-0"
-                    aria-label="切换启用状态"
-                  />
-                )}
               </div>
 
               {/* 统计小标签 */}
@@ -121,6 +113,16 @@ export default function HomeOverview({
 
           {/* 操作按钮组 */}
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            {selectedJob.isCron !== 2 && (
+              <div className="flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-xs font-medium text-slate-600 shadow-sm">
+                <span>任务开关</span>
+                <Switch
+                  checked={isEnabled}
+                  onCheckedChange={() => onToggle(selectedJob)}
+                  aria-label="切换启用状态"
+                />
+              </div>
+            )}
             <Button onClick={() => onRun(selectedJob.id)}>
               <Play className={cn(icon.md, 'mr-1.5 fill-current')} />
               手动执行
@@ -130,8 +132,7 @@ export default function HomeOverview({
               编辑
             </Button>
             <Button
-              variant="ghost"
-              className="text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+              variant="danger"
               onClick={() => setDeleteDialogOpen(true)}
             >
               <Trash2 className={cn(icon.md, 'mr-1.5')} />

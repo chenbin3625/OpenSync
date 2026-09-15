@@ -402,7 +402,6 @@ export default function TaskList({
                         <Button
                           variant="ghost"
                           size="iconSm"
-                          className="text-slate-500 hover:text-slate-900"
                           aria-label="详情"
                           onClick={() => onTaskDetail?.(record.id)}
                         >
@@ -415,7 +414,6 @@ export default function TaskList({
                           <Button
                             variant="ghost"
                             size="iconSm"
-                            className="text-teal-600 hover:text-teal-800"
                             aria-label="重试未完成项"
                             onClick={() => handleTaskAction(record.id, 'retry', '已提交重试')}
                           >
@@ -426,9 +424,8 @@ export default function TaskList({
 
                       <Tooltip title="删除">
                         <Button
-                          variant="ghost"
+                          variant="danger"
                           size="iconSm"
-                          className="text-rose-500 hover:text-rose-700 hover:bg-rose-50"
                           aria-label="删除"
                           onClick={() => setDeleteConfirmTaskId(record.id)}
                         >
@@ -525,7 +522,6 @@ export default function TaskList({
           size="sm"
           onClick={resetHistoryFilters}
           disabled={!hasHistoryFilters}
-          className="text-slate-500"
         >
           重置
         </Button>
@@ -563,4 +559,3 @@ export default function TaskList({
     </div>
   );
 }
-

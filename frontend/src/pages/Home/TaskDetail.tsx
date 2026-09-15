@@ -289,7 +289,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
             </SelectContent>
           </Select>
 
-          <Button variant="ghost" size="sm" onClick={resetFilters} className="text-slate-500">
+          <Button variant="ghost" size="sm" onClick={resetFilters}>
             重置
           </Button>
         </div>
@@ -403,4 +403,3 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
     </div>
   );
 }
-

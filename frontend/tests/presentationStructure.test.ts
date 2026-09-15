@@ -17,6 +17,7 @@ const layoutSource = readFileSync(new URL('../src/components/Layout/index.tsx', 
 const cssSource = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 const stylesSource = readFileSync(new URL('../src/lib/styles.ts', import.meta.url), 'utf8');
 const badgeSource = readFileSync(new URL('../src/components/ui/badge.tsx', import.meta.url), 'utf8');
+const buttonSource = readFileSync(new URL('../src/components/ui/button.tsx', import.meta.url), 'utf8');
 const realtimeHeroSource = readFileSync(
   new URL('../src/pages/Home/components/TaskRealtimeHero.tsx', import.meta.url),
   'utf8'
@@ -89,6 +90,21 @@ test('home dashboard exposes scannable task workspace sections', () => {
   assert.match(homeSource, /<main className=\{cn\(surface\.card/);
 });
 
+test('task management overview exposes the job enable switch in the right action area', () => {
+  assert.doesNotMatch(homeSidebarSource, /import \{ Switch \} from '..\/..\/components\/ui\/switch';/);
+  assert.doesNotMatch(homeSidebarSource, /onToggle: \(job: JobItem\) => void;/);
+  assert.doesNotMatch(homeSidebarSource, /<Switch/);
+  assert.doesNotMatch(homeSource, /<HomeSidebar\b(?:(?!\/>).|\n)*onToggle=/);
+
+  assert.match(
+    homeOverviewSource,
+    /\{\/\* 操作按钮组 \*\/\}\s*<div className="flex items-center gap-2 shrink-0 flex-wrap">\s*\{selectedJob\.isCron !== 2 && \(/
+  );
+  assert.match(homeOverviewSource, /任务开关/);
+  assert.match(homeOverviewSource, /onCheckedChange=\{\(\) => onToggle\(selectedJob\)\}/);
+  assert.doesNotMatch(homeOverviewSource, /className="ml-1 shrink-0"/);
+});
+
 test('app shell fills the available viewport without viewport-math overflow', () => {
   // 内容区宽度不再设固定上限，避免宽屏下左右大面积留白
   assert.doesNotMatch(layoutSource, /max-w-7xl/);
@@ -158,6 +174,35 @@ test('badges share one recipe and never wrap onto a second line', () => {
   assert.match(homeOverviewSource, /truncate min-w-0/);
   assert.doesNotMatch(realtimeHeroSource, /<h2 className=\{text\.sectionTitle\}>/);
   assert.match(realtimeHeroSource, /truncate min-w-0/);
+});
+
+test('buttons use shared dimensions and semantic color variants', () => {
+  assert.match(buttonSource, /base:\s*'[^']*min-w-\[5rem\][^']*'/);
+  assert.match(buttonSource, /default:\s*'h-9 min-w-\[5rem\] px-4 py-2'/);
+  assert.match(buttonSource, /sm:\s*'h-8 min-w-\[4\.5rem\] rounded-md px-3 text-xs'/);
+  assert.match(buttonSource, /iconSm:\s*'h-7 w-7 min-w-0 p-0'/);
+  assert.match(buttonSource, /danger:\s*'border border-rose-200 bg-white text-rose-700/);
+
+  for (const source of [
+    engineSource,
+    notifySource,
+    taskListSource,
+    homeOverviewSource,
+    realtimeHeroSource,
+    paginationSource,
+  ]) {
+    assert.doesNotMatch(source, /<Button\b(?:(?!>).|\n)*className=\{cn\(control\.(dense|compact)/);
+    assert.doesNotMatch(
+      source,
+      /<Button\b(?:(?!>).|\n)*className="[^"]*(text|border|bg|hover:(?:text|bg|border))-(rose|teal|slate)-/
+    );
+  }
+
+  assert.match(engineSource, /<Button[\s\S]*?variant="danger"[\s\S]*?>\n\s*<Trash2/);
+  assert.match(notifySource, /<Button[\s\S]*?variant="danger"[\s\S]*?>\n\s*<Trash2/);
+  assert.match(homeOverviewSource, /<Button[\s\S]*?variant="danger"[\s\S]*?>\n\s*<Trash2/);
+  assert.match(realtimeHeroSource, /<Button[\s\S]*?variant="danger"[\s\S]*?>\n\s*<StopCircle/);
+  assert.match(taskListSource, /<Button[\s\S]*?variant="danger"[\s\S]*?aria-label="删除"/);
 });
 
 test('compact selects keep their value on one line', () => {
