@@ -80,6 +80,9 @@ test('home dashboard exposes scannable task workspace sections', () => {
   assert.match(homeOverviewSource, /md:grid-cols-2/);
   // 侧边栏 + 内容区两栏栅格，窄屏塌陷为单栏
   assert.match(homeSource, /md:grid-cols-\[300px_minmax\(0,1fr\)\]/);
+  // 左右两栏均具备白色卡片底，保持视觉结构对称一致
+  assert.match(homeSidebarSource, /surface\.card/);
+  assert.match(homeSource, /<main className=\{cn\(surface\.card/);
 });
 
 test('app shell fills the available viewport without viewport-math overflow', () => {
@@ -266,6 +269,10 @@ test('resource page header and body use separated layout primitives', () => {
 });
 
 test('structural borders, dividers and tints are derived from the theme color', () => {
+  // 品牌色阶覆盖 Tailwind 默认荧光青绿，采用低饱和淡绿对齐原始设计
+  assert.match(cssSource, /--color-teal-50:\s*#eef2f1/);
+  assert.match(cssSource, /--color-teal-100:\s*#d9efeb/);
+  assert.match(cssSource, /--color-teal-200:\s*#cfdeda/);
   // 骨架色（描边 / 分隔线 / 浅底）由主题色推导，换主色时只改这四行
   assert.match(cssSource, /--color-line: var\(--color-teal-200\)/);
   assert.match(cssSource, /--color-line-strong: var\(--color-teal-300\)/);

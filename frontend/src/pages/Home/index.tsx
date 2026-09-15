@@ -187,7 +187,7 @@ export default function Home() {
         setPage={handlePageChange}
       />
 
-      <main className="min-w-0">
+      <main className={cn(surface.card, 'min-w-0 p-4 sm:p-5 flex flex-col')}>
         {listError && <Alert className="mb-4">同步任务列表加载失败</Alert>}
 
         {selectedJob ? (
@@ -243,7 +243,7 @@ export default function Home() {
             </TabsContent>
           </Tabs>
         ) : (
-          <div className={cn(surface.card, 'grid place-items-center min-h-[360px]')}>
+          <div className="grid place-items-center flex-1 min-h-[360px]">
             <EmptyState
               icon={Inbox}
               title="暂无同步任务，点击「新建」创建第一个同步任务"

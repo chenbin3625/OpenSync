@@ -31,6 +31,19 @@
   --text-2xs--line-height: calc(1 / 0.6875);
 
   /* ---- 语义色 ---- */
+  /* 品牌淡绿主题色阶（替换 Tailwind 默认的高饱和荧光青绿，对齐 OpenSync 原始淡绿配色） */
+  --color-teal-50: #eef2f1;
+  --color-teal-100: #d9efeb;
+  --color-teal-200: #cfdeda;
+  --color-teal-300: #b2c4bf;
+  --color-teal-400: #73a398;
+  --color-teal-500: #2a8b7d;
+  --color-teal-600: #0f766e;
+  --color-teal-700: #0f766e;
+  --color-teal-800: #115e59;
+  --color-teal-900: #134e4a;
+  --color-teal-950: #0d3330;
+
   /* 品牌主色（翡翠青），与 App.tsx themeConfig.colorPrimary 保持一致 */
   --color-brand: var(--color-teal-700);
   --color-brand-strong: var(--color-teal-800);
