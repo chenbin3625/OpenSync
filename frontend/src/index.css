@@ -12,8 +12,19 @@
 
 @theme {
   /* ---- 字体 ---- */
-  --font-sans: "Avenir Next", -apple-system, BlinkMacSystemFont, "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /*
+   * 与 antd 默认字体令牌逐字对齐：
+   * - fontFamily     -> --font-sans
+   * - fontFamilyCode -> --font-mono
+   * 不额外插入 CJK 字体名，中文由 -apple-system（macOS）/ 末位 sans-serif（Windows）
+   * 回落到 PingFang SC / Microsoft YaHei，与 antd 行为一致。
+   */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier,
+    monospace;
 
   /* 密集型运维界面补充的微型字号，替代散落的 text-[10px] / text-[11px] */
   --text-2xs: 0.6875rem;
@@ -46,6 +57,13 @@ body,
 body {
   color: var(--color-slate-800);
   font-family: var(--font-sans);
+  /*
+   * antd 默认排版基线：fontSize 14，lineHeight (14 + 8) / 14 = 1.5714 -> 22px。
+   * 这里只修正「未显式声明字号」的继承文本，显式的 text-* 工具类不受影响
+   * （Tailwind 的字号是 rem，锚定在根元素 16px 上，与本条无关）。
+   */
+  font-size: 14px;
+  line-height: 1.5714285714285714;
   background: var(--color-slate-50);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
