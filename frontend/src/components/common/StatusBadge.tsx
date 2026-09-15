@@ -21,7 +21,7 @@ export interface StatusBadgeProps {
   /** homeUtils 中的状态色名 */
   color?: string;
   /** 失败原因，存在时在徽标右侧显示可悬浮的问号 */
-  errMsg?: string;
+  errMsg?: string | null;
   className?: string;
 }
 

@@ -4,12 +4,7 @@ import {
   Eye as EyeOutlined,
   RotateCcw as RedoOutlined,
   Trash2 as DeleteOutlined,
-  RefreshCw as ReloadOutlined,
   AlertCircle as InfoCircleOutlined,
-  Search,
-  X,
-  ChevronLeft,
-  ChevronRight,
   Inbox,
 } from 'lucide-react';
 import { jobGetTask, jobDeleteTask, jobTaskAction } from '../../api/job';
@@ -30,8 +25,12 @@ import TaskRealtimeHero from './components/TaskRealtimeHero';
 import TaskRealtimeRows from './components/TaskRealtimeRows';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Badge } from '../../components/ui/badge';
 import { Tooltip } from '../../components/ui/tooltip';
+import { EmptyState, ErrorState, PlaceholderCard } from '../../components/common/StatePlaceholder';
+import { Pagination } from '../../components/common/Pagination';
+import { SearchInput } from '../../components/common/SearchInput';
+import { StatusBadge } from '../../components/common/StatusBadge';
+import { control, icon, layout, surface, table } from '../../lib/styles';
 import {
   Select,
   SelectContent,
@@ -130,7 +129,7 @@ function RealtimeTaskCard({
                   <span>{tab.label}</span>
                   <span
                     className={cn(
-                      'px-1.5 py-0.5 rounded-full text-[10px]',
+                      'px-1.5 py-0.5 rounded-full text-2xs',
                       isActive ? 'bg-teal-100 text-teal-800 font-bold' : 'bg-slate-100 text-slate-600'
                     )}
                   >
@@ -323,7 +322,6 @@ export default function TaskList({
   );
   const hiddenCurrentTaskCount = list.length - historyList.length;
   const historyTotal = Math.max(0, total - hiddenCurrentTaskCount);
-  const totalPages = Math.max(1, Math.ceil(historyTotal / pageSize));
 
   const realtimeContent = currentTask ? (
     <RealtimeTaskCard
@@ -340,102 +338,73 @@ export default function TaskList({
       onTabChange={setActiveTab}
     />
   ) : (
-    <div className="py-16 text-center space-y-2 bg-white rounded-xl border border-slate-200/80">
-      <Inbox className="h-10 w-10 text-slate-300 mx-auto" />
-      <p className="text-sm text-slate-400">当前没有正在同步的任务</p>
-    </div>
+    <PlaceholderCard>
+      <EmptyState icon={Inbox} title="当前没有正在同步的任务" />
+    </PlaceholderCard>
   );
 
   const historyBody = historyError ? (
-    <div className="py-16 text-center space-y-3">
-      <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-rose-50 text-rose-600">
-        <InfoCircleOutlined className="h-6 w-6" />
-      </div>
-      <p className="text-sm font-medium text-slate-600">历史任务加载失败</p>
-      <Button variant="outline" size="sm" onClick={() => fetchList(true)} disabled={loading} className="gap-1.5">
-        <ReloadOutlined className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-        <span>重试</span>
-      </Button>
-    </div>
+    <ErrorState
+      icon={InfoCircleOutlined}
+      title="历史任务加载失败"
+      onRetry={() => fetchList(true)}
+      loading={loading}
+      retryLabel="重试"
+    />
   ) : historyList.length === 0 && !loading ? (
-    <div className="py-16 text-center space-y-2">
-      <Inbox className="h-10 w-10 text-slate-300 mx-auto" />
-      <p className="text-sm text-slate-400">暂无历史任务记录，执行完成后将在此显示</p>
-    </div>
+    <EmptyState icon={Inbox} title="暂无历史任务记录，执行完成后将在此显示" />
   ) : (
     <div className="space-y-3">
-      <div className="overflow-x-auto border border-slate-200 rounded-lg">
-        <table className="w-full text-left text-xs divide-y divide-slate-200">
-          <thead className="bg-slate-50 text-slate-600 uppercase font-medium tracking-wider">
+      <div className={table.wrapper}>
+        <table className={table.root}>
+          <thead className={table.head}>
             <tr>
-              <th className="px-3 py-2.5 w-28">状态</th>
-              <th className="px-3 py-2.5 min-w-[170px]">开始时间</th>
-              <th className="px-3 py-2.5 w-20">成功</th>
-              <th className="px-3 py-2.5 w-20">失败</th>
-              <th className="px-3 py-2.5 w-20">总计</th>
-              <th className="px-3 py-2.5 w-32 text-right pr-4">操作</th>
+              <th className={cn(table.headCell, 'w-28')}>状态</th>
+              <th className={cn(table.headCell, 'min-w-[170px]')}>开始时间</th>
+              <th className={cn(table.headCell, 'w-20')}>成功</th>
+              <th className={cn(table.headCell, 'w-20')}>失败</th>
+              <th className={cn(table.headCell, 'w-20')}>总计</th>
+              <th className={cn(table.headCell, 'w-32 text-right pr-4')}>操作</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 bg-white">
+          <tbody className={table.body}>
             {historyList.map((record) => {
               const s = record.status;
               const errorReason = typeof record.errMsg === 'string' ? record.errMsg.trim() : '';
-              const statusTag = (
-                <Badge
-                  variant={
-                    s === 2
-                      ? 'success'
-                      : s === 6 || s === 7 || s === 8
-                      ? 'error'
-                      : s === 1
-                      ? 'processing'
-                      : 'secondary'
-                  }
-                >
-                  {taskRecordStatusNames[s] || s}
-                </Badge>
-              );
-
               return (
-                <tr key={record.id} className="hover:bg-slate-50/70 transition-colors">
-                  <td className="px-3 py-2.5">
-                    {taskStatusColors[s] !== 'error' || !errorReason ? (
-                      statusTag
-                    ) : (
-                      <span className="inline-flex items-center gap-1 max-w-full">
-                        {statusTag}
-                        <Tooltip title={record.errMsg}>
-                          <InfoCircleOutlined
-                            className="h-4 w-4 text-rose-500 hover:text-rose-700 cursor-pointer shrink-0"
-                            aria-label="查看错误原因"
-                          />
-                        </Tooltip>
-                      </span>
-                    )}
+                <tr key={record.id} className={table.row}>
+                  <td className={table.cell}>
+                    <StatusBadge
+                      label={taskRecordStatusNames[s] || String(s)}
+                      color={taskStatusColors[s]}
+                      errMsg={
+                        taskStatusColors[s] === 'error' && errorReason ? record.errMsg : undefined
+                      }
+                    />
                   </td>
-                  <td className="px-3 py-2.5 text-slate-600 font-mono">
+                  <td className={cn(table.cell, 'text-slate-600 font-mono')}>
                     {record.runTime ? dayjs.unix(record.runTime).format('YYYY-MM-DD HH:mm:ss') : '-'}
                   </td>
-                  <td className="px-3 py-2.5 text-emerald-600 font-semibold font-mono">
+                  <td className={cn(table.cell, 'text-emerald-600 font-semibold font-mono')}>
                     {record.successNum ?? '-'}
                   </td>
-                  <td className="px-3 py-2.5 text-rose-600 font-semibold font-mono">
+                  <td className={cn(table.cell, 'text-rose-600 font-semibold font-mono')}>
                     {record.failNum ?? '-'}
                   </td>
-                  <td className="px-3 py-2.5 text-slate-700 font-mono">
+                  <td className={cn(table.cell, 'text-slate-700 font-mono')}>
                     {record.allNum ?? '-'}
                   </td>
-                  <td className="px-3 py-2.5 text-right pr-4">
+                  <td className={cn(table.cell, 'text-right pr-4')}>
                     <div className="flex items-center justify-end gap-1">
                       <Tooltip title="详情">
                         <Button
                           variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 text-slate-500 hover:text-slate-900"
+                          size="iconSm"
+                          className="text-slate-500 hover:text-slate-900"
                           aria-label="详情"
                           onClick={() => onTaskDetail?.(record.id)}
                         >
-                          <EyeOutlined className="h-3.5 w-3.5" />
+                          <EyeOutlined className={icon.sm} />
                         </Button>
                       </Tooltip>
 
@@ -443,12 +412,12 @@ export default function TaskList({
                         <Tooltip title="重试未完成项">
                           <Button
                             variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0 text-teal-600 hover:text-teal-800"
+                            size="iconSm"
+                            className="text-teal-600 hover:text-teal-800"
                             aria-label="重试未完成项"
                             onClick={() => handleTaskAction(record.id, 'retry', '已提交重试')}
                           >
-                            <RedoOutlined className="h-3.5 w-3.5" />
+                            <RedoOutlined className={icon.sm} />
                           </Button>
                         </Tooltip>
                       )}
@@ -456,12 +425,12 @@ export default function TaskList({
                       <Tooltip title="删除">
                         <Button
                           variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50"
+                          size="iconSm"
+                          className="text-rose-500 hover:text-rose-700 hover:bg-rose-50"
                           aria-label="删除"
                           onClick={() => setDeleteConfirmTaskId(record.id)}
                         >
-                          <DeleteOutlined className="h-3.5 w-3.5" />
+                          <DeleteOutlined className={icon.sm} />
                         </Button>
                       </Tooltip>
                     </div>
@@ -474,88 +443,34 @@ export default function TaskList({
       </div>
 
       {/* 分页控制 */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs text-slate-500">
-        <div>
-          共 <span className="font-semibold text-slate-700">{historyTotal}</span> 条
-        </div>
-        <div className="flex items-center gap-2">
-          <Select
-            value={String(pageSize)}
-            onValueChange={(v) => {
-              setPageSize(Number(v));
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="h-7 w-24 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="10">10 条/页</SelectItem>
-              <SelectItem value="20">20 条/页</SelectItem>
-              <SelectItem value="50">50 条/页</SelectItem>
-              <SelectItem value="100">100 条/页</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page <= 1 || loading}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="h-7 w-7 p-0"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </Button>
-            <span className="px-2 text-xs">
-              {page} / {totalPages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page >= totalPages || loading}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="h-7 w-7 p-0"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-      </div>
+      <Pagination
+        page={page}
+        pageSize={pageSize}
+        total={historyTotal}
+        onPageChange={(next) => setPage(next)}
+        onPageSizeChange={(size) => {
+          setPageSize(size);
+          setPage(1);
+        }}
+      />
     </div>
   );
 
   const historyContent = (
-    <div className="bg-white rounded-xl border border-slate-200/80 shadow-xs p-4 sm:p-5 space-y-4">
+    <div className={cn(surface.card, surface.cardPadding, 'space-y-4')}>
       {/* 筛选栏 */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-40">
-          <Input
-            placeholder="任务 ID"
-            value={historyKeywordInput}
-            onChange={(event) => {
-              setHistoryKeywordInput(event.target.value);
-              if (!event.target.value) handleHistoryKeywordSearch('');
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleHistoryKeywordSearch(historyKeywordInput);
-            }}
-            className="h-8 text-xs pr-7"
-            prefixIcon={<Search className="h-3.5 w-3.5 text-slate-400" />}
-          />
-          {historyKeywordInput && (
-            <button
-              type="button"
-              onClick={() => {
-                setHistoryKeywordInput('');
-                handleHistoryKeywordSearch('');
-              }}
-              className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+      <div className={layout.filterBar}>
+        <SearchInput
+          value={historyKeywordInput}
+          placeholder="任务 ID"
+          width="w-40"
+          onChange={(value) => {
+            setHistoryKeywordInput(value);
+            if (!value) handleHistoryKeywordSearch('');
+          }}
+          onSearch={() => handleHistoryKeywordSearch(historyKeywordInput)}
+          onClear={() => handleHistoryKeywordSearch('')}
+        />
 
         <Select
           value={historyStatusFilter !== undefined ? String(historyStatusFilter) : 'ALL'}
@@ -564,7 +479,7 @@ export default function TaskList({
             setPage(1);
           }}
         >
-          <SelectTrigger className="h-8 w-28 text-xs">
+          <SelectTrigger className={cn(control.compact, 'w-28')}>
             <SelectValue placeholder="任务状态" />
           </SelectTrigger>
           <SelectContent>
@@ -578,7 +493,7 @@ export default function TaskList({
         </Select>
 
         <div className="flex items-center gap-1.5 text-xs">
-          <input
+          <Input
             type="date"
             aria-label="开始日期"
             value={historyTimeRange?.[0] ? historyTimeRange[0].format('YYYY-MM-DD') : ''}
@@ -587,10 +502,10 @@ export default function TaskList({
               setHistoryTimeRange([start, historyTimeRange?.[1] || null]);
               setPage(1);
             }}
-            className="h-8 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 shadow-xs focus:outline-none focus:ring-1 focus:ring-teal-600 focus:border-teal-600"
+            className={cn(control.compact, 'w-auto px-2')}
           />
           <span className="text-slate-400">至</span>
-          <input
+          <Input
             type="date"
             aria-label="结束日期"
             value={historyTimeRange?.[1] ? historyTimeRange[1].format('YYYY-MM-DD') : ''}
@@ -599,7 +514,7 @@ export default function TaskList({
               setHistoryTimeRange([historyTimeRange?.[0] || null, end]);
               setPage(1);
             }}
-            className="h-8 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 shadow-xs focus:outline-none focus:ring-1 focus:ring-teal-600 focus:border-teal-600"
+            className={cn(control.compact, 'w-auto px-2')}
           />
         </div>
 
@@ -608,7 +523,7 @@ export default function TaskList({
           size="sm"
           onClick={resetHistoryFilters}
           disabled={!hasHistoryFilters}
-          className="h-8 text-xs text-slate-500"
+          className="text-slate-500"
         >
           重置
         </Button>

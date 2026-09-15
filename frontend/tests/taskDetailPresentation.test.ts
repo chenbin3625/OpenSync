@@ -10,19 +10,30 @@ test('task detail table hides backend-only identifier columns', () => {
   assert.doesNotMatch(taskDetailSource, /title:\s*'明细ID'/);
 });
 
+const statusBadgeSource = readFileSync(
+  new URL('../src/components/common/StatusBadge.tsx', import.meta.url),
+  'utf8'
+);
+
+test('status badge renders the error reason beside the status as a shared component', () => {
+  // 徽标 + 失败原因的组合收敛到 StatusBadge，列表页与详情页复用
+  assert.match(statusBadgeSource, /className=\{cn\('inline-flex items-center gap-1 max-w-full'/);
+  assert.match(statusBadgeSource, /<Tooltip title=\{errMsg\}>/);
+  assert.match(statusBadgeSource, /aria-label="查看失败原因"/);
+});
+
 test('task detail shows error reasons beside status instead of a separate error column', () => {
   assert.doesNotMatch(taskDetailSource, /title:\s*'错误信息'/);
-  assert.match(taskDetailSource, /InfoCircleOutlined/);
-  assert.match(taskDetailSource, /className="inline-flex items-center gap-1 max-w-full"/);
-  assert.match(taskDetailSource, /Tooltip\s+title=\{record\.errMsg\}/);
+  assert.match(taskDetailSource, /<StatusBadge\b/);
+  assert.match(taskDetailSource, /errMsg=\{/);
+  assert.match(taskDetailSource, /taskItemStatusColors\[status\] === 'error'/);
 });
 
 test('task history list shows task-level error reasons beside status like file-level failures', () => {
   const taskListSource = readFileSync(new URL('../src/pages/Home/TaskList.tsx', import.meta.url), 'utf8');
-  assert.match(taskListSource, /InfoCircleOutlined/);
-  assert.match(taskListSource, /className="inline-flex items-center gap-1 max-w-full"/);
-  assert.match(taskListSource, /Tooltip\s+title=\{record\.errMsg\}/);
-  assert.match(taskListSource, /taskStatusColors\[s\] !== 'error'/);
+  assert.match(taskListSource, /<StatusBadge\b/);
+  assert.match(taskListSource, /errMsg=\{/);
+  assert.match(taskListSource, /taskStatusColors\[s\] === 'error'/);
 });
 
 test('task detail uses shared explicit task item status metadata', () => {

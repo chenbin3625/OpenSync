@@ -51,8 +51,11 @@ test('home dashboard exposes scannable task workspace sections', () => {
 });
 
 test('task execution views use compact operational surfaces', () => {
-  assert.match(taskListSource, /divide-y|space-y-4/);
-  assert.match(taskListSource, /rounded-xl/);
+  assert.match(taskListSource, /space-y-4/);
+  // 卡片外壳与表格样式取自共享配方，不再内联 rounded-xl / px-3 py-2.5
+  assert.match(taskListSource, /surface\.card/);
+  assert.match(taskListSource, /table\.wrapper/);
+  assert.match(stylesSource, /card: 'bg-white rounded-xl/);
 });
 
 test('realtime task refresh logic is split into local hooks', () => {
