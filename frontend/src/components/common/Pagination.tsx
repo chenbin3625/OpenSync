@@ -107,7 +107,6 @@ export function CompactPagination({
       <Button
         variant="outline"
         size="sm"
-        className={cn(control.dense, 'px-2')}
         onClick={() => onPageChange(page - 1)}
         disabled={page <= 1}
       >
@@ -119,7 +118,6 @@ export function CompactPagination({
       <Button
         variant="outline"
         size="sm"
-        className={cn(control.dense, 'px-2')}
         onClick={() => onPageChange(page + 1)}
         disabled={page >= totalPages}
       >

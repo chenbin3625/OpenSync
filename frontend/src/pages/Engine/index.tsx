@@ -36,7 +36,7 @@ import {
   PlaceholderCard,
 } from '../../components/common/StatePlaceholder';
 import { cn } from '../../lib/utils';
-import { control, icon, layout, surface } from '../../lib/styles';
+import { icon, layout, surface } from '../../lib/styles';
 
 export const validateAlistURL = (value?: string): boolean => {
   if (!value) return false;
@@ -233,7 +233,6 @@ export default function Engine() {
                       size="sm"
                       loading={testingId === item.id}
                       onClick={() => handleTest(item)}
-                      className={cn(control.dense, 'px-2 text-slate-600 hover:text-teal-700')}
                     >
                       <Activity className={cn(icon.sm, 'mr-1')} />
                       测试连接
@@ -242,19 +241,14 @@ export default function Engine() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleEdit(item)}
-                      className={cn(control.dense, 'px-2 text-slate-600 hover:text-slate-900')}
                     >
                       <Edit className={cn(icon.sm, 'mr-1')} />
                       编辑
                     </Button>
                     <Button
-                      variant="ghost"
+                      variant="danger"
                       size="sm"
                       onClick={() => setDeleteTargetId(item.id)}
-                      className={cn(
-                        control.dense,
-                        'px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50'
-                      )}
                     >
                       <Trash2 className={cn(icon.sm, 'mr-1')} />
                       删除

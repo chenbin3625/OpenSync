@@ -17,6 +17,7 @@ const layoutSource = readFileSync(new URL('../src/components/Layout/index.tsx', 
 const cssSource = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
 const stylesSource = readFileSync(new URL('../src/lib/styles.ts', import.meta.url), 'utf8');
 const badgeSource = readFileSync(new URL('../src/components/ui/badge.tsx', import.meta.url), 'utf8');
+const buttonSource = readFileSync(new URL('../src/components/ui/button.tsx', import.meta.url), 'utf8');
 const realtimeHeroSource = readFileSync(
   new URL('../src/pages/Home/components/TaskRealtimeHero.tsx', import.meta.url),
   'utf8'
@@ -158,6 +159,35 @@ test('badges share one recipe and never wrap onto a second line', () => {
   assert.match(homeOverviewSource, /truncate min-w-0/);
   assert.doesNotMatch(realtimeHeroSource, /<h2 className=\{text\.sectionTitle\}>/);
   assert.match(realtimeHeroSource, /truncate min-w-0/);
+});
+
+test('buttons use shared dimensions and semantic color variants', () => {
+  assert.match(buttonSource, /base:\s*'[^']*min-w-\[5rem\][^']*'/);
+  assert.match(buttonSource, /default:\s*'h-9 min-w-\[5rem\] px-4 py-2'/);
+  assert.match(buttonSource, /sm:\s*'h-8 min-w-\[4\.5rem\] rounded-md px-3 text-xs'/);
+  assert.match(buttonSource, /iconSm:\s*'h-7 w-7 min-w-0 p-0'/);
+  assert.match(buttonSource, /danger:\s*'border border-rose-200 bg-white text-rose-700/);
+
+  for (const source of [
+    engineSource,
+    notifySource,
+    taskListSource,
+    homeOverviewSource,
+    realtimeHeroSource,
+    paginationSource,
+  ]) {
+    assert.doesNotMatch(source, /<Button\b(?:(?!>).|\n)*className=\{cn\(control\.(dense|compact)/);
+    assert.doesNotMatch(
+      source,
+      /<Button\b(?:(?!>).|\n)*className="[^"]*(text|border|bg|hover:(?:text|bg|border))-(rose|teal|slate)-/
+    );
+  }
+
+  assert.match(engineSource, /<Button[\s\S]*?variant="danger"[\s\S]*?>\n\s*<Trash2/);
+  assert.match(notifySource, /<Button[\s\S]*?variant="danger"[\s\S]*?>\n\s*<Trash2/);
+  assert.match(homeOverviewSource, /<Button[\s\S]*?variant="danger"[\s\S]*?>\n\s*<Trash2/);
+  assert.match(realtimeHeroSource, /<Button[\s\S]*?variant="danger"[\s\S]*?>\n\s*<StopCircle/);
+  assert.match(taskListSource, /<Button[\s\S]*?variant="danger"[\s\S]*?aria-label="删除"/);
 });
 
 test('compact selects keep their value on one line', () => {

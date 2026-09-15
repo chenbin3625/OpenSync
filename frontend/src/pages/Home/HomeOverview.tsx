@@ -130,8 +130,7 @@ export default function HomeOverview({
               编辑
             </Button>
             <Button
-              variant="ghost"
-              className="text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+              variant="danger"
               onClick={() => setDeleteDialogOpen(true)}
             >
               <Trash2 className={cn(icon.md, 'mr-1.5')} />

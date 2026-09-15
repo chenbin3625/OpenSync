@@ -2,24 +2,30 @@ import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '../../lib/utils';
 
+const button = {
+  base: 'inline-flex min-w-[5rem] items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+} as const;
+
 export const buttonVariants = cva(
-  'inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+  button.base,
   {
     variants: {
       variant: {
         default: 'bg-teal-700 text-white shadow hover:bg-teal-800 active:bg-teal-900',
         destructive: 'bg-rose-600 text-white shadow-sm hover:bg-rose-700 active:bg-rose-800',
+        danger:
+          'border border-rose-200 bg-white text-rose-700 shadow-sm hover:bg-rose-50 hover:text-rose-800 active:bg-rose-100',
         outline: 'border border-line-strong bg-white shadow-sm hover:bg-line-soft hover:text-slate-900 text-slate-700',
         secondary: 'bg-line-soft text-slate-900 shadow-sm hover:bg-line',
         ghost: 'hover:bg-line-soft hover:text-slate-900 text-slate-700',
         link: 'text-teal-700 underline-offset-4 hover:underline',
       },
       size: {
-        default: 'h-9 px-4 py-2',
-        sm: 'h-8 rounded-md px-3 text-xs',
-        lg: 'h-10 rounded-md px-8',
-        icon: 'h-9 w-9',
-        iconSm: 'h-7 w-7 p-0',
+        default: 'h-9 min-w-[5rem] px-4 py-2',
+        sm: 'h-8 min-w-[4.5rem] rounded-md px-3 text-xs',
+        lg: 'h-10 min-w-[6rem] rounded-md px-8',
+        icon: 'h-9 w-9 min-w-0',
+        iconSm: 'h-7 w-7 min-w-0 p-0',
       },
     },
     defaultVariants: {
