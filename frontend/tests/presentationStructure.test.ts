@@ -90,6 +90,16 @@ test('home dashboard exposes scannable task workspace sections', () => {
   assert.match(homeSource, /<main className=\{cn\(surface\.card/);
 });
 
+test('task management sidebar exposes job enable switches in the list', () => {
+  assert.match(homeSidebarSource, /import \{ Switch \} from '..\/..\/components\/ui\/switch';/);
+  assert.match(homeSidebarSource, /onToggle: \(job: JobItem\) => void;/);
+  assert.match(homeSource, /<HomeSidebar[\s\S]*onToggle=\{handleToggle\}/);
+  assert.match(homeSidebarSource, /<Switch[\s\S]*checked=\{isEnabled\}/);
+  assert.match(homeSidebarSource, /onCheckedChange=\{\(\) => onToggle\(job\)\}/);
+  assert.match(homeSidebarSource, /onClick=\{\(event\) => event\.stopPropagation\(\)\}/);
+  assert.match(homeSidebarSource, /aria-label=\{`\$\{isEnabled \? '暂停' : '启用'\}\$\{getJobName\(job\)\}`\}/);
+});
+
 test('app shell fills the available viewport without viewport-math overflow', () => {
   // 内容区宽度不再设固定上限，避免宽屏下左右大面积留白
   assert.doesNotMatch(layoutSource, /max-w-7xl/);
