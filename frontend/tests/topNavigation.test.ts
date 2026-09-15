@@ -15,5 +15,16 @@ test('user menu combines username and logout into a dropdown', () => {
   assert.match(layoutSource, /<DropdownMenuTrigger asChild>/);
   assert.match(layoutSource, /<Dropdown\b/);
   assert.match(layoutSource, /退出登录/);
+  assert.match(layoutSource, /userName \|\| '用户'/);
+  assert.doesNotMatch(layoutSource, /<User\b/);
   assert.doesNotMatch(layoutSource, /BulbFilled|BulbOutlined/);
+});
+
+test('top bar shows project links and version before the user menu', () => {
+  assert.match(layoutSource, /const projectLinks = \[/);
+  assert.match(layoutSource, /https:\/\/github\.com\/chenbin3625\/OpenSync/);
+  assert.match(layoutSource, /https:\/\/opensync\.u1n1\.com\//);
+  assert.match(layoutSource, /const appVersion = import\.meta\.env\.PACKAGE_VERSION/);
+  assert.match(layoutSource, /v\{appVersion\}/);
+  assert.match(layoutSource, /<div className="hidden lg:flex items-center gap-1">\s*\{projectLinks\.map/);
 });

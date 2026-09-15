@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  Home, Server, Bell, Settings, User, LogOut, ChevronDown, Menu as MenuIcon, X
+  Home, Server, Bell, Settings, LogOut, ChevronDown, Menu as MenuIcon, X, ExternalLink
 } from 'lucide-react';
 import { useStore } from '../../stores/useStore';
 import { logout } from '../../api/user';
@@ -32,6 +32,11 @@ const navItems = [
   { path: '/setting', label: '系统设置', icon: Settings },
 ];
 
+const projectLinks = [
+  { href: 'https://opensync.u1n1.com/', label: '项目主页' },
+  { href: 'https://github.com/chenbin3625/OpenSync', label: 'GitHub' },
+];
+
 /** 导航项样式。桌面端为横向紧凑排布，移动端为整行排布，激活态保持一致 */
 function navItemClass(isActive: boolean, mobile = false) {
   return cn(
@@ -51,6 +56,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const currentSection = '/' + (location.pathname.split('/')[1] || 'home');
+  const appVersion = import.meta.env.PACKAGE_VERSION || '0.0.0';
 
   const handleLogout = async () => {
     try {
@@ -112,6 +118,24 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* 右侧用户区与操作 */}
         <div className="flex items-center gap-0 sm:gap-2">
+          <div className="hidden lg:flex items-center gap-1">
+            {projectLinks.map((link) => (
+              <a
+                key={link.href}
+                href={link.href}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-slate-500 transition-colors hover:bg-line-soft hover:text-slate-900"
+              >
+                <span>{link.label}</span>
+                <ExternalLink className={icon.sm} aria-hidden="true" />
+              </a>
+            ))}
+            <span className="ml-1 inline-flex h-7 items-center rounded-full border border-line bg-white px-2 text-2xs font-medium text-slate-500">
+              v{appVersion}
+            </span>
+          </div>
+
           <div>
             <Dropdown>
               <DropdownMenuTrigger asChild>
@@ -121,10 +145,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 className="flex items-center gap-2 text-slate-600 hover:text-slate-900"
                 aria-label="用户菜单"
               >
-                <div className="h-6 w-6 rounded-full bg-teal-100 text-teal-800 flex items-center justify-center text-xs font-semibold">
-                  <User className={icon.sm} />
-                </div>
-                <span className="hidden sm:inline max-w-[120px] truncate text-xs font-medium">
+                <span className="max-w-[120px] truncate text-xs font-medium">
                   {userInfo?.userName || '用户'}
                 </span>
                 <ChevronDown className={cn(icon.sm, 'hidden sm:block opacity-50')} />
