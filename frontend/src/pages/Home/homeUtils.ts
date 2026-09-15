@@ -185,6 +185,25 @@ export const formatTime = (hour?: string | null, minute?: string | null, second?
   return `${h}:${m}:${s}`;
 };
 
+const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+export const formatCronDayOfWeek = (value?: string | null) => {
+  const normalized = cronValue(value);
+  if (!/^[0-6](?:-[0-6])?(?:,[0-6](?:-[0-6])?)*$/.test(normalized)) {
+    return normalized;
+  }
+
+  return normalized
+    .split(',')
+    .map((part) => {
+      const [start, end] = part.split('-');
+      const startLabel = weekdayNames[Number(start)];
+      if (end === undefined) return startLabel;
+      return `${startLabel}至${weekdayNames[Number(end)]}`;
+    })
+    .join('、');
+};
+
 export const describeCronPlan = (values: ScheduleValues) => {
   const second = cronValue(values.second, '0');
   const minute = cronValue(values.minute);
@@ -192,6 +211,7 @@ export const describeCronPlan = (values: ScheduleValues) => {
   const day = cronValue(values.day);
   const month = cronValue(values.month);
   const dayOfWeek = cronValue(values.day_of_week);
+  const dayOfWeekLabel = formatCronDayOfWeek(dayOfWeek);
   const time = formatTime(hour, minute, second);
 
   if (day === '*' && month === '*' && dayOfWeek === '*' && hour !== '*' && minute !== '*') {
@@ -201,7 +221,7 @@ export const describeCronPlan = (values: ScheduleValues) => {
     return `每月 ${day} 日 ${time} 执行`;
   }
   if (day === '*' && month === '*' && dayOfWeek !== '*' && hour !== '*' && minute !== '*') {
-    return `每周 ${dayOfWeek} 的 ${time} 执行`;
+    return `每周 ${dayOfWeekLabel} 的 ${time} 执行`;
   }
   return `按 Cron 表达式 ${[second, minute, hour, day, month, dayOfWeek].join(' ')} 执行`;
 };
@@ -393,4 +413,3 @@ export function getTaskDisplayName(task: TaskItem): string {
   const cleanPath = path.replace(/\/+$/, '');
   return cleanPath.split('/').pop() || cleanPath;
 }
-

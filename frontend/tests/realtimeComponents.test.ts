@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatDuration, getTaskDisplayName } from '../src/pages/Home/homeUtils.ts';
+import { formatDuration, formatSchedulePlan, getTaskDisplayName } from '../src/pages/Home/homeUtils.ts';
 import type { TaskItem } from '../src/types.ts';
 
 test('formatDuration handles 0 and negative seconds', () => {
@@ -13,6 +13,21 @@ test('formatDuration formats seconds, minutes, hours, days', () => {
   assert.equal(formatDuration(125), '2分 5秒');
   assert.equal(formatDuration(3665), '1小时 1分 5秒');
   assert.equal(formatDuration(90000), '1天 1小时');
+});
+
+test('formatSchedulePlan renders cron day 0 as Sunday instead of week 0', () => {
+  assert.equal(
+    formatSchedulePlan({
+      isCron: 1,
+      second: '0',
+      minute: '30',
+      hour: '8',
+      day: '*',
+      month: '*',
+      day_of_week: '0',
+    }),
+    '每周 周日 的 08:30:00 执行'
+  );
 });
 
 test('getTaskDisplayName prioritizes fileName', () => {
