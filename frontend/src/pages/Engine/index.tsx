@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Plus, Edit, Trash2, Server, Activity, RefreshCw, Copy, Check
+  Plus, Edit, Trash2, Server, Activity, Copy, Check
 } from 'lucide-react';
 import { alistGet, alistGetPath, alistPost, alistPut, alistDelete } from '../../api/alist';
 import dayjs from 'dayjs';
@@ -25,6 +25,18 @@ import {
   AlertDialogTitle,
 } from '../../components/ui/alert-dialog';
 import { toast } from '../../components/ui/toaster';
+import { PageHeader } from '../../components/common/PageHeader';
+import { Field } from '../../components/common/Field';
+import { Alert } from '../../components/common/Alert';
+import { InfoPanel, InfoRow } from '../../components/common/InfoRow';
+import { ResourceCard } from '../../components/common/ResourceCard';
+import {
+  EmptyState,
+  ErrorState,
+  PlaceholderCard,
+} from '../../components/common/StatePlaceholder';
+import { cn } from '../../lib/utils';
+import { control, icon, layout, surface } from '../../lib/styles';
 
 export const validateAlistURL = (value?: string): boolean => {
   if (!value) return false;
@@ -178,125 +190,106 @@ export default function Engine() {
   };
 
   return (
-    <div className="grid content-start gap-4 min-w-0 min-h-[calc(100vh-90px)]">
-      {/* 顶部标题栏 */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-200/80">
-        <div className="space-y-1 min-w-0">
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">引擎管理</h1>
-          <p className="text-sm text-slate-500">
-            管理 AList / OpenList 连接和路径选择来源
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center justify-end gap-2">
-          <Button onClick={handleAdd} className="shadow-xs">
-            <Plus className="h-4 w-4 mr-1.5" />
+    <div className={layout.page}>
+      <PageHeader
+        title="引擎管理"
+        subtitle="管理 AList / OpenList 连接和路径选择来源"
+        actions={
+          <Button onClick={handleAdd}>
+            <Plus className={cn(icon.md, 'mr-1.5')} />
             新增引擎
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* 列表主体 */}
       <div className="min-w-0">
         {listError ? (
-          <div className="py-16 text-center space-y-3 bg-white rounded-xl border border-slate-200">
-            <p className="text-sm text-slate-500">引擎列表加载失败</p>
-            <Button variant="outline" size="sm" onClick={fetchList} loading={loading}>
-              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-              重试
-            </Button>
-          </div>
+          <PlaceholderCard>
+            <ErrorState
+              icon={Server}
+              title="引擎列表加载失败"
+              onRetry={fetchList}
+              loading={loading}
+              retryLabel="重试"
+            />
+          </PlaceholderCard>
         ) : list.length === 0 && !loading ? (
-          <div className="py-16 text-center space-y-3 bg-white rounded-xl border border-dashed border-slate-200">
-            <Server className="h-10 w-10 text-slate-300 mx-auto" />
-            <p className="text-sm text-slate-500">暂无引擎，请点击右上角添加 AList / OpenList 实例</p>
+          <div className={surface.placeholder}>
+            <EmptyState icon={Server} title="暂无引擎，请点击右上角添加 AList / OpenList 实例" />
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch">
+          <div className={layout.cardGrid}>
             {list.map((item) => (
-              <div
+              <ResourceCard
                 key={item.id}
-                className="bg-white rounded-xl border border-slate-200/90 shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between p-5 space-y-4 h-full"
+                icon={Server}
+                title={item.userName || 'AList 实例'}
+                subtitle={item.remark || '未设置备注'}
+                actions={
+                  <div className="flex items-center justify-end gap-1.5 w-full">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      loading={testingId === item.id}
+                      onClick={() => handleTest(item)}
+                      className={cn(control.dense, 'px-2 text-slate-600 hover:text-teal-700')}
+                    >
+                      <Activity className={cn(icon.sm, 'mr-1')} />
+                      测试连接
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleEdit(item)}
+                      className={cn(control.dense, 'px-2 text-slate-600 hover:text-slate-900')}
+                    >
+                      <Edit className={cn(icon.sm, 'mr-1')} />
+                      编辑
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDeleteTargetId(item.id)}
+                      className={cn(
+                        control.dense,
+                        'px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50'
+                      )}
+                    >
+                      <Trash2 className={cn(icon.sm, 'mr-1')} />
+                      删除
+                    </Button>
+                  </div>
+                }
               >
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="h-9 w-9 rounded-lg bg-teal-50 text-teal-700 flex items-center justify-center shrink-0">
-                        <Server className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <h2 className="font-semibold text-slate-900 text-sm truncate">
-                          {item.userName || 'AList 实例'}
-                        </h2>
-                        <p className="text-xs text-slate-400 truncate">
-                          {item.remark || '未设置备注'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5 text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-slate-400 shrink-0">服务地址:</span>
-                      <div className="flex items-center gap-1 min-w-0">
-                        <span className="font-mono text-slate-700 truncate" title={item.url}>
-                          {item.url}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleCopyUrl(item)}
-                          className="text-slate-400 hover:text-slate-700 p-0.5 rounded shrink-0 transition-colors"
-                          title="复制地址"
-                        >
-                          {copiedId === item.id ? (
-                            <Check className="h-3 w-3 text-emerald-600" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-400">添加时间:</span>
-                      <span className="text-slate-600">
-                        {item.createTime ? dayjs.unix(item.createTime).format('YYYY-MM-DD HH:mm') : '—'}
+                <InfoPanel>
+                  <InfoRow label="服务地址" mono>
+                    <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
+                      <span className="truncate" title={item.url}>
+                        {item.url}
                       </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 底部快捷操作 */}
-                <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    loading={testingId === item.id}
-                    onClick={() => handleTest(item)}
-                    className="text-slate-600 hover:text-teal-700 text-xs h-7 px-2"
-                  >
-                    <Activity className="h-3.5 w-3.5 mr-1" />
-                    测试连接
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleEdit(item)}
-                    className="text-slate-600 hover:text-slate-900 text-xs h-7 px-2"
-                  >
-                    <Edit className="h-3.5 w-3.5 mr-1" />
-                    编辑
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDeleteTargetId(item.id)}
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50 text-xs h-7 px-2"
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-1" />
-                    删除
-                  </Button>
-                </div>
-              </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyUrl(item)}
+                        className="text-slate-400 hover:text-slate-700 p-0.5 rounded shrink-0 transition-colors"
+                        aria-label="复制地址"
+                        title="复制地址"
+                      >
+                        {copiedId === item.id ? (
+                          <Check className={cn(icon.sm, 'text-emerald-600')} />
+                        ) : (
+                          <Copy className={icon.sm} />
+                        )}
+                      </button>
+                    </span>
+                  </InfoRow>
+                  <InfoRow label="添加时间">
+                    {item.createTime
+                      ? dayjs.unix(item.createTime).format('YYYY-MM-DD HH:mm')
+                      : '—'}
+                  </InfoRow>
+                </InfoPanel>
+              </ResourceCard>
             ))}
           </div>
         )}
@@ -309,39 +302,31 @@ export default function Engine() {
             <DialogTitle>{editingItem ? '编辑引擎' : '新增引擎'}</DialogTitle>
           </DialogHeader>
 
-          {urlError && (
-            <div className="p-2.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
-              {urlError}
-            </div>
-          )}
+          {urlError && <Alert>{urlError}</Alert>}
 
           <form onSubmit={handleSubmit} className="space-y-3.5 my-2">
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700">
-                服务地址 <span className="text-red-500">*</span>
-              </label>
+            <Field
+              label="服务地址"
+              required
+              hint="支持本地局域网或公网 HTTP / HTTPS 地址"
+            >
               <Input
                 placeholder="http://192.168.1.100:5244"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 required
               />
-              <p className="text-[11px] text-slate-400">支持本地局域网或公网 HTTP / HTTPS 地址</p>
-            </div>
+            </Field>
 
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700">备注名称</label>
+            <Field label="备注名称">
               <Input
                 placeholder="例如：家庭 NAS / 阿里云盘"
                 value={remark}
                 onChange={(e) => setRemark(e.target.value)}
               />
-            </div>
+            </Field>
 
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700">
-                访问令牌 (Token) {!editingItem && <span className="text-red-500">*</span>}
-              </label>
+            <Field label="访问令牌 (Token)" required={!editingItem}>
               <Input
                 type="password"
                 placeholder={editingItem ? '留空表示保持原有已存 Token' : '请输入 AList 后台生成的 Token'}
@@ -349,7 +334,7 @@ export default function Engine() {
                 onChange={(e) => setToken(e.target.value)}
                 required={!editingItem}
               />
-            </div>
+            </Field>
 
             <DialogFooter className="pt-2">
               <Button type="button" variant="outline" onClick={() => setModalVisible(false)}>

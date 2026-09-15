@@ -102,9 +102,13 @@ test('forms inside overlays use controlled dialog and sheet overlays', () => {
 });
 
 test('system setting unit inputs bind the input control with number validation', () => {
+  // 六个字段改为数据驱动渲染，name 来自 configFields 表
   for (const field of ['expires', 'taskTimeout', 'taskSave']) {
-    assert.match(settingSource, new RegExp(`name="${field}"`));
+    assert.match(settingSource, new RegExp(`name: '${field}'`));
   }
+  assert.match(settingSource, /name=\{field\.name\}/);
+  assert.match(settingSource, /type="number"/);
+  assert.match(settingSource, /min=\{field\.min\}/);
 });
 
 test('system settings keep fetched config in state before syncing into the mounted form', () => {

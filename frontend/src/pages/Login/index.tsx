@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Lock, Key, ShieldCheck, AlertCircle } from 'lucide-react';
+import { User, Lock, Key, ShieldCheck } from 'lucide-react';
 import { getInitStatus, initializeUser, login, resetPwd } from '../../api/user';
 import { useStore } from '../../stores/useStore';
 import { Button } from '../../components/ui/button';
@@ -14,6 +14,10 @@ import {
   DialogFooter,
 } from '../../components/ui/dialog';
 import { toast } from '../../components/ui/toaster';
+import { Field } from '../../components/common/Field';
+import { Alert } from '../../components/common/Alert';
+import { cn } from '../../lib/utils';
+import { icon, surface, text } from '../../lib/styles';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -143,96 +147,93 @@ export default function Login() {
     }
   };
 
+  // 启动态与登录态共用同一背景，避免初始化检查结束时出现背景闪烁
+  const pageShell =
+    'min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 px-4 py-12';
+
   if (checkingInit) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <div className={pageShell}>
         <div className="animate-spin h-6 w-6 border-2 border-teal-600 border-t-transparent rounded-full" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 px-4 py-12">
-      <div className="w-full max-w-md bg-white rounded-xl shadow-lg border border-slate-200/80 p-8 space-y-6 overflow-hidden">
+    <div className={pageShell}>
+      <div className={cn(surface.card, 'w-full max-w-md shadow-lg p-8 space-y-6 overflow-hidden')}>
         {/* Logo 与标题 */}
         <div className="text-center space-y-2">
-          <div className="inline-flex p-3 rounded-2xl bg-teal-50 border border-teal-100 shadow-xs mb-1">
+          <div className={cn(surface.iconTile, 'inline-flex h-16 w-16 mx-auto')}>
             <img src="/favicon.svg" alt="OpenSync" className="h-10 w-10" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">OpenSync</h1>
-          <p className="text-sm text-slate-500">
+          <h1 className={text.pageTitle}>OpenSync</h1>
+          <p className={text.pageSubtitle}>
             {initialized ? 'AList / OpenList 自动化同步调度系统' : '创建管理员账号'}
           </p>
         </div>
 
-        {formError && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium animate-in fade-in-0">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{formError}</span>
-          </div>
-        )}
+        {formError && <Alert className="animate-in fade-in-0">{formError}</Alert>}
 
         <form onSubmit={handleLoginSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-700 block">用户名</label>
+          <Field label="用户名" required>
             <Input
               type="text"
               name="userName"
               placeholder="请输入用户名"
               value={userName}
               onChange={(e) => setUserName(e.target.value)}
-              prefixIcon={<User className="h-4 w-4" />}
+              prefixIcon={<User className={icon.md} />}
               autoComplete="username"
               required
             />
-          </div>
+          </Field>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-700 block">密码</label>
+          <Field label="密码" required>
             <Input
               type="password"
               name="passwd"
               placeholder="请输入密码"
               value={passwd}
               onChange={(e) => setPasswd(e.target.value)}
-              prefixIcon={<Lock className="h-4 w-4" />}
+              prefixIcon={<Lock className={icon.md} />}
               autoComplete={initialized ? 'current-password' : 'new-password'}
               required
             />
-          </div>
+          </Field>
 
           {!initialized && (
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-700 block">确认密码</label>
+            <Field label="确认密码" required>
               <Input
                 type="password"
                 name="confirmPasswd"
                 placeholder="请再次输入密码"
                 value={confirmPasswd}
                 onChange={(e) => setConfirmPasswd(e.target.value)}
-                prefixIcon={<Lock className="h-4 w-4" />}
+                prefixIcon={<Lock className={icon.md} />}
                 autoComplete="new-password"
                 required
               />
-            </div>
+            </Field>
           )}
 
-          <Button type="submit" className="w-full mt-2" loading={loading}>
+          <Button type="submit" className="w-full" loading={loading}>
             {initialized ? '登 录' : '创建管理员并初始化'}
           </Button>
 
           {initialized && (
             <div className="text-center pt-2">
-              <button
+              <Button
                 type="button"
+                variant="link"
+                size="sm"
                 onClick={() => {
                   setResetError('');
                   setResetModalOpen(true);
                 }}
-                className="text-xs text-teal-700 hover:text-teal-800 hover:underline font-medium transition-colors"
               >
                 忘记密码？使用恢复密钥找回
-              </button>
+              </Button>
             </div>
           )}
         </form>
@@ -242,8 +243,8 @@ export default function Login() {
       <Dialog open={recoveryModalOpen} onOpenChange={setRecoveryModalOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <div className="flex items-center gap-2 text-teal-700 mb-1">
-              <ShieldCheck className="h-5 w-5" />
+            <div className="flex items-center gap-2 text-slate-900">
+              <ShieldCheck className={cn(icon.lg, 'text-teal-700')} />
               <DialogTitle>请立即保存恢复密钥</DialogTitle>
             </div>
             <DialogDescription>
@@ -251,7 +252,12 @@ export default function Login() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="my-2 p-3.5 rounded-lg bg-slate-100 border border-slate-200 text-center font-mono text-base font-bold text-slate-900 tracking-wider select-all break-all">
+          <div
+            className={cn(
+              surface.inset,
+              'my-2 text-center font-mono text-base font-bold text-slate-900 tracking-wider select-all break-all'
+            )}
+          >
             {newRecoveryKey}
           </div>
 
@@ -273,8 +279,8 @@ export default function Login() {
       <Dialog open={resetModalOpen} onOpenChange={setResetModalOpen}>
         <DialogContent className="max-w-md" title="重置密码">
           <DialogHeader>
-            <div className="flex items-center gap-2 text-slate-900 mb-1">
-              <Key className="h-5 w-5 text-teal-700" />
+            <div className="flex items-center gap-2 text-slate-900">
+              <Key className={cn(icon.lg, 'text-teal-700')} />
               <DialogTitle>重置密码</DialogTitle>
             </div>
             <DialogDescription>
@@ -282,60 +288,52 @@ export default function Login() {
             </DialogDescription>
           </DialogHeader>
 
-          {resetError && (
-            <div className="p-2.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
-              {resetError}
-            </div>
-          )}
+          {resetError && <Alert>{resetError}</Alert>}
 
           <form onSubmit={handleResetSubmit} className="space-y-3.5 my-2">
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700">用户名</label>
+            <Field label="用户名" required>
               <Input
                 placeholder="管理员用户名"
                 value={resetUserName}
                 onChange={(e) => setResetUserName(e.target.value)}
-                prefixIcon={<User className="h-4 w-4" />}
+                prefixIcon={<User className={icon.md} />}
                 required
               />
-            </div>
+            </Field>
 
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700">恢复密钥</label>
+            <Field label="恢复密钥" required>
               <Input
                 name="recoveryKey"
                 placeholder="恢复密钥"
                 value={resetRecoveryKey}
                 onChange={(e) => setResetRecoveryKey(e.target.value)}
-                prefixIcon={<Key className="h-4 w-4" />}
+                prefixIcon={<Key className={icon.md} />}
                 required
               />
-            </div>
+            </Field>
 
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700">新密码</label>
+            <Field label="新密码" required>
               <Input
                 type="password"
                 placeholder="设置新密码"
                 value={resetNewPasswd}
                 onChange={(e) => setResetNewPasswd(e.target.value)}
-                prefixIcon={<Lock className="h-4 w-4" />}
+                prefixIcon={<Lock className={icon.md} />}
                 required
               />
-            </div>
+            </Field>
 
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700">确认新密码</label>
+            <Field label="确认新密码" required>
               <Input
                 type="password"
                 name="confirmPasswd"
                 placeholder="再次输入新密码"
                 value={resetConfirmPasswd}
                 onChange={(e) => setResetConfirmPasswd(e.target.value)}
-                prefixIcon={<Lock className="h-4 w-4" />}
+                prefixIcon={<Lock className={icon.md} />}
                 required
               />
-            </div>
+            </Field>
 
             <DialogFooter className="pt-2">
               <Button type="button" variant="outline" onClick={() => setResetModalOpen(false)}>

@@ -14,6 +14,7 @@ const notifySource = readFileSync(new URL('../src/pages/Notify/index.tsx', impor
 const settingSource = readFileSync(new URL('../src/pages/Setting/index.tsx', import.meta.url), 'utf8');
 const loginSource = readFileSync(new URL('../src/pages/Login/index.tsx', import.meta.url), 'utf8');
 const cssSource = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8');
+const stylesSource = readFileSync(new URL('../src/lib/styles.ts', import.meta.url), 'utf8');
 
 test('application defines shared presentation theme tokens', () => {
   assert.match(appSource, /colorPrimary:\s*'#0f766e'/);
@@ -73,13 +74,15 @@ test('realtime task refresh logic is split into local hooks', () => {
 });
 
 test('configuration pages share the same resource page shell', () => {
-  // 三个配置页共用同一套栅格外壳（utility class 形式）
-  const shell = /className="grid content-start gap-4 min-w-0 min-h-\[calc\(100vh-90px\)\]"/;
-  assert.match(engineSource, shell);
-  assert.match(notifySource, shell);
-  assert.match(settingSource, shell);
-  assert.match(engineSource, /md:grid-cols-2 lg:grid-cols-3/);
-  assert.match(notifySource, /md:grid-cols-2 lg:grid-cols-3/);
+  // 三个配置页不再各自手写栅格外壳，统一引用 lib/styles 的 layout.page
+  for (const source of [engineSource, notifySource, settingSource]) {
+    assert.match(source, /className=\{layout\.page\}/);
+    assert.doesNotMatch(source, /grid content-start gap-4/);
+  }
+  // 卡片栅格同样收敛到 layout.cardGrid
+  assert.match(stylesSource, /cardGrid:\s*'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3/);
+  assert.match(engineSource, /className=\{layout\.cardGrid\}/);
+  assert.match(notifySource, /className=\{layout\.cardGrid\}/);
 });
 
 test('authenticated application shell is lazy loaded outside the login route', () => {
@@ -101,10 +104,24 @@ test('application routes use browser history without URL hashes', () => {
 });
 
 test('resource page header and body use separated layout primitives', () => {
-  // 页头与主体各自独立：页头用 border-b + pb-* 收边，不依赖 margin 撑开间距
+  // 页头收敛为共享 PageHeader 组件：页头用 border-b + pb-* 收边，不依赖 margin 撑开间距
+  assert.match(stylesSource, /pageHeader:[\s\S]*?pb-2 border-b border-slate-200/);
   for (const source of [engineSource, notifySource, settingSource]) {
-    assert.match(source, /pb-2 border-b border-slate-200\/80/);
+    assert.match(source, /<PageHeader\b/);
     assert.match(source, /className="min-w-0/);
   }
   assert.match(settingSource, /max-w-3xl/);
+});
+
+test('shared design tokens replace ad-hoc typography and border values', () => {
+  // 令牌层：字号与语义色集中在 index.css 的 @theme
+  assert.match(cssSource, /@theme\s*\{/);
+  assert.match(cssSource, /--text-2xs:/);
+  assert.match(cssSource, /--color-brand:/);
+  // 页面不再出现绕过字号阶梯的任意值，也不再出现 slate-200 的透明度变体
+  const pages = [engineSource, notifySource, settingSource, loginSource];
+  for (const source of pages) {
+    assert.doesNotMatch(source, /text-\[\d+px\]/);
+    assert.doesNotMatch(source, /border-slate-200\/(60|80|90)/);
+  }
 });

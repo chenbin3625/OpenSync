@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Lock, Save, HelpCircle, RefreshCw, Sliders, Shield } from 'lucide-react';
+import { Lock, Save, Sliders, Shield } from 'lucide-react';
 import { editPwd } from '../../api/user';
 import { getSystemConfig, updateSystemConfig } from '../../api/system';
 import type { SystemSettings } from '../../types';
@@ -13,13 +13,14 @@ import {
   DialogDescription,
   DialogFooter,
 } from '../../components/ui/dialog';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '../../components/ui/tooltip';
+import { TooltipProvider } from '../../components/ui/tooltip';
 import { toast } from '../../components/ui/toaster';
+import { PageHeader, SectionHeading } from '../../components/common/PageHeader';
+import { Field } from '../../components/common/Field';
+import { Alert } from '../../components/common/Alert';
+import { ErrorState, PlaceholderCard } from '../../components/common/StatePlaceholder';
+import { cn } from '../../lib/utils';
+import { icon, layout, surface } from '../../lib/styles';
 
 export default function Setting() {
   const [loading, setLoading] = useState(false);
@@ -83,6 +84,76 @@ export default function Setting() {
     return () => { configAbortRef.current?.abort(); };
   }, [fetchConfig]);
 
+  /** 运行参数字段表。六个字段结构一致，用数据驱动避免重复标记 */
+  const configFields = [
+    {
+      name: 'expires',
+      label: '登录会话过期时间',
+      tooltip: '登录 Token 保持有效的时间，单位：小时',
+      unit: '小时',
+      min: 1,
+      value: expires,
+      onChange: setExpires,
+    },
+    {
+      name: 'taskTimeout',
+      label: '单次任务超时时间',
+      tooltip: '同步任务最长持续运行限制，超过该时间将被强制中止，单位：分钟',
+      unit: '分钟',
+      min: 1,
+      value: taskTimeout,
+      onChange: setTaskTimeout,
+    },
+    {
+      name: 'taskSave',
+      label: '历史任务日志保留条数',
+      tooltip: '单个任务保留的历史记录上限，超出将自动清理旧日志',
+      unit: '条',
+      min: 10,
+      value: taskSave,
+      onChange: setTaskSave,
+    },
+    {
+      name: 'copyConcurrency',
+      label: '文件复制传输并发',
+      tooltip: '同时执行文件拷贝与下载的最大并发协程数',
+      unit: '并发',
+      min: 1,
+      max: 64,
+      value: copyConcurrency,
+      onChange: setCopyConcurrency,
+    },
+    {
+      name: 'scanConcurrency',
+      label: '目录扫描并发',
+      tooltip: '扫描比对源端和目标端目录层级的并发度',
+      unit: '并发',
+      min: 1,
+      max: 32,
+      value: scanConcurrency,
+      onChange: setScanConcurrency,
+    },
+    {
+      name: 'maxRetries',
+      label: '失败重试上限',
+      tooltip: '网络抖动或临时错误时的单文件自动重试次数',
+      unit: '次',
+      min: 0,
+      max: 10,
+      value: maxRetries,
+      onChange: setMaxRetries,
+    },
+  ] satisfies Array<{
+    name: string;
+    label: string;
+    tooltip: string;
+    unit: string;
+    min: number;
+    max?: number;
+    value: number;
+    onChange: (value: number) => void;
+  }>;
+
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -141,192 +212,62 @@ export default function Setting() {
 
   return (
     <TooltipProvider>
-      <div className="grid content-start gap-4 min-w-0 min-h-[calc(100vh-90px)]">
-        {/* 标题栏 */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-200/80">
-          <div className="space-y-1 min-w-0">
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">系统设置</h1>
-            <p className="text-sm text-slate-500">
-              调整运行参数并维护管理员密码
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center justify-end gap-2">
+      <div className={layout.page}>
+        <PageHeader
+          title="系统设置"
+          subtitle="调整运行参数并维护管理员密码"
+          actions={
             <Button variant="outline" size="sm" onClick={() => setPasswordVisible(true)}>
-              <Lock className="h-4 w-4 mr-1.5" />
+              <Lock className={cn(icon.md, 'mr-1.5')} />
               修改密码
             </Button>
-          </div>
-        </div>
+          }
+        />
 
         {/* 主配置表单 */}
         <div className="min-w-0 max-w-3xl">
           {configError ? (
-            <div className="py-12 text-center space-y-3 bg-white rounded-xl border border-slate-200">
-              <p className="text-sm text-slate-500">系统配置加载失败</p>
-              <Button variant="outline" size="sm" onClick={fetchConfig} loading={loading}>
-                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                重试
-              </Button>
-            </div>
+            <PlaceholderCard>
+              <ErrorState
+                icon={Sliders}
+                title="系统配置加载失败"
+                onRetry={fetchConfig}
+                loading={loading}
+                retryLabel="重试"
+              />
+            </PlaceholderCard>
           ) : (
-            <form onSubmit={handleSaveConfig} className="bg-white rounded-xl border border-slate-200/80 shadow-xs p-6 space-y-6">
-              <div className="flex items-center gap-2 pb-3 border-b border-slate-100 text-slate-900 font-semibold text-sm">
-                <Sliders className="h-4 w-4 text-teal-700" />
-                <span>运行参数设置</span>
+            <form
+              onSubmit={handleSaveConfig}
+              className={cn(surface.card, 'p-6 space-y-6')}
+            >
+              <SectionHeading title="运行参数设置" icon={Sliders} bordered />
+
+              <div className={layout.formGrid}>
+                {configFields.map((field) => (
+                  <Field
+                    key={field.name}
+                    label={field.label}
+                    tooltip={field.tooltip}
+                    suffix={field.unit}
+                    required
+                  >
+                    <Input
+                      type="number"
+                      name={field.name}
+                      min={field.min}
+                      max={field.max}
+                      value={field.value}
+                      onChange={(e) => field.onChange(Number(e.target.value))}
+                      required
+                    />
+                  </Field>
+                ))}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                {/* expires */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-xs font-medium text-slate-700">登录会话过期时间</label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-slate-400 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>登录 Token 保持有效的时间，单位：小时</TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      name="expires"
-                      min={1}
-                      value={expires}
-                      onChange={(e) => setExpires(Number(e.target.value))}
-                      required
-                    />
-                    <span className="text-xs text-slate-500 shrink-0">小时</span>
-                  </div>
-                </div>
-
-                {/* taskTimeout */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-xs font-medium text-slate-700">单次任务超时时间</label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-slate-400 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>同步任务最长持续运行限制，超过该时间将被强制中止，单位：分钟</TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      name="taskTimeout"
-                      min={1}
-                      value={taskTimeout}
-                      onChange={(e) => setTaskTimeout(Number(e.target.value))}
-                      required
-                    />
-                    <span className="text-xs text-slate-500 shrink-0">分钟</span>
-                  </div>
-                </div>
-
-                {/* taskSave */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-xs font-medium text-slate-700">历史任务日志保留条数</label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-slate-400 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>单个任务保留的历史记录上限，超出将自动清理旧日志</TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      name="taskSave"
-                      min={10}
-                      value={taskSave}
-                      onChange={(e) => setTaskSave(Number(e.target.value))}
-                      required
-                    />
-                    <span className="text-xs text-slate-500 shrink-0">条</span>
-                  </div>
-                </div>
-
-                {/* copyConcurrency */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-xs font-medium text-slate-700">文件复制传输并发</label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-slate-400 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>同时执行文件拷贝与下载的最大并发协程数</TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      name="copyConcurrency"
-                      min={1}
-                      max={64}
-                      value={copyConcurrency}
-                      onChange={(e) => setCopyConcurrency(Number(e.target.value))}
-                      required
-                    />
-                    <span className="text-xs text-slate-500 shrink-0">并发</span>
-                  </div>
-                </div>
-
-                {/* scanConcurrency */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-xs font-medium text-slate-700">目录扫描并发</label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-slate-400 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>扫描比对源端和目标端目录层级的并发度</TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      name="scanConcurrency"
-                      min={1}
-                      max={32}
-                      value={scanConcurrency}
-                      onChange={(e) => setScanConcurrency(Number(e.target.value))}
-                      required
-                    />
-                    <span className="text-xs text-slate-500 shrink-0">并发</span>
-                  </div>
-                </div>
-
-                {/* maxRetries */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-xs font-medium text-slate-700">失败重试上限</label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-slate-400 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent>网络抖动或临时错误时的单文件自动重试次数</TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      name="maxRetries"
-                      min={0}
-                      max={10}
-                      value={maxRetries}
-                      onChange={(e) => setMaxRetries(Number(e.target.value))}
-                      required
-                    />
-                    <span className="text-xs text-slate-500 shrink-0">次</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100 flex justify-end">
+              <div className={cn('pt-4 border-t flex justify-end', surface.divider)}>
                 <Button type="submit" loading={saving}>
-                  <Save className="h-4 w-4 mr-1.5" />
+                  <Save className={cn(icon.md, 'mr-1.5')} />
                   保存系统配置
                 </Button>
               </div>
@@ -338,8 +279,8 @@ export default function Setting() {
         <Dialog open={passwordVisible} onOpenChange={setPasswordVisible}>
           <DialogContent className="max-w-md" title="修改密码">
             <DialogHeader>
-              <div className="flex items-center gap-2 text-slate-900 mb-1">
-                <Shield className="h-5 w-5 text-teal-700" />
+              <div className="flex items-center gap-2 text-slate-900">
+                <Shield className={cn(icon.lg, 'text-teal-700')} />
                 <DialogTitle>修改密码</DialogTitle>
               </div>
               <DialogDescription>
@@ -347,48 +288,41 @@ export default function Setting() {
               </DialogDescription>
             </DialogHeader>
 
-            {passwordError && (
-              <div className="p-2.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
-                {passwordError}
-              </div>
-            )}
+            {passwordError && <Alert>{passwordError}</Alert>}
 
             <form onSubmit={handleChangePassword} className="space-y-3.5 my-2">
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-700">当前密码</label>
+              <Field label="当前密码" required>
                 <Input
                   type="password"
                   placeholder="请输入旧密码"
                   value={oldPasswd}
                   onChange={(e) => setOldPasswd(e.target.value)}
-                  prefixIcon={<Lock className="h-4 w-4" />}
+                  prefixIcon={<Lock className={icon.md} />}
                   required
                 />
-              </div>
+              </Field>
 
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-700">新密码</label>
+              <Field label="新密码" required>
                 <Input
                   type="password"
                   placeholder="请输入新密码"
                   value={newPasswd}
                   onChange={(e) => setNewPasswd(e.target.value)}
-                  prefixIcon={<Lock className="h-4 w-4" />}
+                  prefixIcon={<Lock className={icon.md} />}
                   required
                 />
-              </div>
+              </Field>
 
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-700">确认新密码</label>
+              <Field label="确认新密码" required>
                 <Input
                   type="password"
                   placeholder="请再次输入新密码"
                   value={confirmPasswd}
                   onChange={(e) => setConfirmPasswd(e.target.value)}
-                  prefixIcon={<Lock className="h-4 w-4" />}
+                  prefixIcon={<Lock className={icon.md} />}
                   required
                 />
-              </div>
+              </Field>
 
               <DialogFooter className="pt-2">
                 <Button type="button" variant="outline" onClick={() => setPasswordVisible(false)}>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Plus, Edit, Trash2, Send, RefreshCw, Bell,
+  Plus, Edit, Trash2, Send, Bell,
 } from 'lucide-react';
 import { notifyGet, notifyPost, notifyPostTest, notifyPut, notifyDelete } from '../../api/notify';
 import dayjs from 'dayjs';
@@ -29,6 +29,21 @@ import {
 import { TooltipProvider } from '../../components/ui/tooltip';
 import { toast } from '../../components/ui/toaster';
 import { maskSecret, maskWebhookUrl } from '../../utils/mask';
+import { NativeSelect } from '../../components/ui/native-select';
+import { Textarea } from '../../components/ui/textarea';
+import { PageHeader } from '../../components/common/PageHeader';
+import { Field } from '../../components/common/Field';
+import { Alert } from '../../components/common/Alert';
+import { InfoPanel, InfoRow } from '../../components/common/InfoRow';
+import { ResourceCard } from '../../components/common/ResourceCard';
+import { SwitchRow } from '../../components/common/SwitchRow';
+import {
+  EmptyState,
+  ErrorState,
+  PlaceholderCard,
+} from '../../components/common/StatePlaceholder';
+import { cn } from '../../lib/utils';
+import { control, icon, layout, surface } from '../../lib/styles';
 
 export const methodNames: Record<number, string> = {
   0: '自定义Webhook', 1: 'Server酱', 2: '钉钉', 3: '企业微信', 4: 'Lark (飞书)',
@@ -385,131 +400,110 @@ export default function Notify() {
 
   return (
     <TooltipProvider>
-      <div className="grid content-start gap-4 min-w-0 min-h-[calc(100vh-90px)]">
-        {/* 标题栏 */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-200/80">
-          <div className="space-y-1 min-w-0">
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">通知配置</h1>
-            <p className="text-sm text-slate-500">
-              配置任务完成、失败和无需同步时的消息渠道
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center justify-end gap-2">
-            <Button onClick={handleAdd} className="shadow-xs">
-              <Plus className="h-4 w-4 mr-1.5" />
+      <div className={layout.page}>
+        <PageHeader
+          title="通知配置"
+          subtitle="配置任务完成、失败和无需同步时的消息渠道"
+          actions={
+            <Button onClick={handleAdd}>
+              <Plus className={cn(icon.md, 'mr-1.5')} />
               新增通知
             </Button>
-          </div>
-        </div>
+          }
+        />
 
         {/* 列表主体 */}
         <div className="min-w-0">
           {listError ? (
-            <div className="py-16 text-center space-y-3 bg-white rounded-xl border border-slate-200">
-              <p className="text-sm text-slate-500">通知配置加载失败</p>
-              <Button variant="outline" size="sm" onClick={fetchList} loading={loading}>
-                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                重试
-              </Button>
-            </div>
+            <PlaceholderCard>
+              <ErrorState
+                icon={Bell}
+                title="通知配置加载失败"
+                onRetry={fetchList}
+                loading={loading}
+                retryLabel="重试"
+              />
+            </PlaceholderCard>
           ) : list.length === 0 && !loading ? (
-            <div className="py-16 text-center space-y-3 bg-white rounded-xl border border-dashed border-slate-200">
-              <Bell className="h-10 w-10 text-slate-300 mx-auto" />
-              <p className="text-sm text-slate-500">暂无通知渠道配置，添加后可在任务完成时接收通知</p>
+            <div className={surface.placeholder}>
+              <EmptyState icon={Bell} title="暂无通知渠道配置，添加后可在任务完成时接收通知" />
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch">
+            <div className={layout.cardGrid}>
               {list.map((item) => {
                 const params = parseParams(item);
                 const isEnabled = item.enable === 1;
 
                 return (
-                  <div
+                  <ResourceCard
                     key={item.id}
-                    className="bg-white rounded-xl border border-slate-200/90 shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between p-5 space-y-4 h-full"
+                    icon={Bell}
+                    title={methodNames[item.method] || `方式 ${item.method}`}
+                    subtitle={getParamSummary(item)}
+                    badge={
+                      <div className="flex items-center gap-2">
+                        <Badge variant={isEnabled ? 'success' : 'secondary'}>
+                          {isEnabled ? '已启用' : '已禁用'}
+                        </Badge>
+                        <Switch
+                          checked={isEnabled}
+                          onCheckedChange={(checked) => handleToggleStatus(item, checked)}
+                          aria-label={`${isEnabled ? '禁用' : '启用'}${methodNames[item.method] || '通知'}`}
+                        />
+                      </div>
+                    }
+                    actions={
+                      <div className="flex items-center justify-end gap-1.5 w-full">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          loading={testingId === item.id}
+                          onClick={() => handleTestSend(item)}
+                          className={cn(control.dense, 'px-2 text-slate-600 hover:text-teal-700')}
+                        >
+                          <Send className={cn(icon.sm, 'mr-1')} />
+                          测试发送
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleEdit(item)}
+                          className={cn(control.dense, 'px-2 text-slate-600 hover:text-slate-900')}
+                        >
+                          <Edit className={cn(icon.sm, 'mr-1')} />
+                          编辑
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteTargetId(item.id)}
+                          className={cn(
+                            control.dense,
+                            'px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50'
+                          )}
+                        >
+                          <Trash2 className={cn(icon.sm, 'mr-1')} />
+                          删除
+                        </Button>
+                      </div>
+                    }
                   >
-                    <div className="space-y-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="h-9 w-9 rounded-lg bg-teal-50 text-teal-700 flex items-center justify-center shrink-0">
-                            <Bell className="h-4 w-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <h2 className="font-semibold text-slate-900 text-sm truncate">
-                              {methodNames[item.method] || `方式 ${item.method}`}
-                            </h2>
-                            <p className="text-xs text-slate-400 truncate">
-                              {getParamSummary(item)}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Badge variant={isEnabled ? 'success' : 'secondary'}>
-                            {isEnabled ? '已启用' : '已禁用'}
-                          </Badge>
-                          <Switch
-                            checked={isEnabled}
-                            onCheckedChange={(checked) => handleToggleStatus(item, checked)}
-                            aria-label={`${isEnabled ? '禁用' : '启用'}${methodNames[item.method] || '通知'}`}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-1.5 text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400 shrink-0">关键参数:</span>
-                          <span className="font-mono text-slate-700 truncate max-w-[200px]" title={getParamSummary(item)}>
-                            {getParamSummary(item)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400">静默规则:</span>
-                          <span className="text-slate-600">
-                            {params.notSendNull ? '无需同步时不发送' : '始终发送'}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400">添加时间:</span>
-                          <span className="text-slate-600">
-                            {item.createTime ? dayjs.unix(item.createTime).format('YYYY-MM-DD HH:mm') : '—'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 卡片底部操作 */}
-                    <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        loading={testingId === item.id}
-                        onClick={() => handleTestSend(item)}
-                        className="text-slate-600 hover:text-teal-700 text-xs h-7 px-2"
-                      >
-                        <Send className="h-3.5 w-3.5 mr-1" />
-                        测试发送
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleEdit(item)}
-                        className="text-slate-600 hover:text-slate-900 text-xs h-7 px-2"
-                      >
-                        <Edit className="h-3.5 w-3.5 mr-1" />
-                        编辑
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setDeleteTargetId(item.id)}
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50 text-xs h-7 px-2"
-                      >
-                        <Trash2 className="h-3.5 w-3.5 mr-1" />
-                        删除
-                      </Button>
-                    </div>
-                  </div>
+                    <InfoPanel>
+                      <InfoRow label="关键参数" mono>
+                        <span className="truncate inline-block max-w-full" title={getParamSummary(item)}>
+                          {getParamSummary(item)}
+                        </span>
+                      </InfoRow>
+                      <InfoRow label="静默规则">
+                        {params.notSendNull ? '无需同步时不发送' : '始终发送'}
+                      </InfoRow>
+                      <InfoRow label="添加时间">
+                        {item.createTime
+                          ? dayjs.unix(item.createTime).format('YYYY-MM-DD HH:mm')
+                          : '—'}
+                      </InfoRow>
+                    </InfoPanel>
+                  </ResourceCard>
                 );
               })}
             </div>
@@ -523,92 +517,79 @@ export default function Notify() {
               <DialogTitle>{editingItem ? '编辑通知' : '新增通知'}</DialogTitle>
             </DialogHeader>
 
-            {formError && (
-              <div className="p-2.5 rounded bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
-                {formError}
-              </div>
-            )}
+            {formError && <Alert>{formError}</Alert>}
 
             <form onSubmit={handleSubmit} className="space-y-4 my-2">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-700">通知渠道</label>
-                <select
+              <Field label="通知渠道">
+                <NativeSelect
                   value={method}
                   onChange={(e) => handleMethodChange(Number(e.target.value))}
-                  className="flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-600"
                 >
                   {Object.entries(methodNames).map(([k, v]) => (
                     <option key={k} value={k}>
                       {v}
                     </option>
                   ))}
-                </select>
-              </div>
+                </NativeSelect>
+              </Field>
 
-              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
-                <div className="space-y-0.5">
-                  <span className="text-xs font-medium text-slate-800">启用状态</span>
-                  <p className="text-[11px] text-slate-400">是否激活此渠道以接收通知</p>
-                </div>
-                <Switch checked={enable} onCheckedChange={setEnable} />
-              </div>
+              <SwitchRow
+                label="启用状态"
+                description="是否激活此渠道以接收通知"
+                checked={enable}
+                onCheckedChange={setEnable}
+              />
 
               {/* 动态表单字段 */}
               {method === 0 && (
-                <div className="space-y-3 pt-1 border-t border-slate-100">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">Webhook URL</label>
+                <div className={cn('space-y-3 pt-1 border-t', surface.divider)}>
+                  <Field label="Webhook URL" required>
                     <Input
                       placeholder="https://example.com/api/webhook"
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
                       required
                     />
-                  </div>
+                  </Field>
 
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">HTTP 请求方法</label>
-                    <select
+                  <Field label="HTTP 请求方法">
+                    <NativeSelect
                       value={httpMethod}
                       onChange={(e) => setHttpMethod(e.target.value)}
-                      className="flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-600"
                     >
                       <option value="POST">POST</option>
                       <option value="GET">GET</option>
                       <option value="PUT">PUT</option>
-                    </select>
-                  </div>
+                    </NativeSelect>
+                  </Field>
 
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">请求体模板 (JSON)</label>
-                    <textarea
+                  <Field label="请求体模板 (JSON)">
+                    <Textarea
                       name="body"
                       rows={4}
                       placeholder={'{\n  "title": "{title}",\n  "content": "{content}"\n}'}
                       value={body}
                       onChange={(e) => setBody(e.target.value)}
-                      className="w-full rounded-md border border-slate-300 bg-white p-2.5 text-xs font-mono shadow-sm focus:outline-none focus:ring-1 focus:ring-teal-600"
+                      className="font-mono text-xs"
                     />
-                  </div>
+                  </Field>
 
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">自定义请求头 (JSON)</label>
-                    <textarea
+                  <Field label="自定义请求头 (JSON)">
+                    <Textarea
                       name="headers"
                       rows={3}
                       placeholder={'{\n  "Authorization": "Bearer token"\n}'}
                       value={headers}
                       onChange={(e) => setHeaders(e.target.value)}
-                      className="w-full rounded-md border border-slate-300 bg-white p-2.5 text-xs font-mono shadow-sm focus:outline-none focus:ring-1 focus:ring-teal-600"
+                      className="font-mono text-xs"
                     />
-                  </div>
+                  </Field>
                 </div>
               )}
 
               {method === 1 && (
-                <div className="space-y-3 pt-1 border-t border-slate-100">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">Server酱 SendKey</label>
+                <div className={cn('space-y-3 pt-1 border-t', surface.divider)}>
+                  <Field label="Server酱 SendKey" required>
                     <Input
                       type="password"
                       placeholder="SCTxxxxxxxx"
@@ -616,50 +597,43 @@ export default function Notify() {
                       onChange={(e) => setSendKey(e.target.value)}
                       required
                     />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">API 版本</label>
-                    <select
-                      value={version}
-                      onChange={(e) => setVersion(e.target.value)}
-                      className="flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm text-slate-800"
-                    >
+                  </Field>
+                  <Field label="API 版本">
+                    <NativeSelect value={version} onChange={(e) => setVersion(e.target.value)}>
                       <option value="v3">v3</option>
                       <option value="v1">v1</option>
-                    </select>
-                  </div>
+                    </NativeSelect>
+                  </Field>
                 </div>
               )}
 
               {(method === 2 || method === 4) && (
-                <div className="space-y-3 pt-1 border-t border-slate-100">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">
-                      {method === 2 ? '钉钉机器人 Webhook' : '飞书 / Lark 机器人 Webhook'}
-                    </label>
+                <div className={cn('space-y-3 pt-1 border-t', surface.divider)}>
+                  <Field
+                    label={method === 2 ? '钉钉机器人 Webhook' : '飞书 / Lark 机器人 Webhook'}
+                    required
+                  >
                     <Input
                       placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
                       required
                     />
-                  </div>
+                  </Field>
                 </div>
               )}
 
               {method === 3 && (
-                <div className="space-y-3 pt-1 border-t border-slate-100">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">企业ID (CorpId)</label>
+                <div className={cn('space-y-3 pt-1 border-t', surface.divider)}>
+                  <Field label="企业ID (CorpId)" required>
                     <Input
                       placeholder="wwxxxxxxxx"
                       value={corpid}
                       onChange={(e) => setCorpid(e.target.value)}
                       required
                     />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">应用Secret (CorpSecret)</label>
+                  </Field>
+                  <Field label="应用Secret (CorpSecret)" required>
                     <Input
                       type="password"
                       placeholder="xxxxxxxx"
@@ -667,42 +641,39 @@ export default function Notify() {
                       onChange={(e) => setCorpsecret(e.target.value)}
                       required
                     />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">应用 AgentId</label>
+                  </Field>
+                  <Field label="应用 AgentId" required>
                     <Input
                       placeholder="1000002"
                       value={agentid}
                       onChange={(e) => setAgentid(e.target.value)}
                       required
                     />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700">发送目标成员 (ToUser)</label>
+                  </Field>
+                  <Field label="发送目标成员 (ToUser)">
                     <Input
                       placeholder="@all 或 成员账号"
                       value={touser}
                       onChange={(e) => setTouser(e.target.value)}
                     />
-                  </div>
+                  </Field>
                 </div>
               )}
 
               {/* 静默通知开关 */}
-              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
-                <div className="space-y-0.5">
-                  <span className="text-xs font-medium text-slate-800">无需同步时静默</span>
-                  <p className="text-[11px] text-slate-400">当本次同步没有产生任何新增或变动文件时，不发送通知打扰</p>
-                </div>
-                <Switch checked={notSendNull} onCheckedChange={setNotSendNull} />
-              </div>
+              <SwitchRow
+                label="无需同步时静默"
+                description="当本次同步没有产生任何新增或变动文件时，不发送通知打扰"
+                checked={notSendNull}
+                onCheckedChange={setNotSendNull}
+              />
 
               <DialogFooter className="pt-2">
                 <Button type="button" variant="outline" onClick={() => setModalVisible(false)}>
                   取消
                 </Button>
                 <Button type="button" variant="secondary" onClick={handleTest} loading={testingForm}>
-                  <Send className="h-3.5 w-3.5 mr-1.5" />
+                  <Send className={cn(icon.sm, 'mr-1.5')} />
                   测试发送
                 </Button>
                 <Button type="submit" loading={submitting}>
