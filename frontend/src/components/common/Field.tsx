@@ -16,6 +16,8 @@ export interface FieldProps {
   error?: string;
   /** 控件右侧的后缀，可传单位文案或单位下拉等控件 */
   suffix?: React.ReactNode;
+  /** 后缀容器类名，用于自定义后缀宽度等样式 */
+  suffixClassName?: string;
   className?: string;
   children: React.ReactNode;
 }
@@ -32,6 +34,7 @@ export function Field({
   hint,
   error,
   suffix,
+  suffixClassName,
   className,
   children,
 }: FieldProps) {
@@ -62,11 +65,15 @@ export function Field({
       </div>
       {suffix ? (
         <div className="flex items-center gap-2">
-          <FieldControl id={fieldId}>{children}</FieldControl>
+          <div className="flex-1 min-w-0">
+            <FieldControl id={fieldId}>{children}</FieldControl>
+          </div>
           {typeof suffix === 'string' ? (
-            <span className={cn(text.muted, 'shrink-0')}>{suffix}</span>
+            <span className={cn(text.muted, 'w-8 shrink-0 text-left whitespace-nowrap', suffixClassName)}>
+              {suffix}
+            </span>
           ) : (
-            <div className="shrink-0">{suffix}</div>
+            <div className={cn('shrink-0', suffixClassName)}>{suffix}</div>
           )}
         </div>
       ) : (

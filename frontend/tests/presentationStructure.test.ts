@@ -47,6 +47,10 @@ const paginationSource = readFileSync(
   new URL('../src/components/common/Pagination.tsx', import.meta.url),
   'utf8'
 );
+const fieldSource = readFileSync(
+  new URL('../src/components/common/Field.tsx', import.meta.url),
+  'utf8'
+);
 
 test('application defines shared presentation theme tokens', () => {
   assert.match(appSource, /colorPrimary:\s*'#0f766e'/);
@@ -266,6 +270,9 @@ test('resource page header and body use separated layout primitives', () => {
     assert.match(source, /className="min-w-0/);
   }
   assert.match(settingSource, /max-w-3xl/);
+  // 表单字段后缀固定宽度且输入控件 flex-1，保证系统设置等网格表单输入条严格等宽对齐
+  assert.match(fieldSource, /flex-1 min-w-0/);
+  assert.match(fieldSource, /w-8 shrink-0 text-left whitespace-nowrap/);
 });
 
 test('structural borders, dividers and tints are derived from the theme color', () => {
