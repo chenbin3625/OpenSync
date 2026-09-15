@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Tooltip } from '../../../components/ui/tooltip';
 import { displayText } from '../homeUtils';
 import { cn } from '../../../lib/utils';
+import { text as textStyles } from '../../../lib/styles';
 
 export default function EllipsisText({
   value,
@@ -17,7 +18,7 @@ export default function EllipsisText({
   maxWidth?: number;
 }) {
   const text = displayText(value);
-  if (text === '--') return <span className={cn('text-slate-400 text-xs', className)}>--</span>;
+  if (text === '--') return <span className={cn(textStyles.subtle, className)}>--</span>;
 
   return (
     <Tooltip title={tooltip || text}>

@@ -8,14 +8,14 @@ export interface FieldProps {
   label: string;
   /** 必填标记 */
   required?: boolean;
-  /** 标签旁的问号提示 */
-  tooltip?: string;
+  /** 标签旁的问号提示，可传富文本 */
+  tooltip?: React.ReactNode;
   /** 控件下方的说明文字 */
   hint?: string;
   /** 字段级校验错误，优先于 hint 展示 */
   error?: string;
-  /** 控件右侧的单位后缀 */
-  suffix?: string;
+  /** 控件右侧的后缀，可传单位文案或单位下拉等控件 */
+  suffix?: React.ReactNode;
   className?: string;
   children: React.ReactNode;
 }
@@ -63,7 +63,11 @@ export function Field({
       {suffix ? (
         <div className="flex items-center gap-2">
           <FieldControl id={fieldId}>{children}</FieldControl>
-          <span className={cn(text.muted, 'shrink-0')}>{suffix}</span>
+          {typeof suffix === 'string' ? (
+            <span className={cn(text.muted, 'shrink-0')}>{suffix}</span>
+          ) : (
+            <div className="shrink-0">{suffix}</div>
+          )}
         </div>
       ) : (
         <FieldControl id={fieldId}>{children}</FieldControl>

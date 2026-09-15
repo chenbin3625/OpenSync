@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { HelpCircle } from 'lucide-react';
 import { jobPost } from '../../api/job';
 import type { AlistItem, JobItem } from '../../types';
 import { fileSizeToBytes, fileSizeUnitOptions, splitBytesToFileSize } from './fileSizeUnits';
@@ -11,8 +10,14 @@ import {
 import { usePathTree } from './usePathTree';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Switch } from '../../components/ui/switch';
+import { NativeSelect } from '../../components/ui/native-select';
+import { Textarea } from '../../components/ui/textarea';
 import { PathTreeSelect } from '../../components/ui/path-tree-select';
+import { Alert } from '../../components/common/Alert';
+import { Field } from '../../components/common/Field';
+import { SwitchRow } from '../../components/common/SwitchRow';
+import { cn } from '../../lib/utils';
+import { control, layout, surface, text } from '../../lib/styles';
 import {
   Sheet,
   SheetContent,
@@ -20,12 +25,7 @@ import {
   SheetTitle,
   SheetFooter,
 } from '../../components/ui/sheet';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '../../components/ui/tooltip';
+import { TooltipProvider } from '../../components/ui/tooltip';
 
 export interface JobFormDrawerProps {
   visible: boolean;
@@ -336,22 +336,14 @@ export default function JobFormDrawer({
             <SheetTitle>{editingJob ? '编辑同步任务' : '新建同步任务'}</SheetTitle>
           </SheetHeader>
 
-          {formError && (
-            <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
-              {formError}
-            </div>
-          )}
+          {formError && <Alert variant="error">{formError}</Alert>}
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* 引擎选择 */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-700 block">
-                存储引擎 <span className="text-red-500">*</span>
-              </label>
-              <select
+            <Field label="存储引擎" required>
+              <NativeSelect
                 value={alistId ?? ''}
                 onChange={(e) => setAlistId(Number(e.target.value))}
-                className="flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-600"
                 required
               >
                 <option value="" disabled>请选择引擎</option>
@@ -360,16 +352,12 @@ export default function JobFormDrawer({
                     {formatAlistLabel(a, { includeUrl: true })}
                   </option>
                 ))}
-              </select>
-            </div>
+              </NativeSelect>
+            </Field>
 
             {/* 源与目标目录树 */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-700 flex items-center justify-between">
-                  <span>源目录 <span className="text-red-500">*</span></span>
-                  <span className="text-[11px] text-slate-400">支持多选</span>
-                </label>
+            <div className={layout.formGrid}>
+              <Field label="源目录" required hint="支持多选">
                 <PathTreeSelect
                   placeholder="选择源目录..."
                   value={srcPath}
@@ -379,13 +367,9 @@ export default function JobFormDrawer({
                   loading={treeLoading}
                   notFoundContent={treeNotFoundContent}
                 />
-              </div>
+              </Field>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-700 flex items-center justify-between">
-                  <span>目标目录 <span className="text-red-500">*</span></span>
-                  <span className="text-[11px] text-slate-400">支持多选</span>
-                </label>
+              <Field label="目标目录" required hint="支持多选">
                 <PathTreeSelect
                   placeholder="选择目标目录..."
                   value={dstPath}
@@ -395,66 +379,46 @@ export default function JobFormDrawer({
                   loading={treeLoading}
                   notFoundContent={treeNotFoundContent}
                 />
-              </div>
+              </Field>
             </div>
 
             {/* 备注 */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-700 block">任务备注</label>
+            <Field label="任务备注">
               <Input
                 placeholder="例如：相册每日备份 / 电影库镜像"
                 value={remark}
                 onChange={(e) => setRemark(e.target.value)}
               />
-            </div>
+            </Field>
 
             {/* 同步配置分隔 */}
             <div className="pt-2 border-t border-slate-200">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">同步与调度</h3>
+              <h3 className={cn(text.groupLabel, 'mb-3')}>同步与调度</h3>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className={layout.formGrid}>
                 {/* 同步方式 */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-xs font-medium text-slate-700">同步方式</label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-slate-400 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs space-y-1 text-xs">
-                        {methodOptions.map((opt) => (
-                          <div key={opt.name}>
-                            <strong>{opt.name}：</strong>{opt.description}
-                          </div>
-                        ))}
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <select
-                    value={method}
-                    onChange={(e) => setMethod(Number(e.target.value))}
-                    className="flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm text-slate-800"
-                  >
+                <Field
+                  label="同步方式"
+                  tooltip={
+                    <div className="space-y-1">
+                      {methodOptions.map((opt) => (
+                        <div key={opt.name}>
+                          <strong>{opt.name}：</strong>{opt.description}
+                        </div>
+                      ))}
+                    </div>
+                  }
+                >
+                  <NativeSelect value={method} onChange={(e) => setMethod(Number(e.target.value))}>
                     {methodNames.map((name, idx) => (
                       <option key={name} value={idx}>{name}</option>
                     ))}
-                  </select>
-                </div>
+                  </NativeSelect>
+                </Field>
 
                 {/* 调度方式 */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-xs font-medium text-slate-700">调度方式</label>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpCircle className="h-3.5 w-3.5 text-slate-400 cursor-help" />
-                      </TooltipTrigger>
-                      <TooltipContent className="text-xs">
-                        当前计划：{schedulePlan}
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                  <select
+                <Field label="调度方式" tooltip={`当前计划：${schedulePlan}`}>
+                  <NativeSelect
                     value={isCron}
                     onChange={(e) => {
                       const val = Number(e.target.value);
@@ -462,19 +426,17 @@ export default function JobFormDrawer({
                       if (val === 2) setEnable(true);
                       if (val === 0) setIntervalVal(1440);
                     }}
-                    className="flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm text-slate-800"
                   >
                     {cronTypeNames.map((name, idx) => (
                       <option key={name} value={idx}>{name}</option>
                     ))}
-                  </select>
-                </div>
+                  </NativeSelect>
+                </Field>
               </div>
 
               {/* 分钟间隔配置 */}
               {isCron === 0 && (
-                <div className="mt-3 space-y-1.5">
-                  <label className="text-xs font-medium text-slate-700 block">执行间隔（分钟）</label>
+                <Field label="执行间隔" suffix="分钟" className="mt-3">
                   <Input
                     type="number"
                     min={1}
@@ -482,33 +444,37 @@ export default function JobFormDrawer({
                     onChange={(e) => setIntervalVal(Number(e.target.value))}
                     required
                   />
-                </div>
+                </Field>
               )}
 
               {/* Cron 6 字段配置 */}
               {isCron === 1 && (
-                <div className="mt-3 space-y-1.5 bg-slate-50 p-3 rounded-lg border border-slate-200/80">
-                  <span className="text-[11px] font-semibold text-slate-500 block">
-                    Cron 表达式配置 (秒 分 时 日 月 周)
-                  </span>
+                <div className={cn(surface.inset, 'mt-3 space-y-1.5')}>
+                  <span className={text.groupLabel}>Cron 表达式配置 (秒 分 时 日 月 周)</span>
                   <div className="grid grid-cols-6 gap-1.5">
                     {cronFields.map((field) => (
                       <div key={field.name} className="space-y-0.5 text-center">
-                        <label className="text-[10px] text-slate-400 block truncate">{field.label}</label>
-                        <input
+                        <label
+                          htmlFor={`cron-${field.name}`}
+                          className={cn(text.hint, 'block truncate')}
+                        >
+                          {field.label}
+                        </label>
+                        <Input
+                          id={`cron-${field.name}`}
                           type="text"
                           value={(cronState as Record<string, string>)[field.name]}
                           onChange={(e) =>
                             setCronState((prev) => ({ ...prev, [field.name]: e.target.value }))
                           }
-                          className="h-7 w-full text-center font-mono text-xs rounded border border-slate-200 bg-white focus:outline-none focus:border-teal-600"
+                          className={cn(control.dense, 'text-center font-mono px-1')}
                           placeholder={field.placeholder}
                           required
                         />
                       </div>
                     ))}
                   </div>
-                  <p className="text-[10px] text-teal-700 font-mono pt-1 truncate">
+                  <p className="text-2xs text-teal-700 font-mono pt-1 truncate">
                     预估计划: {schedulePlan}
                   </p>
                 </div>
@@ -517,99 +483,87 @@ export default function JobFormDrawer({
 
             {/* 文件大小过滤 */}
             <div className="pt-2 border-t border-slate-200 space-y-3">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">文件过滤</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-slate-700 flex items-center gap-1">
-                    <span>最小文件大小</span>
-                    <span className="text-[11px] text-slate-400 font-normal">(0 不限)</span>
-                  </label>
-                  <div className="flex items-center gap-1">
-                    <Input
-                      type="number"
-                      name="minFileSize"
-                      min={0}
-                      step="any"
-                      value={minFileSize}
-                      onChange={(e) => setMinFileSize(Number(e.target.value))}
-                    />
-                    <select
+              <h3 className={text.groupLabel}>文件过滤</h3>
+              <div className={layout.formGrid}>
+                <Field
+                  label="最小文件大小"
+                  hint="0 表示不限"
+                  suffix={
+                    <NativeSelect
+                      aria-label="最小文件大小单位"
                       value={minFileSizeUnit}
                       onChange={(e) => setMinFileSizeUnit(e.target.value)}
-                      className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs"
+                      className="w-auto px-2 text-xs"
                     >
                       {fileSizeUnitOptions.map((opt) => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
-                    </select>
-                  </div>
-                </div>
+                    </NativeSelect>
+                  }
+                >
+                  <Input
+                    type="number"
+                    name="minFileSize"
+                    min={0}
+                    step="any"
+                    value={minFileSize}
+                    onChange={(e) => setMinFileSize(Number(e.target.value))}
+                  />
+                </Field>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-slate-700 flex items-center gap-1">
-                    <span>最大文件大小</span>
-                    <span className="text-[11px] text-slate-400 font-normal">(0 不限)</span>
-                  </label>
-                  <div className="flex items-center gap-1">
-                    <Input
-                      type="number"
-                      name="maxFileSize"
-                      min={0}
-                      step="any"
-                      value={maxFileSize}
-                      onChange={(e) => setMaxFileSize(Number(e.target.value))}
-                    />
-                    <select
+                <Field
+                  label="最大文件大小"
+                  hint="0 表示不限"
+                  suffix={
+                    <NativeSelect
+                      aria-label="最大文件大小单位"
                       value={maxFileSizeUnit}
                       onChange={(e) => setMaxFileSizeUnit(e.target.value)}
-                      className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs"
+                      className="w-auto px-2 text-xs"
                     >
                       {fileSizeUnitOptions.map((opt) => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
-                    </select>
-                  </div>
-                </div>
+                    </NativeSelect>
+                  }
+                >
+                  <Input
+                    type="number"
+                    name="maxFileSize"
+                    min={0}
+                    step="any"
+                    value={maxFileSize}
+                    onChange={(e) => setMaxFileSize(Number(e.target.value))}
+                  />
+                </Field>
               </div>
 
               {/* 排除项 */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-700 flex items-center gap-1">
-                  <span>排除规则 (.gitignore 格式)</span>
-                  <span className="text-[11px] text-slate-400 font-normal">每行一条规则</span>
-                </label>
-                <textarea
+              <Field label="排除规则 (.gitignore 格式)" hint="每行一条规则">
+                <Textarea
                   rows={4}
                   value={exclude}
                   onChange={(e) => setExclude(e.target.value)}
-                  className="w-full rounded-md border border-slate-300 bg-white p-2.5 font-mono text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-teal-600"
+                  className="font-mono text-xs"
                   placeholder={'如\n*.tmp\n.git/'}
                 />
-              </div>
+              </Field>
             </div>
 
             {/* 缓存与扫描设置 */}
             <div className="pt-2 border-t border-slate-200 space-y-3">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">缓存加速</h3>
+              <h3 className={text.groupLabel}>缓存加速</h3>
               <div className="grid grid-cols-2 gap-4">
-                <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
-                  <span className="text-xs font-medium text-slate-700">源端缓存</span>
-                  <Switch checked={useCacheS} onCheckedChange={setUseCacheS} />
-                </div>
-                <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
-                  <span className="text-xs font-medium text-slate-700">目标缓存</span>
-                  <Switch checked={useCacheT} onCheckedChange={setUseCacheT} />
-                </div>
+                <SwitchRow label="源端缓存" checked={useCacheS} onCheckedChange={setUseCacheS} />
+                <SwitchRow label="目标缓存" checked={useCacheT} onCheckedChange={setUseCacheT} />
               </div>
             </div>
 
             {/* 启用开关 */}
-            <div className="pt-2 border-t border-slate-200 flex items-center justify-between p-3.5 rounded-lg bg-slate-50 border border-slate-100">
-              <div className="space-y-0.5">
-                <span className="text-sm font-medium text-slate-800">任务启用状态</span>
-                <p className="text-xs text-slate-400">是否开启定时自动触发（手动任务默认始终保持就绪）</p>
-              </div>
-              <Switch
+            <div className="pt-2 border-t border-slate-200">
+              <SwitchRow
+                label="任务启用状态"
+                description="是否开启定时自动触发（手动任务默认始终保持就绪）"
                 disabled={isCron === 2}
                 checked={isCron === 2 ? true : enable}
                 onCheckedChange={setEnable}

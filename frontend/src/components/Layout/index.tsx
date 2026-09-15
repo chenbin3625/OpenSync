@@ -23,6 +23,7 @@ import {
 } from '../ui/alert-dialog';
 import { Button } from '../ui/button';
 import { cn } from '../../lib/utils';
+import { icon } from '../../lib/styles';
 
 const navItems = [
   { path: '/home', label: '任务管理', icon: Home },
@@ -30,6 +31,17 @@ const navItems = [
   { path: '/notify', label: '通知配置', icon: Bell },
   { path: '/setting', label: '系统设置', icon: Settings },
 ];
+
+/** 导航项样式。桌面端为横向紧凑排布，移动端为整行排布，激活态保持一致 */
+function navItemClass(isActive: boolean, mobile = false) {
+  return cn(
+    'flex items-center text-sm font-medium rounded-md transition-colors',
+    mobile ? 'w-full gap-3 px-3 py-2' : 'gap-2 px-3 py-1.5',
+    isActive
+      ? 'bg-teal-50 text-teal-800 font-semibold'
+      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+  );
+}
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -52,9 +64,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50/80 text-slate-800 flex flex-col">
+    <div className="min-h-screen flex flex-col">
       {/* 顶部导航栏 */}
-      <header className="sticky top-0 z-40 h-14 border-b border-slate-200/80 bg-white/85 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between shadow-xs">
+      <header className="sticky top-0 z-40 h-14 border-b border-slate-200 bg-white/85 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-6">
           {/* 品牌标识 */}
           <div
@@ -84,14 +96,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   <button
                     key={item.path}
                     onClick={() => navigate(item.path)}
-                    className={cn(
-                      'flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-                      isActive
-                        ? 'bg-teal-50 text-teal-800 font-semibold'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
-                    )}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={navItemClass(isActive)}
                   >
-                    <Icon className="h-4 w-4" />
+                    <Icon className={icon.md} />
                     <span>{item.label}</span>
                   </button>
                 );
@@ -112,20 +120,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 aria-label="用户菜单"
               >
                 <div className="h-6 w-6 rounded-full bg-teal-100 text-teal-800 flex items-center justify-center text-xs font-semibold">
-                  <User className="h-3.5 w-3.5" />
+                  <User className={icon.sm} />
                 </div>
                 <span className="hidden sm:inline max-w-[120px] truncate text-xs font-medium">
                   {userInfo?.userName || '用户'}
                 </span>
-                <ChevronDown className="hidden sm:block h-3.5 w-3.5 opacity-50" />
+                <ChevronDown className={cn(icon.sm, 'hidden sm:block opacity-50')} />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-40">
               <DropdownMenuItem
                 onClick={() => setLogoutDialogOpen(true)}
-                className="text-red-600 focus:text-red-700 focus:bg-red-50 cursor-pointer"
+                className="text-rose-600 focus:text-rose-700 focus:bg-rose-50 cursor-pointer"
               >
-                <LogOut className="h-4 w-4 mr-2" />
+                <LogOut className={cn(icon.md, 'mr-2')} />
                 <span>退出登录</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -139,7 +147,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             className="md:hidden p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100"
             aria-label="切换移动菜单"
           >
-            {mobileMenuOpen ? <X className="h-5 w-5" /> : <MenuIcon className="h-5 w-5" />}
+            {mobileMenuOpen ? <X className={icon.lg} /> : <MenuIcon className={icon.lg} />}
           </button>
         </div>
       </header>
@@ -157,14 +165,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   navigate(item.path);
                   setMobileMenuOpen(false);
                 }}
-                className={cn(
-                  'flex w-full items-center gap-3 px-3 py-2 text-sm font-medium rounded-md transition-colors',
-                  isActive
-                    ? 'bg-teal-50 text-teal-800 font-semibold'
-                    : 'text-slate-600 hover:bg-slate-50'
-                )}
+                aria-current={isActive ? 'page' : undefined}
+                className={navItemClass(isActive, true)}
               >
-                <Icon className="h-4 w-4" />
+                <Icon className={icon.md} />
                 <span>{item.label}</span>
               </button>
             );

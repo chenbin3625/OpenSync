@@ -100,7 +100,7 @@ const TaskRealtimeRows = memo(function TaskRealtimeRows({
                       <div className="w-28 flex justify-end min-w-0">
                         {activeTab === 1 && (
                           <div className="w-24 space-y-1">
-                            <Progress value={Math.round(Number(task.progress || 0))} className="h-1.5" />
+                            <Progress value={Math.round(Number(task.progress || 0))} />
                             <div className="text-2xs font-mono text-teal-700 text-right">
                               {Math.round(Number(task.progress || 0))}%
                             </div>

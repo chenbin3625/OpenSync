@@ -365,7 +365,7 @@ export default function TaskDetail({ taskId: taskIdProp, embedded = false, onBac
                       <td className={table.cell}>
                         {status === 1 ? (
                           <div className="flex items-center gap-2">
-                            <Progress value={Number(record.progress || 0)} className="h-1.5 w-24" />
+                            <Progress value={Number(record.progress || 0)} className="w-24" />
                             <span className="text-2xs font-medium text-slate-500">{record.progress || 0}%</span>
                           </div>
                         ) : (

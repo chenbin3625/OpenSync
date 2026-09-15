@@ -9,7 +9,7 @@ export const badgeVariants = cva(
       variant: {
         default: 'border-transparent bg-teal-700 text-white shadow hover:bg-teal-800',
         secondary: 'border-transparent bg-slate-100 text-slate-900 hover:bg-slate-200',
-        destructive: 'border-transparent bg-red-500 text-white shadow hover:bg-red-600',
+        destructive: 'border-transparent bg-rose-600 text-white shadow hover:bg-rose-700',
         outline: 'text-slate-800 border-slate-300',
         success: 'border-transparent bg-emerald-100 text-emerald-800 border border-emerald-200',
         warning: 'border-transparent bg-amber-100 text-amber-800 border border-amber-200',

@@ -5,6 +5,8 @@ import { cn } from '../../lib/utils';
 import type { TreeNode } from '../../types';
 
 export interface PathTreeSelectProps {
+  /** 供外部 label 的 htmlFor 关联触发器 */
+  id?: string;
   placeholder?: string;
   value?: string | string[];
   onChange?: (value: string | string[]) => void;
@@ -63,7 +65,7 @@ function TreeNodeItem({
       >
         <button
           type="button"
-          className="p-0.5 rounded hover:bg-slate-200/80 text-slate-400 hover:text-slate-700 transition-colors"
+          className="p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors"
           onClick={handleExpand}
         >
           {loadingChildren ? (
@@ -109,6 +111,7 @@ function TreeNodeItem({
 }
 
 export function PathTreeSelect({
+  id,
   placeholder = '请选择目录',
   value,
   onChange,
@@ -154,6 +157,7 @@ export function PathTreeSelect({
     <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
       <PopoverPrimitive.Trigger asChild disabled={disabled}>
         <div
+          id={id}
           role="button"
           tabIndex={disabled ? -1 : 0}
           className={cn(
