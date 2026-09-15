@@ -1,19 +1,31 @@
-import { useState, useEffect, useRef } from 'react';
-import {
-  Button, Space, Drawer, Select, Input, Form, Switch, InputNumber,
-  Row, Col, Divider, TreeSelect, Spin, Tooltip,
-} from 'antd';
-import { QuestionCircleOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useRef } from 'react';
+import { HelpCircle } from 'lucide-react';
 import { jobPost } from '../../api/job';
-import type { AlistItem, JobFormValues, JobItem, TreeNode } from '../../types';
+import type { AlistItem, JobItem } from '../../types';
 import { fileSizeToBytes, fileSizeUnitOptions, splitBytesToFileSize } from './fileSizeUnits';
 import {
   methodOptions, methodNames, cronTypeNames, cronFields, defaultCronFields,
-  compactItemStyle, compactDividerStyle, defaultExclude,
-  parseJobPathList, normalizeFormPaths,
+  defaultExclude, parseJobPathList, normalizeFormPaths,
   formatSchedulePlan, formatAlistLabel, type ScheduleValues,
 } from './homeUtils';
 import { usePathTree } from './usePathTree';
+import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
+import { Switch } from '../../components/ui/switch';
+import { PathTreeSelect } from '../../components/ui/path-tree-select';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetFooter,
+} from '../../components/ui/sheet';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../../components/ui/tooltip';
 
 export interface JobFormDrawerProps {
   visible: boolean;
@@ -23,8 +35,7 @@ export interface JobFormDrawerProps {
   onSubmit: () => void;
 }
 
-// Per-field value ranges for the six cron fields (robfig/cron with seconds).
-const cronFieldRanges: Record<string, [number, number]> = {
+export const cronFieldRanges: Record<string, [number, number]> = {
   second: [0, 59],
   minute: [0, 59],
   hour: [0, 23],
@@ -33,9 +44,7 @@ const cronFieldRanges: Record<string, [number, number]> = {
   day_of_week: [0, 6],
 };
 
-// Validates a single cron field value against its allowed range. Supports the
-// common robfig/cron syntax: *, */n, n, n-m, n-m/s, and comma-separated lists.
-function validateCronField(value: string, min: number, max: number): Promise<void> {
+export function validateCronField(value: string, min: number, max: number): Promise<void> {
   if (!value) return Promise.resolve();
   const parts = value.split(',');
   for (const part of parts) {
@@ -70,54 +79,71 @@ function validateCronField(value: string, min: number, max: number): Promise<voi
   return Promise.resolve();
 }
 
-const cronFieldRules = (fieldName: string) => {
-  const range = cronFieldRanges[fieldName];
-  if (!range) return [{ required: true, message: '请输入' }];
-  return [
-    { required: true, message: '请输入' },
-    { pattern: /^[\d*,/-]+$/, message: '仅支持数字、* / , -' },
-    {
-      validator: (_: unknown, value: string) => validateCronField(value, range[0], range[1]),
-    },
-  ];
-};
-
 export default function JobFormDrawer({
   visible, editingJob, alistList, onClose, onSubmit,
 }: JobFormDrawerProps) {
-  const [form] = Form.useForm();
   const [treeLoading, setTreeLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const submitAbortRef = useRef<AbortController | null>(null);
   const treeLoadRequestRef = useRef(0);
 
-  const selectedAlistId = Form.useWatch('alistId', form) as number | undefined;
+  // 表单受控状态
+  const [alistId, setAlistId] = useState<number | undefined>(undefined);
+  const [srcPath, setSrcPath] = useState<string | string[]>([]);
+  const [dstPath, setDstPath] = useState<string | string[]>([]);
+  const [remark, setRemark] = useState('');
+  const [method, setMethod] = useState(0);
+  const [isCron, setIsCron] = useState(1);
+  const [interval, setIntervalVal] = useState(1440);
+  const [enable, setEnable] = useState(true);
+
+  // Cron 6 字段
+  const [cronState, setCronState] = useState({ ...defaultCronFields });
+
+  // 大小限制
+  const [minFileSize, setMinFileSize] = useState(0);
+  const [minFileSizeUnit, setMinFileSizeUnit] = useState('MB');
+  const [maxFileSize, setMaxFileSize] = useState(0);
+  const [maxFileSizeUnit, setMaxFileSizeUnit] = useState('MB');
+
+  // 缓存与扫描
+  const [useCacheS, setUseCacheS] = useState(false);
+  const [scanIntervalS, setScanIntervalS] = useState(0);
+  const [useCacheT, setUseCacheT] = useState(false);
+  const [scanIntervalT, setScanIntervalT] = useState(0);
+
+  // 排除规则
+  const [exclude, setExclude] = useState(defaultExclude);
+  const [formError, setFormError] = useState('');
+
   const editingJobId = editingJob?.id;
   const editingJobSrcPath = editingJob?.srcPath;
   const editingJobDstPath = editingJob?.dstPath;
+
   const {
     treeData: srcTreeData,
     loadRoot: loadSrcRoot,
     clearTree: clearSrcTree,
     onLoadData: onLoadSrcData,
-    setLoadedKeys: setSrcLoadedKeys,
     treeLoadError: srcTreeError,
-  } = usePathTree(selectedAlistId, treeLoadRequestRef);
+  } = usePathTree(alistId, treeLoadRequestRef);
+
   const {
     treeData: dstTreeData,
     loadRoot: loadDstRoot,
     clearTree: clearDstTree,
     onLoadData: onLoadDstData,
-    setLoadedKeys: setDstLoadedKeys,
     treeLoadError: dstTreeError,
-  } = usePathTree(selectedAlistId, treeLoadRequestRef);
-  const treeNotFoundContent = selectedAlistId
-    ? (srcTreeError || dstTreeError ? '目录加载失败，请重试' : '请先展开目录')
+  } = usePathTree(alistId, treeLoadRequestRef);
+
+  const treeNotFoundContent = alistId
+    ? (srcTreeError || dstTreeError ? '目录加载失败，请检查引擎连接' : '请展开目录选择')
     : '请先选择引擎';
 
+  // 引擎切换时加载根目录
   useEffect(() => {
-    if (selectedAlistId) {
+    if (alistId) {
       const requestID = ++treeLoadRequestRef.current;
       setTreeLoading(true);
       Promise.all([
@@ -132,61 +158,71 @@ export default function JobFormDrawer({
       clearDstTree();
       setTreeLoading(false);
     }
-  }, [selectedAlistId, editingJobId, editingJobDstPath, editingJobSrcPath, loadSrcRoot, loadDstRoot, clearSrcTree, clearDstTree]);
+  }, [alistId, editingJobId, editingJobDstPath, editingJobSrcPath, loadSrcRoot, loadDstRoot, clearSrcTree, clearDstTree]);
 
-  // Initialize form when opening
+  // 打开弹窗时初始化表单值
   useEffect(() => {
     if (!visible) return;
     submittingRef.current = false;
     setSubmitting(false);
-    form.resetFields();
+    setFormError('');
+
     if (editingJob) {
-      const minFileSize = splitBytesToFileSize(editingJob.minFileSize);
-      const maxFileSize = splitBytesToFileSize(editingJob.maxFileSize);
-      form.setFieldsValue({
-        ...editingJob,
-        enable: editingJob.enable === 1,
-        useCacheS: editingJob.useCacheS === 1 || editingJob.useCacheS === true,
-        useCacheT: editingJob.useCacheT === 1 || editingJob.useCacheT === true,
-        srcPath: parseJobPathList(editingJob.srcPath),
-        dstPath: parseJobPathList(editingJob.dstPath),
+      setAlistId(editingJob.alistId);
+      setSrcPath(parseJobPathList(editingJob.srcPath));
+      setDstPath(parseJobPathList(editingJob.dstPath));
+      setRemark(editingJob.remark || '');
+      setMethod(editingJob.method ?? 0);
+      setIsCron(editingJob.isCron ?? 1);
+      setIntervalVal(editingJob.interval ?? 1440);
+      setEnable(editingJob.enable === 1);
+      setUseCacheS(Boolean(editingJob.useCacheS));
+      setUseCacheT(Boolean(editingJob.useCacheT));
+      setScanIntervalS(editingJob.scanIntervalS ?? 0);
+      setScanIntervalT(editingJob.scanIntervalT ?? 0);
+      setExclude(editingJob.exclude ?? defaultExclude);
+
+      const minObj = splitBytesToFileSize(editingJob.minFileSize);
+      setMinFileSize(minObj.value);
+      setMinFileSizeUnit(minObj.unit);
+
+      const maxObj = splitBytesToFileSize(editingJob.maxFileSize);
+      setMaxFileSize(maxObj.value);
+      setMaxFileSizeUnit(maxObj.unit);
+
+      setCronState({
         second: editingJob.second || defaultCronFields.second,
         minute: editingJob.minute || defaultCronFields.minute,
         hour: editingJob.hour || defaultCronFields.hour,
         day: editingJob.day || defaultCronFields.day,
         month: editingJob.month || defaultCronFields.month,
         day_of_week: editingJob.day_of_week || defaultCronFields.day_of_week,
-        minFileSize: minFileSize.value,
-        minFileSizeUnit: minFileSize.unit,
-        maxFileSize: maxFileSize.value,
-        maxFileSizeUnit: maxFileSize.unit,
       });
-      setSrcLoadedKeys([]);
-      setDstLoadedKeys([]);
     } else {
-      form.setFieldsValue({
-        enable: true,
-        method: 0,
-        isCron: 1,
-        interval: 1440,
-        useCacheS: false,
-        useCacheT: false,
-        scanIntervalS: 0,
-        scanIntervalT: 0,
-        minFileSize: 0,
-        minFileSizeUnit: 'MB',
-        maxFileSize: 0,
-        maxFileSizeUnit: 'MB',
-        ...defaultCronFields,
-        exclude: defaultExclude,
-      });
+      setAlistId(alistList[0]?.id);
+      setSrcPath([]);
+      setDstPath([]);
+      setRemark('');
+      setMethod(0);
+      setIsCron(1);
+      setIntervalVal(1440);
+      setEnable(true);
+      setUseCacheS(false);
+      setUseCacheT(false);
+      setScanIntervalS(0);
+      setScanIntervalT(0);
+      setMinFileSize(0);
+      setMinFileSizeUnit('MB');
+      setMaxFileSize(0);
+      setMaxFileSizeUnit('MB');
+      setExclude(defaultExclude);
+      setCronState({ ...defaultCronFields });
       clearSrcTree();
       clearDstTree();
-      setSrcLoadedKeys([]);
-      setDstLoadedKeys([]);
     }
-  }, [visible, editingJob, form, clearSrcTree, clearDstTree, setSrcLoadedKeys, setDstLoadedKeys]);
+  }, [visible, editingJob, alistList, clearSrcTree, clearDstTree]);
 
+  // 取消提交
   useEffect(() => {
     if (visible) return undefined;
     submitAbortRef.current?.abort();
@@ -196,41 +232,92 @@ export default function JobFormDrawer({
     return undefined;
   }, [visible]);
 
-  const handleSubmit = async () => {
+  // 调度方案文本预览
+  const scheduleValues: ScheduleValues = {
+    isCron,
+    interval,
+    ...cronState,
+  };
+  const schedulePlan = formatSchedulePlan(scheduleValues);
+
+  // 校验 Cron
+  const validateCron = async () => {
+    if (isCron !== 1) return true;
+    for (const [key, range] of Object.entries(cronFieldRanges)) {
+      const val = (cronState as Record<string, string>)[key];
+      try {
+        await validateCronField(val, range[0], range[1]);
+      } catch (err) {
+        setFormError(`Cron 字段 [${key}] 校验失败: ${(err as Error).message}`);
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (submittingRef.current) return;
-    let values: JobFormValues;
-    try {
-      values = await form.validateFields() as JobFormValues;
-    } catch {
-      // Validation errors are shown inline by Ant Design; nothing else to do.
+    setFormError('');
+
+    if (!alistId) {
+      setFormError('请选择存储引擎');
       return;
     }
+    const normalizedSrc = normalizeFormPaths(srcPath);
+    const normalizedDst = normalizeFormPaths(dstPath);
+    if (normalizedSrc.length === 0) {
+      setFormError('请选择源目录');
+      return;
+    }
+    if (normalizedDst.length === 0) {
+      setFormError('请选择目标目录');
+      return;
+    }
+
+    const cronValid = await validateCron();
+    if (!cronValid) return;
+
+    // 大小校验
+    const minBytes = fileSizeToBytes(minFileSize, minFileSizeUnit);
+    const maxBytes = fileSizeToBytes(maxFileSize, maxFileSizeUnit);
+    if (maxBytes > 0 && minBytes > maxBytes) {
+      setFormError('最大文件大小必须大于等于最小文件大小');
+      return;
+    }
+
     submittingRef.current = true;
     setSubmitting(true);
     const controller = new AbortController();
     submitAbortRef.current = controller;
+
     try {
-      const srcPaths = normalizeFormPaths(values.srcPath);
-      const dstPaths = normalizeFormPaths(values.dstPath);
-      const { minFileSizeUnit, maxFileSizeUnit, ...jobValues } = values;
       const jobData: Record<string, unknown> = {
         ...(editingJob ? { id: editingJob.id } : {}),
-        ...jobValues,
-        srcPath: srcPaths,
-        dstPath: dstPaths,
-        enable: values.isCron === 2 ? 1 : (values.enable ? 1 : 0),
-        useCacheS: values.useCacheS ? 1 : 0,
-        useCacheT: values.useCacheT ? 1 : 0,
-        minFileSize: fileSizeToBytes(values.minFileSize, minFileSizeUnit),
-        maxFileSize: fileSizeToBytes(values.maxFileSize, maxFileSizeUnit),
+        alistId,
+        remark: remark.trim() || null,
+        srcPath: normalizedSrc,
+        dstPath: normalizedDst,
+        method,
+        isCron,
+        interval,
+        enable: isCron === 2 ? 1 : (enable ? 1 : 0),
+        useCacheS: useCacheS ? 1 : 0,
+        useCacheT: useCacheT ? 1 : 0,
+        scanIntervalS: Number(scanIntervalS),
+        scanIntervalT: Number(scanIntervalT),
+        minFileSize: minBytes,
+        maxFileSize: maxBytes,
+        exclude: exclude.trim() || null,
+        ...cronState,
       };
+
       await jobPost(jobData, { signal: controller.signal });
       if (controller.signal.aborted) return;
       onSubmit();
     } catch (err) {
       if (controller.signal.aborted) return;
-      // API errors are surfaced by the request interceptor; log unexpected
-      // (non-API) failures so they are not silently swallowed.
+      setFormError((err as Error).message || '保存任务失败');
       console.error('job submit failed', err);
     } finally {
       if (submitAbortRef.current === controller) {
@@ -241,286 +328,305 @@ export default function JobFormDrawer({
     }
   };
 
-  // Schedule preview — watch only the schedule fields so typing in the exclude
-  // textarea or remark no longer re-renders the whole drawer.
-  const isCronValue = Form.useWatch('isCron', form) as number | undefined;
-  const intervalValue = Form.useWatch('interval', form) as number | undefined;
-  const secondValue = Form.useWatch('second', form) as string | undefined;
-  const minuteValue = Form.useWatch('minute', form) as string | undefined;
-  const hourValue = Form.useWatch('hour', form) as string | undefined;
-  const dayValue = Form.useWatch('day', form) as string | undefined;
-  const monthValue = Form.useWatch('month', form) as string | undefined;
-  const dayOfWeekValue = Form.useWatch('day_of_week', form) as string | undefined;
-  const scheduleValues: ScheduleValues = {
-    isCron: isCronValue ?? 1,
-    interval: intervalValue,
-    second: secondValue,
-    minute: minuteValue,
-    hour: hourValue,
-    day: dayValue,
-    month: monthValue,
-    day_of_week: dayOfWeekValue,
-  };
-  const schedulePlan = formatSchedulePlan(scheduleValues);
-
-  useEffect(() => {
-    if (isCronValue === 2 && form.getFieldValue('enable') !== true) {
-      form.setFieldsValue({ enable: true });
-    }
-  }, [form, isCronValue]);
-
   return (
-    <Drawer
-      className="sync-job-drawer"
-      title={editingJob ? '编辑同步任务' : '新建同步任务'}
-      open={visible}
-      onClose={onClose}
-      forceRender
-      styles={{ wrapper: { width: 580 }, body: { padding: 16 } }}
-      extra={
-        <Space>
-          <Button onClick={onClose}>取消</Button>
-          <Button type="primary" onClick={handleSubmit} loading={submitting} disabled={submitting}>保存</Button>
-        </Space>
-      }
-    >
-      <Form className="sync-job-form" form={form} layout="vertical">
-        <Form.Item name="alistId" label="引擎" rules={[{ required: true, message: '请选择引擎' }]} style={compactItemStyle}>
-          <Select
-            placeholder="选择引擎"
-            options={alistList.map((a) => ({
-              value: a.id,
-              label: formatAlistLabel(a, { includeUrl: true }),
-            }))}
-          />
-        </Form.Item>
-        <Row gutter={12}>
-          <Col span={12}>
-            <Form.Item name="srcPath" label="源目录" rules={[{ required: true, message: '请选择源目录' }]} style={compactItemStyle}>
-              <TreeSelect
-                placeholder="选择源目录"
-                treeData={srcTreeData}
-                loadData={(node) => onLoadSrcData(node as TreeNode)}
-                treeDefaultExpandAll
-                multiple
-                treeCheckable
-                showCheckedStrategy={TreeSelect.SHOW_PARENT}
-                maxTagCount="responsive"
-                allowClear
-                showSearch
-                treeNodeFilterProp="title"
-                styles={{ popup: { root: { maxHeight: 300, overflow: 'auto' } } }}
-                suffixIcon={treeLoading ? <Spin size="small" /> : undefined}
-                notFoundContent={treeNotFoundContent}
-              />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="dstPath" label="目标目录" rules={[{ required: true, message: '请选择目标目录' }]} style={compactItemStyle}>
-              <TreeSelect
-                placeholder="选择目标目录"
-                treeData={dstTreeData}
-                loadData={(node) => onLoadDstData(node as TreeNode)}
-                treeDefaultExpandAll
-                multiple
-                maxTagCount="responsive"
-                allowClear
-                showSearch
-                treeNodeFilterProp="title"
-                styles={{ popup: { root: { maxHeight: 300, overflow: 'auto' } } }}
-                suffixIcon={treeLoading ? <Spin size="small" /> : undefined}
-                notFoundContent={treeNotFoundContent}
-              />
-            </Form.Item>
-          </Col>
-        </Row>
-        <Form.Item name="remark" label="备注" style={compactItemStyle}>
-          <Input placeholder="可选备注" />
-        </Form.Item>
+    <TooltipProvider>
+      <Sheet open={visible} onOpenChange={(open) => !open && onClose()}>
+        <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto p-6 space-y-6">
+          <SheetHeader>
+            <SheetTitle>{editingJob ? '编辑同步任务' : '新建同步任务'}</SheetTitle>
+          </SheetHeader>
 
-        <Divider style={compactDividerStyle}>同步配置</Divider>
-        <Row gutter={12}>
-          <Col span={12}>
-            <Form.Item
-              name="method"
-              style={compactItemStyle}
-              label={(
-                <Space size={4}>
-                  同步方式
-                  <Tooltip
-                    title={(
-                      <Space direction="vertical" size={2}>
-                        {methodOptions.map((method) => (
-                          <span key={method.name}>
-                            <strong>{method.name}：</strong>{method.description}
-                          </span>
+          {formError && (
+            <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium">
+              {formError}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* 引擎选择 */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-700 block">
+                存储引擎 <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={alistId ?? ''}
+                onChange={(e) => setAlistId(Number(e.target.value))}
+                className="flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-600"
+                required
+              >
+                <option value="" disabled>请选择引擎</option>
+                {alistList.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {formatAlistLabel(a, { includeUrl: true })}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 源与目标目录树 */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-700 flex items-center justify-between">
+                  <span>源目录 <span className="text-red-500">*</span></span>
+                  <span className="text-[11px] text-slate-400">支持多选</span>
+                </label>
+                <PathTreeSelect
+                  placeholder="选择源目录..."
+                  value={srcPath}
+                  onChange={setSrcPath}
+                  treeData={srcTreeData}
+                  loadData={onLoadSrcData}
+                  loading={treeLoading}
+                  notFoundContent={treeNotFoundContent}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-700 flex items-center justify-between">
+                  <span>目标目录 <span className="text-red-500">*</span></span>
+                  <span className="text-[11px] text-slate-400">支持多选</span>
+                </label>
+                <PathTreeSelect
+                  placeholder="选择目标目录..."
+                  value={dstPath}
+                  onChange={setDstPath}
+                  treeData={dstTreeData}
+                  loadData={onLoadDstData}
+                  loading={treeLoading}
+                  notFoundContent={treeNotFoundContent}
+                />
+              </div>
+            </div>
+
+            {/* 备注 */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-slate-700 block">任务备注</label>
+              <Input
+                placeholder="例如：相册每日备份 / 电影库镜像"
+                value={remark}
+                onChange={(e) => setRemark(e.target.value)}
+              />
+            </div>
+
+            {/* 同步配置分隔 */}
+            <div className="pt-2 border-t border-slate-200">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">同步与调度</h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* 同步方式 */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-xs font-medium text-slate-700">同步方式</label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="h-3.5 w-3.5 text-slate-400 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs space-y-1 text-xs">
+                        {methodOptions.map((opt) => (
+                          <div key={opt.name}>
+                            <strong>{opt.name}：</strong>{opt.description}
+                          </div>
                         ))}
-                      </Space>
-                    )}
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <select
+                    value={method}
+                    onChange={(e) => setMethod(Number(e.target.value))}
+                    className="flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm text-slate-800"
                   >
-                    <QuestionCircleOutlined />
-                  </Tooltip>
-                </Space>
+                    {methodNames.map((name, idx) => (
+                      <option key={name} value={idx}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 调度方式 */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-xs font-medium text-slate-700">调度方式</label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="h-3.5 w-3.5 text-slate-400 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="text-xs">
+                        当前计划：{schedulePlan}
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <select
+                    value={isCron}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setIsCron(val);
+                      if (val === 2) setEnable(true);
+                      if (val === 0) setIntervalVal(1440);
+                    }}
+                    className="flex h-9 w-full rounded-md border border-slate-300 bg-white px-3 py-1 text-sm shadow-sm text-slate-800"
+                  >
+                    {cronTypeNames.map((name, idx) => (
+                      <option key={name} value={idx}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* 分钟间隔配置 */}
+              {isCron === 0 && (
+                <div className="mt-3 space-y-1.5">
+                  <label className="text-xs font-medium text-slate-700 block">执行间隔（分钟）</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={interval}
+                    onChange={(e) => setIntervalVal(Number(e.target.value))}
+                    required
+                  />
+                </div>
               )}
-            >
-              <Select options={methodNames.map((n, i) => ({ value: i, label: n }))} />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item
-              name="isCron"
-              style={compactItemStyle}
-              label={(
-                <Space size={4}>
-                  调度方式
-                  <Tooltip title={`预计执行计划：${schedulePlan}`}>
-                    <QuestionCircleOutlined />
-                  </Tooltip>
-                </Space>
+
+              {/* Cron 6 字段配置 */}
+              {isCron === 1 && (
+                <div className="mt-3 space-y-1.5 bg-slate-50 p-3 rounded-lg border border-slate-200/80">
+                  <span className="text-[11px] font-semibold text-slate-500 block">
+                    Cron 表达式配置 (秒 分 时 日 月 周)
+                  </span>
+                  <div className="grid grid-cols-6 gap-1.5">
+                    {cronFields.map((field) => (
+                      <div key={field.name} className="space-y-0.5 text-center">
+                        <label className="text-[10px] text-slate-400 block truncate">{field.label}</label>
+                        <input
+                          type="text"
+                          value={(cronState as Record<string, string>)[field.name]}
+                          onChange={(e) =>
+                            setCronState((prev) => ({ ...prev, [field.name]: e.target.value }))
+                          }
+                          className="h-7 w-full text-center font-mono text-xs rounded border border-slate-200 bg-white focus:outline-none focus:border-teal-600"
+                          placeholder={field.placeholder}
+                          required
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-teal-700 font-mono pt-1 truncate">
+                    预估计划: {schedulePlan}
+                  </p>
+                </div>
               )}
-            >
-              <Select
-                options={cronTypeNames.map((n, i) => ({ value: i, label: n }))}
-                onChange={(value) => {
-                  if (value === 0) form.setFieldsValue({ interval: 1440 });
-                  if (value === 2) form.setFieldsValue({ enable: true });
-                  if (value === 1) {
-                    form.setFieldsValue({
-                      second: form.getFieldValue('second') || defaultCronFields.second,
-                      minute: form.getFieldValue('minute') === '*' ? defaultCronFields.minute : form.getFieldValue('minute') || defaultCronFields.minute,
-                      hour: form.getFieldValue('hour') === '*' ? defaultCronFields.hour : form.getFieldValue('hour') || defaultCronFields.hour,
-                      day: form.getFieldValue('day') || defaultCronFields.day,
-                      month: form.getFieldValue('month') || defaultCronFields.month,
-                      day_of_week: form.getFieldValue('day_of_week') || defaultCronFields.day_of_week,
-                    });
-                  }
-                }}
+            </div>
+
+            {/* 文件大小过滤 */}
+            <div className="pt-2 border-t border-slate-200 space-y-3">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">文件过滤</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-slate-700 flex items-center gap-1">
+                    <span>最小文件大小</span>
+                    <span className="text-[11px] text-slate-400 font-normal">(0 不限)</span>
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      name="minFileSize"
+                      min={0}
+                      step="any"
+                      value={minFileSize}
+                      onChange={(e) => setMinFileSize(Number(e.target.value))}
+                    />
+                    <select
+                      value={minFileSizeUnit}
+                      onChange={(e) => setMinFileSizeUnit(e.target.value)}
+                      className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs"
+                    >
+                      {fileSizeUnitOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-slate-700 flex items-center gap-1">
+                    <span>最大文件大小</span>
+                    <span className="text-[11px] text-slate-400 font-normal">(0 不限)</span>
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      name="maxFileSize"
+                      min={0}
+                      step="any"
+                      value={maxFileSize}
+                      onChange={(e) => setMaxFileSize(Number(e.target.value))}
+                    />
+                    <select
+                      value={maxFileSizeUnit}
+                      onChange={(e) => setMaxFileSizeUnit(e.target.value)}
+                      className="h-9 rounded-md border border-slate-300 bg-white px-2 text-xs"
+                    >
+                      {fileSizeUnitOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 排除项 */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-700 flex items-center gap-1">
+                  <span>排除规则 (.gitignore 格式)</span>
+                  <span className="text-[11px] text-slate-400 font-normal">每行一条规则</span>
+                </label>
+                <textarea
+                  rows={4}
+                  value={exclude}
+                  onChange={(e) => setExclude(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 bg-white p-2.5 font-mono text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-teal-600"
+                  placeholder={'如\n*.tmp\n.git/'}
+                />
+              </div>
+            </div>
+
+            {/* 缓存与扫描设置 */}
+            <div className="pt-2 border-t border-slate-200 space-y-3">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">缓存加速</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
+                  <span className="text-xs font-medium text-slate-700">源端缓存</span>
+                  <Switch checked={useCacheS} onCheckedChange={setUseCacheS} />
+                </div>
+                <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100">
+                  <span className="text-xs font-medium text-slate-700">目标缓存</span>
+                  <Switch checked={useCacheT} onCheckedChange={setUseCacheT} />
+                </div>
+              </div>
+            </div>
+
+            {/* 启用开关 */}
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-between p-3.5 rounded-lg bg-slate-50 border border-slate-100">
+              <div className="space-y-0.5">
+                <span className="text-sm font-medium text-slate-800">任务启用状态</span>
+                <p className="text-xs text-slate-400">是否开启定时自动触发（手动任务默认始终保持就绪）</p>
+              </div>
+              <Switch
+                disabled={isCron === 2}
+                checked={isCron === 2 ? true : enable}
+                onCheckedChange={setEnable}
               />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            {isCronValue === 0 && (
-              <Form.Item name="interval" label="间隔(分钟)" rules={[{ required: true, message: '请输入' }]} style={compactItemStyle}>
-                <InputNumber min={1} style={{ width: '100%' }} />
-              </Form.Item>
-            )}
-          </Col>
-        </Row>
-        {isCronValue === 1 && (
-          <Row gutter={8}>
-            {cronFields.map((field) => (
-              <Col span={4} key={field.name}>
-                <Form.Item name={field.name} label={field.label} rules={cronFieldRules(field.name)} style={compactItemStyle}>
-                  <Input placeholder={field.placeholder} />
-                </Form.Item>
-              </Col>
-            ))}
-          </Row>
-        )}
-        <Row gutter={12}>
-          <Col span={12}>
-            <Form.Item
-              label="最小文件大小"
-              tooltip="0 表示不限制小文件"
-              style={compactItemStyle}
-            >
-              <Space.Compact style={{ width: '100%' }}>
-                <Form.Item name="minFileSize" noStyle>
-                  <InputNumber
-                    min={0}
-                    precision={2}
-                    style={{ flex: 1 }}
-                    placeholder="0 不限"
-                  />
-                </Form.Item>
-                <Form.Item name="minFileSizeUnit" noStyle>
-                  <Select
-                    options={fileSizeUnitOptions}
-                    style={{ width: 84 }}
-                    onChange={() => form.validateFields(['maxFileSize']).catch(() => undefined)}
-                  />
-                </Form.Item>
-              </Space.Compact>
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item
-              label="最大文件大小"
-              tooltip="0 表示不限制大文件"
-              style={compactItemStyle}
-            >
-              <Space.Compact style={{ width: '100%' }}>
-                <Form.Item
-                  name="maxFileSize"
-                  noStyle
-                  dependencies={['minFileSize', 'minFileSizeUnit', 'maxFileSizeUnit']}
-                  rules={[
-                    ({ getFieldValue }) => ({
-                      validator(_, value) {
-                        const minSize = fileSizeToBytes(getFieldValue('minFileSize'), getFieldValue('minFileSizeUnit'));
-                        const maxSize = fileSizeToBytes(value, getFieldValue('maxFileSizeUnit'));
-                        if (maxSize > 0 && minSize > maxSize) {
-                          return Promise.reject(new Error('最大文件大小必须大于等于最小文件大小'));
-                        }
-                        return Promise.resolve();
-                      },
-                    }),
-                  ]}
-                >
-                  <InputNumber
-                    min={0}
-                    precision={2}
-                    style={{ flex: 1 }}
-                    placeholder="0 不限"
-                  />
-                </Form.Item>
-                <Form.Item name="maxFileSizeUnit" noStyle>
-                  <Select
-                    options={fileSizeUnitOptions}
-                    style={{ width: 84 }}
-                    onChange={() => form.validateFields(['maxFileSize']).catch(() => undefined)}
-                  />
-                </Form.Item>
-              </Space.Compact>
-            </Form.Item>
-          </Col>
-        </Row>
+            </div>
 
-        <Divider style={compactDividerStyle}>缓存与扫描</Divider>
-        <Row gutter={12}>
-          <Col span={6}>
-            <Form.Item name="useCacheS" label="源端缓存" valuePropName="checked" style={compactItemStyle}>
-              <Switch checkedChildren="使用" unCheckedChildren="不使用" />
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="scanIntervalS" label="源端扫描(秒)" style={compactItemStyle}>
-              <InputNumber min={0} style={{ width: '100%' }} placeholder="0 默认" />
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="useCacheT" label="目标缓存" valuePropName="checked" style={compactItemStyle}>
-              <Switch checkedChildren="使用" unCheckedChildren="不使用" />
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="scanIntervalT" label="目标扫描(秒)" style={compactItemStyle}>
-              <InputNumber min={0} style={{ width: '100%' }} placeholder="0 默认" />
-            </Form.Item>
-          </Col>
-        </Row>
-
-        <div style={{ marginTop: 4 }}>
-          <Form.Item name="exclude" label="排除项" tooltip="gitignore 语法，每行一条" style={compactItemStyle}>
-            <Input.TextArea placeholder={'如\n*.tmp\n.git/'} rows={8} />
-          </Form.Item>
-        </div>
-
-        <Divider style={compactDividerStyle} />
-        <Form.Item name="enable" label="启用" valuePropName="checked" style={compactItemStyle}>
-          <Switch disabled={isCronValue === 2} />
-        </Form.Item>
-      </Form>
-    </Drawer>
+            <SheetFooter className="pt-4 border-t border-slate-200">
+              <Button type="button" variant="outline" onClick={onClose}>
+                取消
+              </Button>
+              <Button type="submit" loading={submitting}>
+                保存任务配置
+              </Button>
+            </SheetFooter>
+          </form>
+        </SheetContent>
+      </Sheet>
+    </TooltipProvider>
   );
 }

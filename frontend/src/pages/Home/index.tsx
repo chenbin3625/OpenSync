@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import './Home.css';
-import { Alert, App, Drawer, Empty, Tabs, Typography } from 'antd';
+import { AlertCircle, Inbox, LayoutDashboard, PlayCircle, History } from 'lucide-react';
 import { jobGetJob, jobPut, jobDelete } from '../../api/job';
 import { alistGet } from '../../api/alist';
 import TaskList from './TaskList';
@@ -12,11 +11,13 @@ import JobFormDrawer from './JobFormDrawer';
 import type { AlistItem, JobItem } from '../../types';
 import { buildHomeRouteSearch, readHomeRouteState, type HomeRouteState, type HomeTabKey } from './routeState';
 import { formatAlistLabel } from './homeUtils';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/ui/sheet';
+import { toast } from '../../components/ui/toaster';
 
 const PAGE_SIZE = 12;
 
 export default function Home() {
-  const { message } = App.useApp();
   const [searchParams, setSearchParams] = useSearchParams();
   const routeState = useMemo(() => readHomeRouteState(searchParams), [searchParams]);
   const { tab: activeJobTab, jobId: selectedJobId, page } = routeState;
@@ -88,10 +89,6 @@ export default function Home() {
     updateHomeRouteState({ jobId: nextJobId });
   }, [list, listLoaded, selectedJobId, updateHomeRouteState]);
 
-  // Clamp `page` back to the max valid page when the loaded total no longer
-  // supports it (e.g. deleting the last jobs on page > 1 leaves total ≤ PAGE_SIZE).
-  // Setting `page` in the route triggers `fetchList` via the page-driven effect,
-  // and once `page <= maxPage` this effect stops firing (no infinite loop).
   useEffect(() => {
     if (!listLoaded) return;
     const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -111,7 +108,7 @@ export default function Home() {
   };
 
   const handleDrawerSubmit = () => {
-    message.success(editingJob ? '编辑成功，下次任务生效' : '创建成功');
+    toast.success(editingJob ? '编辑成功，下次任务生效' : '创建成功');
     setDrawerVisible(false);
     fetchList();
   };
@@ -119,7 +116,7 @@ export default function Home() {
   const handleDelete = async (id: number) => {
     try {
       await jobDelete({ id });
-      message.success('删除成功');
+      toast.success('删除成功');
       fetchList();
     } catch (err) {
       console.error('job delete failed', err);
@@ -129,7 +126,7 @@ export default function Home() {
   const handleToggle = async (job: JobItem) => {
     try {
       await jobPut({ id: String(job.id), pause: job.enable === 1 });
-      message.success('操作成功');
+      toast.success('操作成功');
       fetchList();
     } catch (err) {
       console.error('job toggle failed', err);
@@ -139,7 +136,7 @@ export default function Home() {
   const handleRun = async (id: number) => {
     try {
       await jobPut({ id: String(id) });
-      message.success('已提交执行');
+      toast.success('已提交执行');
       fetchList();
     } catch (err) {
       console.error('job run failed', err);
@@ -149,7 +146,7 @@ export default function Home() {
   const handleRunAll = async () => {
     try {
       await jobPut({});
-      message.success('已提交执行所有同步任务');
+      toast.success('已提交执行所有同步任务');
       fetchList();
     } catch (err) {
       console.error('job run all failed', err);
@@ -169,7 +166,7 @@ export default function Home() {
   const selectedJob = list.find((job) => job.id === selectedJobId) || null;
 
   return (
-    <div className="sync-manager">
+    <div className="grid gap-4 grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)] min-h-[calc(100vh-90px)]">
       <HomeSidebar
         list={list}
         loading={loading}
@@ -184,69 +181,72 @@ export default function Home() {
         setPage={handlePageChange}
       />
 
-      <main className="sync-manager-content">
+      <main className="min-w-0">
         {listError && (
-          <Alert
-            type="error"
-            showIcon
-            message="同步任务列表加载失败"
-            className="task-feedback"
-          />
+          <div className="flex items-center gap-2 p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium mb-4">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>同步任务列表加载失败</span>
+          </div>
         )}
+
         {selectedJob ? (
           <Tabs
-            activeKey={activeJobTab}
-            onChange={(key) => updateHomeRouteState({ tab: key as HomeTabKey })}
-            destroyInactiveTabPane={false}
-            items={[
-              {
-                key: 'overview',
-                label: '总览',
-                children: (
-                  <HomeOverview
-                    selectedJob={selectedJob}
-                    onRun={handleRun}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                    onToggle={handleToggle}
-                    getAlistName={getAlistName}
-                  />
-                ),
-              },
-              {
-                key: 'realtime',
-                label: '实时任务',
-                children: (
-                  <TaskList
-                    key={`realtime-${selectedJob.id}`}
-                    jobId={String(selectedJob.id)}
-                    view="realtime"
-                    active={activeJobTab === 'realtime'}
-                    onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-                  />
-                ),
-              },
-              {
-                key: 'history',
-                label: '历史任务',
-                children: (
-                  <TaskList
-                    key={`history-${selectedJob.id}`}
-                    jobId={String(selectedJob.id)}
-                    view="history"
-                    active={activeJobTab === 'history'}
-                    onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-                  />
-                ),
-              },
-            ]}
-          />
+            value={activeJobTab}
+            onValueChange={(key) => updateHomeRouteState({ tab: key as HomeTabKey })}
+            className="w-full space-y-4"
+          >
+            <TabsList className="bg-slate-100 p-1 border border-slate-200/60">
+              <TabsTrigger value="overview" className="flex items-center gap-1.5 text-xs">
+                <LayoutDashboard className="h-3.5 w-3.5" />
+                <span>总览</span>
+              </TabsTrigger>
+              <TabsTrigger value="realtime" className="flex items-center gap-1.5 text-xs">
+                <PlayCircle className="h-3.5 w-3.5" />
+                <span>实时任务</span>
+              </TabsTrigger>
+              <TabsTrigger value="history" className="flex items-center gap-1.5 text-xs">
+                <History className="h-3.5 w-3.5" />
+                <span>历史任务</span>
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="overview">
+              <HomeOverview
+                selectedJob={selectedJob}
+                onRun={handleRun}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+                onToggle={handleToggle}
+                getAlistName={getAlistName}
+              />
+            </TabsContent>
+
+            <TabsContent value="realtime">
+              <TaskList
+                key={`realtime-${selectedJob.id}`}
+                jobId={String(selectedJob.id)}
+                view="realtime"
+                active={activeJobTab === 'realtime'}
+                onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+              />
+            </TabsContent>
+
+            <TabsContent value="history">
+              <TaskList
+                key={`history-${selectedJob.id}`}
+                jobId={String(selectedJob.id)}
+                view="history"
+                active={activeJobTab === 'history'}
+                onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+              />
+            </TabsContent>
+          </Tabs>
         ) : (
-          <div className="sync-manager-empty">
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={<Typography.Text type="secondary">暂无同步任务，点击「新建」创建第一个同步任务</Typography.Text>}
-            />
+          <div className="grid place-items-center min-h-[360px] py-20 text-center space-y-2 bg-white rounded-xl border border-slate-200/80">
+            <Inbox className="h-10 w-10 text-slate-300 mx-auto" />
+            <p className="text-sm text-slate-400">
+              暂无同步任务，点击「新建」创建第一个同步任务
+            </p>
           </div>
         )}
       </main>
@@ -259,17 +259,25 @@ export default function Home() {
         onSubmit={handleDrawerSubmit}
       />
 
-      <Drawer
-        className="task-detail-drawer"
-        title={`任务详情 — 任务 #${taskDetailDrawerTaskId}`}
-        placement="bottom"
+      <Sheet
         open={!!taskDetailDrawerTaskId}
-        onClose={() => setTaskDetailDrawerTaskId('')}
-        styles={{ wrapper: { height: '90vh' }, body: { padding: 16 } }}
-        destroyOnHidden
+        onOpenChange={(open) => !open && setTaskDetailDrawerTaskId('')}
       >
-        <TaskDetail key={taskDetailDrawerTaskId} taskId={taskDetailDrawerTaskId} embedded />
-      </Drawer>
+        <SheetContent
+          side="bottom"
+          className="h-[90vh] max-h-[90vh] overflow-hidden flex flex-col p-4 sm:p-6"
+        >
+          <SheetHeader className="pb-3 border-b border-slate-100">
+            <SheetTitle>任务详情 — 任务 #{taskDetailDrawerTaskId}</SheetTitle>
+          </SheetHeader>
+          <div className="flex-1 overflow-auto pt-3">
+            {taskDetailDrawerTaskId && (
+              <TaskDetail key={taskDetailDrawerTaskId} taskId={taskDetailDrawerTaskId} embedded />
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
+

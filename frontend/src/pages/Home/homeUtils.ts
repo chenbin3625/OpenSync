@@ -1,4 +1,4 @@
-import type { AlistItem, JobItem, TreeNode } from '../../types';
+import type { AlistItem, JobItem, TaskItem, TreeNode } from '../../types';
 
 export type ScheduleValues = {
   isCron?: number;
@@ -371,3 +371,26 @@ export const formatCache = (useS: number | boolean, useT: number | boolean) => {
   const t = useT ? '目标✓' : '目标✗';
   return `${s} / ${t}`;
 };
+
+export function formatDuration(seconds: number): string {
+  if (seconds < 0) seconds = 0;
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}天`);
+  if (hours > 0) parts.push(`${hours}小时`);
+  if (minutes > 0) parts.push(`${minutes}分`);
+  if (secs > 0 || parts.length === 0) parts.push(`${secs}秒`);
+  return parts.join(' ');
+}
+
+export function getTaskDisplayName(task: TaskItem): string {
+  if (task.fileName) return task.fileName;
+  const path = task.dstPath || task.srcPath || '';
+  if (!path) return '--';
+  const cleanPath = path.replace(/\/+$/, '');
+  return cleanPath.split('/').pop() || cleanPath;
+}
+

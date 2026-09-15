@@ -1,6 +1,10 @@
-* {
-  box-sizing: border-box;
-}
+@import "tailwindcss";
+
+/*
+ * 全局基础样式。
+ * 组件级样式统一由 Tailwind utility class 在 TSX 内声明，
+ * 此处只保留无法用 utility 表达的全局规则（根元素尺寸、字体、选区、滚动条）。
+ */
 
 :root {
   color-scheme: light;
@@ -16,14 +20,15 @@ body,
 }
 
 body {
-  color: var(--ant-color-text);
+  color: #1e293b;
   font-family: "Avenir Next", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  background: var(--ant-color-bg-layout);
+  background: #f8fafc;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 
+/* 表单控件默认不继承字体，统一交回给 body */
 button,
 input,
 textarea,
@@ -32,462 +37,14 @@ select {
 }
 
 ::selection {
-  color: var(--ant-color-text-light-solid);
-  background: var(--ant-color-primary);
+  color: #ffffff;
+  background: #0f766e;
 }
 
-.app-shell {
-  min-height: 100vh;
-  background: var(--ant-color-bg-layout);
-}
-
-.app-header {
-  position: sticky;
-  z-index: 20;
-  top: 0;
-  display: flex;
-  height: 58px;
-  align-items: center;
-  gap: 12px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--ant-color-border-secondary);
-  background: var(--ant-color-bg-container);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--ant-color-text) 3%, transparent);
-  line-height: normal;
-}
-
-.app-brand {
-  display: flex;
-  height: 100%;
-  min-width: 0;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 9px;
-  padding-inline: 6px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  outline: none;
-  transition: all 0.2s ease;
-}
-
-.app-brand:hover,
-.app-brand:focus-visible {
-  color: var(--ant-color-primary);
-  background: var(--ant-color-primary-bg);
-}
-
-.app-brand .ant-typography {
-  color: inherit;
-  white-space: nowrap;
-  letter-spacing: 0.2px;
-}
-
-.app-logo-mark {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  transition: transform 0.2s ease;
-}
-
-.app-brand:hover .app-logo-mark {
-  transform: rotate(15deg) scale(1.05);
-}
-
-.app-top-nav.ant-menu-horizontal {
-  min-width: 0;
-  flex: 1 1 auto;
-  align-self: stretch;
-  border-bottom: 0;
-  background: transparent;
-  line-height: 57px;
-}
-
-.app-top-nav .ant-menu-item,
-.app-top-nav .ant-menu-submenu {
-  display: inline-flex;
-  align-items: center;
-  margin-inline: 2px;
-  font-weight: 600;
-  transition: all 0.2s ease;
-}
-
-.app-actions {
-  min-width: max-content;
-  flex: 0 0 auto;
-}
-
-.app-user-menu {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding-inline: 10px;
-  font-size: 13px;
-  color: var(--ant-color-text-secondary);
-}
-
-.app-user-menu:hover,
-.app-user-menu:focus-visible {
-  color: var(--ant-color-primary);
-  background: var(--ant-color-primary-bg);
-}
-
-.app-user-menu-label {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.app-user-menu-arrow {
-  font-size: 10px;
-}
-
-.app-content {
-  min-height: 0;
-  margin: 16px;
-  overflow: visible;
-}
-
-.page-card,
-.ops-resource-card,
-.ops-settings-panel {
-  border-color: var(--ant-color-border-secondary);
-  border-radius: 8px;
-}
-
-.ops-resource-card,
-.ops-settings-panel {
-  box-shadow: none;
-}
-
-.page-card {
-  overflow: hidden;
-  background: var(--ant-color-bg-container);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--ant-color-text) 4%, transparent);
-}
-
-.page-card > .ant-card-body,
-.ops-settings-panel .ant-card-body {
-  padding: 20px;
-}
-
-.ops-page-surface {
-  display: grid;
-  min-width: 0;
-  min-height: calc(100vh - 90px);
-  align-content: start;
-  gap: 16px;
-}
-
-.ops-page-title-block,
-.ops-page-main,
-.ops-page-panel {
-  min-width: 0;
-}
-
-.ops-page-header,
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.ops-page-header {
-  min-height: 56px;
-  padding: 2px 2px 14px;
-  border-bottom: 1px solid var(--ant-color-border-secondary);
-}
-
-.page-header {
-  margin-bottom: 16px;
-}
-
-.page-header h2 {
-  margin: 0;
-}
-
-.ops-page-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.ops-page-title {
-  margin: 0;
-  color: var(--ant-color-text);
-  font-size: 22px;
-  line-height: 1.3;
-}
-
-.ops-page-kicker {
-  display: block;
-  margin-top: 3px;
-  color: var(--ant-color-text-tertiary);
-  font-size: 13px;
-  line-height: 20px;
-}
-
-.ops-section-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin: 0;
-  color: var(--ant-color-text);
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 22px;
-}
-
-.ops-resource-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
-  gap: 14px;
-  align-items: stretch;
-}
-
-.ops-resource-card {
-  height: 100%;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.ops-resource-grid > .ops-resource-card:only-child {
-  width: 100%;
-  max-width: 420px;
-}
-
-.ops-resource-card.ant-card-hoverable:hover {
-  border-color: var(--ant-color-primary-border);
-  box-shadow: 0 10px 28px color-mix(in srgb, var(--ant-color-text) 8%, transparent);
-  transform: translateY(-2px);
-}
-
-.ops-resource-card .ant-card-body {
-  padding: 18px;
-}
-
-.ops-resource-card .ant-card-actions {
-  border-top-color: var(--ant-color-border-secondary);
-  background: color-mix(in srgb, var(--ant-color-bg-container) 95%, var(--ant-color-fill-quaternary));
-}
-
-.ops-resource-card-header {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.ops-resource-title {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-
-.ops-resource-title > span:last-child {
-  min-width: 0;
-}
-
-.ops-resource-icon {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid var(--ant-color-primary-border);
-  border-radius: 8px;
-  color: var(--ant-color-primary);
-  background: var(--ant-color-primary-bg);
-  font-size: 18px;
-  transition: transform 0.2s ease;
-}
-
-.ops-resource-card:hover .ops-resource-icon {
-  transform: scale(1.08);
-}
-
-.ops-resource-name,
-.ops-resource-meta {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ops-resource-name {
-  color: var(--ant-color-text);
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 22px;
-}
-
-.ops-resource-meta {
-  margin-top: 2px;
-  color: var(--ant-color-text-tertiary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.ops-empty-surface {
-  display: flex;
-  min-height: 280px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  border: 1.5px dashed var(--ant-color-border);
-  border-radius: 10px;
-  background: var(--ant-color-bg-container);
-  padding: 32px 16px;
-}
-
-/* 加载失败 / 空态的中部占位块（表格、列表页通用） */
-.ops-state-block {
-  padding: 32px 0;
-  text-align: center;
-}
-
-.ops-empty-action,
-.ops-state-action {
-  margin-top: 16px;
-}
-
-.ops-empty-action {
-  text-align: center;
-}
-
-.ops-settings-panel {
-  max-width: 960px;
-}
-
-.ops-feedback,
-.task-feedback {
-  margin-bottom: 12px;
-}
-
-.settings-tip-icon {
-  color: var(--ant-color-text-tertiary);
-}
-
-.settings-unit-control,
-.settings-number-control {
-  width: 100%;
-}
-
-.settings-unit-control .ant-input-number {
-  flex: 1;
-}
-
-.settings-unit {
-  width: 45px;
-  text-align: center;
-  pointer-events: none;
-}
-
-.settings-unit.is-wide {
-  width: 55px;
-}
-
-.settings-form-actions {
-  margin-bottom: 0;
-}
-
-@media (max-width: 900px) {
-  .app-header {
-    padding-inline: 12px;
-  }
-
-  .app-top-nav .ant-menu-item {
-    padding-inline: 13px;
-  }
-
-  .app-nav-label {
-    display: none;
-  }
-}
-
-@media (max-width: 640px) {
-  .app-header {
-    gap: 4px;
-    padding-inline: 8px;
-  }
-
-  .app-brand {
-    padding-inline: 4px 6px;
-  }
-
-  .app-brand .ant-typography,
-  .app-user-menu-label,
-  .app-user-menu-arrow {
-    display: none;
-  }
-
-  .app-actions {
-    gap: 0 !important;
-  }
-
-  .app-user-menu {
-    width: 34px;
-    min-width: 34px;
-    padding-inline: 0;
-    justify-content: center;
-  }
-
-  .app-top-nav .ant-menu-item {
-    padding-inline: 10px;
-  }
-
-  .app-content {
-    margin: 12px;
-  }
-
-  .ops-page-surface {
-    min-height: calc(100vh - 82px);
-    gap: 12px;
-  }
-
-  .ops-page-header,
-  .page-header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .ops-page-header {
-    padding-bottom: 12px;
-  }
-
-  .ops-page-title {
-    font-size: 20px;
-  }
-
-  .ops-page-actions,
-  .page-header .ant-space {
-    width: 100%;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .ops-resource-card-header {
-    flex-wrap: wrap;
-  }
-
-  .ops-settings-panel {
-    max-width: none;
-  }
-}
-
-/* 统一滚动条：细、圆角、跟随主题（WebKit / Chromium / Firefox） */
+/* 统一滚动条：细、圆角（WebKit / Chromium / Firefox） */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--ant-color-fill-secondary) transparent;
+  scrollbar-color: #f1f5f9 transparent;
 }
 
 ::-webkit-scrollbar {
@@ -502,11 +59,11 @@ select {
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 8px;
-  background: var(--ant-color-fill-secondary);
+  background: #f1f5f9;
   background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--ant-color-fill);
+  background: #e2e8f0;
   background-clip: padding-box;
 }

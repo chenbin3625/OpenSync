@@ -1,10 +1,20 @@
-import type { MessageInstance } from 'antd/es/message/interface';
+import { toast } from '../components/ui/toaster';
 
-// Holds the context-aware message instance from antd App component.
-// Initialized by MessageInitializer mounted inside <AntApp>.
-let messageInstance: MessageInstance | null = null;
+export interface SimpleMessageInstance {
+  success: (content: React.ReactNode) => void;
+  error: (content: React.ReactNode) => void;
+  info: (content: React.ReactNode) => void;
+  warning: (content: React.ReactNode) => void;
+}
 
-export const setMessageInstance = (instance: MessageInstance) => {
+let messageInstance: SimpleMessageInstance = {
+  success: (msg) => toast.success(msg),
+  error: (msg) => toast.error(msg),
+  info: (msg) => toast.info(msg),
+  warning: (msg) => toast.warning(msg),
+};
+
+export const setMessageInstance = (instance: SimpleMessageInstance) => {
   messageInstance = instance;
 };
 

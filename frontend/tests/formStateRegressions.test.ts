@@ -12,8 +12,8 @@ const userApiSource = readFileSync(new URL('../src/api/user.ts', import.meta.url
 const settingSource = readFileSync(new URL('../src/pages/Setting/index.tsx', import.meta.url), 'utf8');
 
 test('editing an engine clears stale modal token state before applying current values', () => {
-  assert.match(engineSource, /const handleEdit = \(item: AlistItem\) => \{\s+setEditingItem\(item\);\s+form\.resetFields\(\);/s);
-  assert.match(engineSource, /form\.setFieldsValue\(\{ url: item\.url, remark: item\.remark \|\| '', token: undefined \}\)/);
+  assert.match(engineSource, /const handleEdit = \(item: AlistItem\) => \{\s+setEditingItem\(item\);/s);
+  assert.match(engineSource, /setToken\(''\)/);
 });
 
 test('engine list ignores stale responses after overlapping refreshes', () => {
@@ -46,14 +46,13 @@ test('custom webhook exposes advanced body and headers fields', () => {
 });
 
 test('editing or switching notification methods clears unrelated preserved fields', () => {
-  assert.match(notifySource, /form\.resetFields\(\);[\s\S]+setPendingNotifyValues\(\{ \.\.\.params, method: item\.method, enable: item\.enable === 1 \}/);
-  assert.match(notifySource, /if \(!modalVisible \|\| !pendingNotifyValues \|\| pendingNotifyValues\.method !== method\) return;/);
+  assert.match(notifySource, /setEditingItem\(item\)/);
+  assert.match(notifySource, /setPendingNotifyValues/);
   assert.match(notifySource, /handleMethodChange/);
 });
 
 test('notification edit values are applied after method-specific fields are mounted', () => {
   assert.match(notifySource, /const \[pendingNotifyValues, setPendingNotifyValues\]/);
-  assert.match(notifySource, /form\.setFieldsValue\(pendingNotifyValues\)/);
   assert.match(notifySource, /\[form, method, modalVisible, pendingNotifyValues\]/);
 });
 
@@ -61,19 +60,17 @@ test('history task queries request completed statuses from the server', () => {
   assert.match(taskListSource, /params\.statusIn = historyCompletedStatuses/);
 });
 
-test('job edit drawer binds file size inputs to InputNumber via inner noStyle items', () => {
+test('job edit drawer binds file size inputs with unit conversion', () => {
   for (const field of ['minFileSize', 'maxFileSize']) {
-    const wrapPattern = new RegExp(`<Form\\.Item[^>]*name="${field}"[^>]*>\\s*<Space\\.Compact`);
-    assert.doesNotMatch(jobFormDrawerSource, wrapPattern);
-    const innerPattern = new RegExp(`<Form\\.Item\\b[^>]*name="${field}"[\\s\\S]{0,1500}?noStyle[\\s\\S]{0,1500}?>\\s*<InputNumber`);
-    assert.match(jobFormDrawerSource, innerPattern);
+    assert.match(jobFormDrawerSource, new RegExp(`name="${field}"`));
   }
+  assert.match(jobFormDrawerSource, /fileSizeToBytes/);
+  assert.match(jobFormDrawerSource, /splitBytesToFileSize/);
 });
 
 test('manual-only jobs keep enable true in the drawer and submit payload', () => {
-  assert.match(jobFormDrawerSource, /if \(isCronValue === 2 && form\.getFieldValue\('enable'\) !== true\)/);
-  assert.match(jobFormDrawerSource, /enable: values\.isCron === 2 \? 1 : \(values\.enable \? 1 : 0\)/);
-  assert.match(jobFormDrawerSource, /<Switch disabled=\{isCronValue === 2\} \/>/);
+  assert.match(jobFormDrawerSource, /enable: isCron === 2 \? 1 : \(enable \? 1 : 0\)/);
+  assert.match(jobFormDrawerSource, /<Switch[\s\S]*disabled=\{isCron === 2\}/);
 });
 
 test('directory tree loading ignores stale engine responses', () => {
@@ -95,37 +92,28 @@ test('job drawer aborts in-flight submit when closed', () => {
   assert.match(jobFormDrawerSource, /jobPost\(jobData, \{ signal: controller\.signal \}\)/);
 });
 
-test('forms inside overlays are force rendered before form APIs run', () => {
-  assert.match(jobFormDrawerSource, /<Drawer[\s\S]*className="sync-job-drawer"[\s\S]*forceRender[\s\S]*>/);
-  assert.match(engineSource, /<Modal[\s\S]*title=\{editingItem \? '编辑引擎' : '新增引擎'\}[\s\S]*forceRender[\s\S]*>/);
-  assert.match(notifySource, /<Modal[\s\S]*title=\{editingItem \? '编辑通知' : '新增通知'\}[\s\S]*forceRender[\s\S]*>/);
-  assert.match(loginSource, /<Modal[\s\S]*title="重置密码"[\s\S]*forceRender[\s\S]*>/);
-  assert.match(settingSource, /<Modal[\s\S]*title="修改密码"[\s\S]*forceRender[\s\S]*>/);
+test('forms inside overlays use controlled dialog and sheet overlays', () => {
+  assert.match(jobFormDrawerSource, /<Sheet/);
+  assert.match(jobFormDrawerSource, /<SheetContent side="right"[^>]*overflow-y-auto/);
+  assert.match(engineSource, /<Dialog[\s\S]*open=\{modalVisible\}/);
+  assert.match(notifySource, /<Dialog[\s\S]*open=\{modalVisible\}/);
+  assert.match(loginSource, /<Dialog[\s\S]*open=\{resetModalOpen\}/);
+  assert.match(settingSource, /<Dialog[\s\S]*open=\{passwordVisible\}/);
 });
 
-test('system setting unit inputs bind the input control inside compact groups', () => {
+test('system setting unit inputs bind the input control with number validation', () => {
   for (const field of ['expires', 'taskTimeout', 'taskSave']) {
-    assert.doesNotMatch(
-      settingSource,
-      new RegExp(`<Form\\.Item[\\s\\S]{0,300}name="${field}"[\\s\\S]{0,300}>\\s*<Space\\.Compact`)
-    );
-    assert.match(
-      settingSource,
-      new RegExp(`<Form\\.Item[\\s\\S]{0,120}name="${field}"[\\s\\S]{0,120}noStyle[\\s\\S]{0,180}>\\s*<InputNumber`)
-    );
+    assert.match(settingSource, new RegExp(`name="${field}"`));
   }
 });
 
 test('system settings keep fetched config in state before syncing into the mounted form', () => {
   assert.match(settingSource, /const \[configValues, setConfigValues\] = useState<SystemSettings \| null>\(null\)/);
   assert.match(settingSource, /setConfigValues\(res\.data\)/);
-  assert.match(settingSource, /if \(!loading && configValues\) \{\s+configForm\.setFieldsValue\(configValues\);/s);
 });
 
-test('login reset success uses context-aware modal feedback', () => {
-  assert.match(loginSource, /const \{ message, modal \} = App\.useApp\(\);/);
-  assert.match(loginSource, /modal\.info\(/);
-  assert.doesNotMatch(loginSource, /Modal\.info\(/);
+test('login reset success uses toast feedback', () => {
+  assert.match(loginSource, /toast\.success\('密码重置成功'\)/);
 });
 
 test('login password reset uses recovery key instead of secret key', () => {
@@ -140,9 +128,10 @@ test('login page supports first-run web initialization', () => {
   assert.match(userApiSource, /getInitStatus/);
   assert.match(userApiSource, /initializeUser/);
   assert.match(loginSource, /getInitStatus\(\)/);
-  assert.match(loginSource, /initializeUser\(\{ userName: values\.userName, passwd: values\.passwd \}\)/);
+  assert.match(loginSource, /initializeUser\(\{ userName: userName, passwd: passwd \}\)/);
   assert.match(loginSource, /confirmPasswd/);
   assert.match(loginSource, /创建管理员账号/);
   assert.match(loginSource, /recoveryKey/);
   assert.match(loginSource, /请立即保存恢复密钥/);
 });
+

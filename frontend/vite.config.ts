@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -9,6 +10,7 @@ const webGitkeepPath = `${backendWebDir}/.gitkeep`
 export default defineConfig({
   plugins: [
     react(),
+    tailwindcss(),
     {
       name: 'preserve-go-embed-placeholder',
       closeBundle() {
@@ -45,16 +47,11 @@ export default defineConfig({
           ) {
             return 'react-vendor'
           }
-          if (id.includes('/@ant-design/icons')) {
+          if (id.includes('/@radix-ui/')) {
+            return 'radix-vendor'
+          }
+          if (id.includes('/lucide-react/')) {
             return 'icons-vendor'
-          }
-          const antdMatch = id.match(/node_modules\/antd\/(?:es|lib)\/([^/]+)/)
-          if (antdMatch) {
-            return `antd-${antdMatch[1]}`
-          }
-          const rcMatch = id.match(/node_modules\/(rc-[^/]+)/)
-          if (rcMatch) {
-            return rcMatch[1]
           }
           if (id.includes('/dayjs/')) {
             return 'dayjs-vendor'

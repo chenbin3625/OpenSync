@@ -1,8 +1,7 @@
 import type { ReactNode } from 'react';
-import { Typography, Tooltip } from 'antd';
+import { Tooltip } from '../../../components/ui/tooltip';
 import { displayText } from '../homeUtils';
-
-const { Text } = Typography;
+import { cn } from '../../../lib/utils';
 
 export default function EllipsisText({
   value,
@@ -18,17 +17,21 @@ export default function EllipsisText({
   maxWidth?: number;
 }) {
   const text = displayText(value);
-  if (text === '--') return <Text type="secondary" className={className}>--</Text>;
+  if (text === '--') return <span className={cn('text-slate-400 text-xs', className)}>--</span>;
+
   return (
     <Tooltip title={tooltip || text}>
-      <Text
-        type={type}
-        ellipsis
-        className={className}
-        style={maxWidth ? { display: 'inline-block', maxWidth, verticalAlign: 'bottom' } : undefined}
+      <span
+        className={cn(
+          'truncate inline-block align-bottom cursor-default',
+          type === 'secondary' && 'text-slate-500',
+          type === 'danger' && 'text-rose-600',
+          className
+        )}
+        style={maxWidth ? { maxWidth } : undefined}
       >
         {text}
-      </Text>
+      </span>
     </Tooltip>
   );
 }

@@ -13,14 +13,14 @@ test('task detail table hides backend-only identifier columns', () => {
 test('task detail shows error reasons beside status instead of a separate error column', () => {
   assert.doesNotMatch(taskDetailSource, /title:\s*'错误信息'/);
   assert.match(taskDetailSource, /InfoCircleOutlined/);
-  assert.match(taskDetailSource, /className="task-status-with-error"/);
+  assert.match(taskDetailSource, /className="inline-flex items-center gap-1 max-w-full"/);
   assert.match(taskDetailSource, /Tooltip\s+title=\{record\.errMsg\}/);
 });
 
 test('task history list shows task-level error reasons beside status like file-level failures', () => {
   const taskListSource = readFileSync(new URL('../src/pages/Home/TaskList.tsx', import.meta.url), 'utf8');
   assert.match(taskListSource, /InfoCircleOutlined/);
-  assert.match(taskListSource, /className="task-status-with-error"/);
+  assert.match(taskListSource, /className="inline-flex items-center gap-1 max-w-full"/);
   assert.match(taskListSource, /Tooltip\s+title=\{record\.errMsg\}/);
   assert.match(taskListSource, /taskStatusColors\[s\] !== 'error'/);
 });
