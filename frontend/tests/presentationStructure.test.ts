@@ -132,9 +132,11 @@ test('badges share one recipe and never wrap onto a second line', () => {
   assert.match(realtimeRowsSource, /task\.type === 1 \? 'error' : task\.type === 2 \? 'warning' : 'default'/);
   assert.match(taskDetailSource, /itemType === 1 \? 'error' : itemType === 2 \? 'warning' : 'default'/);
 
-  // 侧边栏保持极简菜单结构，不再附加徽标与次要标签
-  assert.doesNotMatch(homeSidebarSource, /<Badge/);
-  // 任务启用状态徽标集中在概览 Hero 区展示
+  // 调用点不再各自覆盖标签尺寸
+  assert.match(
+    homeSidebarSource,
+    /<Badge variant=\{isEnabled \? 'success' : 'secondary'\}>\n\s+\{isEnabled \? '已启用' : '已暂停'\}\n\s+<\/Badge>/
+  );
   assert.match(
     homeOverviewSource,
     /<Badge variant=\{isEnabled \? 'success' : 'secondary'\}>\n\s+\{isEnabled \? '已启用' : '已暂停'\}\n\s+<\/Badge>/
