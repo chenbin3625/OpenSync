@@ -158,6 +158,7 @@ jobs:
             go -C backend build -trimpath -ldflags="-s -w" -o "../$package_dir/$binary" ./cmd/server
 
           cp README.md "$package_dir/README.md"
+          cp README.en.md "$package_dir/README.en.md"
 
           if [ "${{ matrix.archive }}" = "zip" ]; then
             archive="dist/$package_name.zip"

@@ -68,8 +68,8 @@ docker build -t opensync .
 
 ## Documentation and Promotion Assets
 
-- The main README is English-first and links to `README.zh-CN.md`.
-- `README.zh-CN.md` is the primary Chinese entry for fnOS, NAS, and Docker communities.
+- The main `README.md` is Chinese-first and is the primary entry point; it points fnOS users to [OpenSync-fnOS](https://github.com/chenbin3625/OpenSync-fnOS) and its native fpk build.
+- `README.en.md` is the English documentation.
 - `.dockerhub/README.md` is the Docker Hub long description source.
 - `docs/demo/opensync-demo.gif` is the 60-second promotional demo asset.
 
@@ -145,7 +145,7 @@ docker build -t opensync .
 
 ## 文档和推广素材
 
-- 主 README 以英文优先，并链接到 `README.zh-CN.md`。
-- `README.zh-CN.md` 是面向飞牛、NAS、Docker 中文社区的主要入口。
+- 主 `README.md` 以中文优先，是主要入口，并在顶部引导飞牛用户使用 [OpenSync-fnOS](https://github.com/chenbin3625/OpenSync-fnOS) 原生 fpk 版。
+- `README.en.md` 是英文文档。
 - `.dockerhub/README.md` 是 Docker Hub 长描述来源。
 - `docs/demo/opensync-demo.gif` 是 60 秒推广演示素材。

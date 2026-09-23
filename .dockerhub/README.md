@@ -4,7 +4,7 @@
 
 OpenSync is an AList / OpenList automation layer for fnOS (FeiNiu NAS), general NAS, and Docker environments. It connects local folders, cloud drives, object storage, WebDAV, and other storage backends through AList / OpenList, then uses visual jobs to handle backup, mirror, archive, and migration workflows.
 
-If you are on fnOS and want a Cloud Sync-style experience for a photo library, media library, download folder, or document folder, OpenSync is built for that exact gap.
+If you are on fnOS, use the native fpk build instead: [OpenSync-fnOS](https://github.com/chenbin3625/OpenSync-fnOS) installs straight from the fnOS app manager with no Docker required. For a general NAS, server, or Docker setup, the image below is built for that exact gap.
 
 If OpenSync fills the NAS sync gap for you, please consider starring the [GitHub repository](https://github.com/chenbin3625/OpenSync) so more self-hosted users can find it.
 
@@ -122,7 +122,9 @@ Mount `/app/data`. It holds the database, secret key, config, and logs. Losing i
 
 - GitHub: https://github.com/chenbin3625/OpenSync
 - Releases: https://github.com/chenbin3625/OpenSync/releases
-- Chinese README: https://github.com/chenbin3625/OpenSync/blob/main/README.zh-CN.md
+- Chinese README: https://github.com/chenbin3625/OpenSync/blob/main/README.md
+- English README: https://github.com/chenbin3625/OpenSync/blob/main/README.en.md
+- fnOS native fpk build: https://github.com/chenbin3625/OpenSync-fnOS
 
 ---
 
@@ -131,6 +133,8 @@ Mount `/app/data`. It holds the database, secret key, config, and logs. Losing i
 OpenSync 是面向飞牛 fnOS / 飞牛 NAS、普通 NAS 和 Docker 环境的 AList / OpenList 自动同步工具。它通过 AList / OpenList 连接本地目录、网盘、对象存储、WebDAV 等存储端，并用可视化任务完成备份、镜像、归档和迁移。
 
 如果你在飞牛 NAS 上想找一个类似群晖 Cloud Sync 的同步工具，用来把照片库、影音库、下载目录或文档目录同步到网盘、对象存储或另一台存储设备，OpenSync 就是面向这个场景做的。
+
+> 飞牛 fnOS 用户请使用 [OpenSync-fnOS](https://github.com/chenbin3625/OpenSync-fnOS) 飞牛原生 fpk 版，安装即用，无需 Docker。
 
 ![任务管理](https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docs/images/tasks-overview.png)
 
@@ -173,4 +177,8 @@ docker compose exec --user "${PUID:-1000}:${PGID:-1000}" opensync ./opensync res
 
 更多说明见 GitHub README：
 
-https://github.com/chenbin3625/OpenSync/blob/main/README.zh-CN.md
+https://github.com/chenbin3625/OpenSync/blob/main/README.md
+
+飞牛 fnOS 用户建议改用原生 fpk 版，安装即用，无需 Docker：
+
+https://github.com/chenbin3625/OpenSync-fnOS
