@@ -37,6 +37,7 @@ const (
 	CannotDisableManualJob  = "不可禁用仅手动任务"
 	TaskNotRunningStop      = "任务未在运行中，无法停止"
 	NoFailedTaskItems       = "没有可重试的未完成项"
+	ScanRetryRequiresRun    = "目录扫描未完成，无法逐项重试；请修正原始错误后重新执行完整任务"
 	PasswdWrong             = "密码错误"
 	KeyWrong                = "恢复密钥错误"
 	PasswdWrongMaxTime      = "5分钟内密码错误超过3次，请稍后再试"
