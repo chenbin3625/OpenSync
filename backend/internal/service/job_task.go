@@ -57,6 +57,7 @@ type JobTask struct {
 	PersistErr                error
 	persistBufMu              sync.Mutex
 	persistBuffer             []JobTaskItem
+	persistWriteMu            sync.Mutex
 	persistFlushMu            sync.Mutex
 	persistFlushScheduled     bool
 	copyMonitor               *copyTaskMonitor
