@@ -172,6 +172,15 @@ func (jt *JobTask) retryTaskItem(item map[string]interface{}) {
 		jt.delFile(dstPath, fileName, fileSize)
 	case taskItemTypeCopy, taskItemTypeMove:
 		if isPath {
+			// Scan failures only retain the failing side, not a resumable source/destination pair.
+			if srcPath == "" || dstPath == "" {
+				errMsg := msg.ScanRetryRequiresRun
+				if originalError := util.StringValue(item["errMsg"]); originalError != "" {
+					errMsg += ": " + originalError
+				}
+				jt.CopyHook(srcPath, dstPath, fileName, fileSize, "", taskStatusFailed, &errMsg, taskItemPath, copyType, time.Now().Unix())
+				return
+			}
 			jt.retryMkdir(srcPath, dstPath, copyType)
 			return
 		}
