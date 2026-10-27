@@ -35,28 +35,35 @@ export function usePathTree(alistId: number | undefined, treeLoadRequestRef: Ref
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [loadedKeys, setLoadedKeys] = useState<Key[]>([]);
   const [loadError, setLoadError] = useState(false);
+  const generationRef = useRef(0);
   // Concurrently expanding the same node (or the root) shares one in-flight
   // request instead of issuing duplicates.
   const inFlightRef = useRef(new Map<string, Promise<TreeNode[]>>());
 
   const requestChildren = useCallback((alist: number, path: string): Promise<TreeNode[]> => {
-    const cached = inFlightRef.current.get(path);
+    const requestID = treeLoadRequestRef.current;
+    const generation = generationRef.current;
+    const key = JSON.stringify([alist, requestID, generation, path]);
+    const cached = inFlightRef.current.get(key);
     if (cached) return cached;
     const promise = fetchDirChildren(alist, path)
       .catch((err) => {
         // Surface the failure to the UI (the tree shows a load-error state
         // instead of silently rendering an empty directory).
-        setLoadError(true);
+        if (requestID === treeLoadRequestRef.current && generation === generationRef.current) {
+          setLoadError(true);
+        }
         throw err;
       })
       .finally(() => {
-        inFlightRef.current.delete(path);
+        inFlightRef.current.delete(key);
       });
-    inFlightRef.current.set(path, promise);
+    inFlightRef.current.set(key, promise);
     return promise;
-  }, []);
+  }, [treeLoadRequestRef]);
 
   const initializeTree = useCallback((paths: unknown) => {
+    generationRef.current += 1;
     setLoadedKeys([]);
     return buildPathTreeData(parseJobPathList(paths));
   }, []);
@@ -67,12 +74,14 @@ export function usePathTree(alistId: number | undefined, treeLoadRequestRef: Ref
     setLoadError(false);
     if (!alistId) return pathTree;
     const requestID = treeLoadRequestRef.current;
+    const generation = generationRef.current;
     try {
       const nodes = await requestChildren(alistId, '/');
-      if (requestID !== treeLoadRequestRef.current) return pathTree;
+      if (requestID !== treeLoadRequestRef.current || generation !== generationRef.current) return pathTree;
       const root = [{ title: '/', value: '/', key: '/', children: nodes }];
       const merged = mergeTreeData(root, pathTree);
       setTreeData(merged);
+      setLoadedKeys(['/']);
       return merged;
     } catch {
       return pathTree;
@@ -82,18 +91,21 @@ export function usePathTree(alistId: number | undefined, treeLoadRequestRef: Ref
   const onLoadData = useCallback(async (node: TreeNode) => {
     if (!alistId || loadedKeys.includes(node.value)) return;
     const requestID = treeLoadRequestRef.current;
+    const generation = generationRef.current;
     setLoadError(false);
     try {
       const children = await requestChildren(alistId, node.value);
       if (requestID !== treeLoadRequestRef.current) return;
+      if (generation !== generationRef.current) return;
       setTreeData((prev) => updateTreeChildren(prev, node.value, children));
-      setLoadedKeys((prev) => [...prev, node.value]);
+      setLoadedKeys((prev) => prev.includes(node.value) ? prev : [...prev, node.value]);
     } catch {
       /* loadError state is set by requestChildren */
     }
   }, [alistId, loadedKeys, requestChildren, treeLoadRequestRef]);
 
   const clearTree = useCallback(() => {
+    generationRef.current += 1;
     setTreeData([]);
     setLoadedKeys([]);
     setLoadError(false);

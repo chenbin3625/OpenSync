@@ -123,6 +123,7 @@ export default function JobFormDrawer({
 
   const {
     treeData: srcTreeData,
+    loadedKeys: srcLoadedKeys,
     loadRoot: loadSrcRoot,
     clearTree: clearSrcTree,
     onLoadData: onLoadSrcData,
@@ -131,6 +132,7 @@ export default function JobFormDrawer({
 
   const {
     treeData: dstTreeData,
+    loadedKeys: dstLoadedKeys,
     loadRoot: loadDstRoot,
     clearTree: clearDstTree,
     onLoadData: onLoadDstData,
@@ -364,6 +366,9 @@ export default function JobFormDrawer({
                   onChange={setSrcPath}
                   treeData={srcTreeData}
                   loadData={onLoadSrcData}
+                  loadedKeys={srcLoadedKeys}
+                  onRefresh={() => loadSrcRoot(srcPath)}
+                  loadError={srcTreeError}
                   loading={treeLoading}
                   notFoundContent={treeNotFoundContent}
                 />
@@ -376,6 +381,9 @@ export default function JobFormDrawer({
                   onChange={setDstPath}
                   treeData={dstTreeData}
                   loadData={onLoadDstData}
+                  loadedKeys={dstLoadedKeys}
+                  onRefresh={() => loadDstRoot(dstPath)}
+                  loadError={dstTreeError}
                   loading={treeLoading}
                   notFoundContent={treeNotFoundContent}
                 />
