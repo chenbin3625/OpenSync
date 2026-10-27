@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronRight, ChevronDown, Folder, FolderOpen, X, Check, Search, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, FolderOpen, X, Check, Search, Loader2, RefreshCw } from 'lucide-react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { cn } from '../../lib/utils';
 import { badge } from '../../lib/styles';
+import { Tooltip } from './tooltip';
 import type { TreeNode } from '../../types';
 
 export interface PathTreeSelectProps {
@@ -13,6 +14,9 @@ export interface PathTreeSelectProps {
   onChange?: (value: string | string[]) => void;
   treeData: TreeNode[];
   loadData?: (node: TreeNode) => Promise<void>;
+  loadedKeys?: React.Key[];
+  onRefresh?: () => Promise<unknown>;
+  loadError?: boolean;
   multiple?: boolean;
   disabled?: boolean;
   loading?: boolean;
@@ -25,6 +29,7 @@ interface TreeNodeItemProps {
   selectedValues: string[];
   onToggleSelect: (path: string) => void;
   loadData?: (node: TreeNode) => Promise<void>;
+  loadedKeys: React.Key[];
   search: string;
 }
 
@@ -33,6 +38,7 @@ function TreeNodeItem({
   selectedValues,
   onToggleSelect,
   loadData,
+  loadedKeys,
   search,
 }: TreeNodeItemProps) {
   const [expanded, setExpanded] = useState(false);
@@ -42,7 +48,7 @@ function TreeNodeItem({
 
   const handleExpand = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!expanded && !node.children && loadData) {
+    if (!expanded && !loadedKeys.includes(node.value) && loadData) {
       setLoadingChildren(true);
       try {
         await loadData(node);
@@ -56,7 +62,7 @@ function TreeNodeItem({
   const matchesSearch = !search || node.title.toLowerCase().includes(search.toLowerCase());
 
   return (
-    <div className="text-sm select-none">
+    <div className="min-w-max text-sm select-none">
       <div
         className={cn(
           'flex items-center gap-1.5 py-1 px-2 rounded-md hover:bg-line-soft cursor-pointer transition-colors',
@@ -66,7 +72,10 @@ function TreeNodeItem({
       >
         <button
           type="button"
-          className="p-0.5 rounded hover:bg-line text-slate-400 hover:text-slate-700 transition-colors"
+          aria-label={`${expanded ? '折叠' : '展开'} ${node.title || node.value}`}
+          aria-expanded={expanded}
+          disabled={loadingChildren}
+          className="shrink-0 p-0.5 rounded hover:bg-line text-slate-400 hover:text-slate-700 transition-colors"
           onClick={handleExpand}
         >
           {loadingChildren ? (
@@ -88,7 +97,7 @@ function TreeNodeItem({
           <Folder className="h-4 w-4 text-slate-400 shrink-0" />
         )}
 
-        <span className={cn('truncate', matchesSearch ? 'text-slate-800' : 'text-slate-400')}>
+        <span title={node.value} className={cn('whitespace-nowrap', matchesSearch ? 'text-slate-800' : 'text-slate-400')}>
           {node.title || node.value}
         </span>
       </div>
@@ -102,6 +111,7 @@ function TreeNodeItem({
               selectedValues={selectedValues}
               onToggleSelect={onToggleSelect}
               loadData={loadData}
+              loadedKeys={loadedKeys}
               search={search}
             />
           ))}
@@ -118,6 +128,9 @@ export function PathTreeSelect({
   onChange,
   treeData,
   loadData,
+  loadedKeys = [],
+  onRefresh,
+  loadError = false,
   multiple = true,
   disabled = false,
   loading = false,
@@ -126,6 +139,19 @@ export function PathTreeSelect({
 }: PathTreeSelectProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [treeVersion, setTreeVersion] = useState(0);
+
+  const handleRefresh = async () => {
+    if (!onRefresh || refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+      setTreeVersion((prev) => prev + 1);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const selectedValues = useMemo<string[]>(() => {
     if (!value) return [];
@@ -205,20 +231,34 @@ export function PathTreeSelect({
         <PopoverPrimitive.Content
           sideOffset={4}
           align="start"
-          className="z-50 w-[var(--radix-popover-trigger-width)] min-w-[320px] max-w-[500px] rounded-lg border border-line bg-white p-2.5 shadow-xl animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+          className="z-50 w-[var(--radix-popover-trigger-width)] max-w-[min(500px,calc(100vw-1rem))] rounded-lg border border-line bg-white p-2.5 shadow-xl animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
         >
-          <div className="relative mb-2 flex items-center">
+          <div className="relative mb-2 flex items-center gap-2">
             <Search className="absolute left-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
             <input
               type="text"
               placeholder="快速搜索路径..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-8 w-full rounded-md border border-line bg-tint pl-8 pr-3 text-xs placeholder:text-slate-400 focus:outline-none focus:border-teal-600 focus:bg-white transition-colors"
+              className="h-8 min-w-0 flex-1 rounded-md border border-line bg-tint pl-8 pr-3 text-xs placeholder:text-slate-400 focus:outline-none focus:border-teal-600 focus:bg-white transition-colors"
             />
+            {onRefresh && (
+              <Tooltip title="刷新目录">
+                <button
+                  type="button"
+                  aria-label="刷新目录"
+                  disabled={loading || refreshing}
+                  onClick={() => void handleRefresh()}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-line-soft disabled:opacity-50"
+                >
+                  <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+                </button>
+              </Tooltip>
+            )}
           </div>
 
-          <div className="max-h-64 overflow-y-auto pr-1 space-y-0.5">
+          {loadError && <div role="alert" className="mb-2 text-xs text-rose-700">目录加载失败，请重试或刷新</div>}
+          <div className="max-h-64 overflow-auto pr-1 space-y-0.5">
             {treeData.length === 0 ? (
               <div className="py-6 text-center text-xs text-slate-400">
                 {notFoundContent}
@@ -226,11 +266,12 @@ export function PathTreeSelect({
             ) : (
               treeData.map((node) => (
                 <TreeNodeItem
-                  key={node.value}
+                  key={`${treeVersion}:${node.value}`}
                   node={node}
                   selectedValues={selectedValues}
                   onToggleSelect={handleToggleSelect}
                   loadData={loadData}
+                  loadedKeys={loadedKeys}
                   search={search}
                 />
               ))

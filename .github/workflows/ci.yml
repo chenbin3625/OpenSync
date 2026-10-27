@@ -64,6 +64,14 @@ jobs:
         working-directory: frontend
         run: npm run test
 
+      - name: Install browser for directory regression tests
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Test directory selection in browser
+        working-directory: frontend
+        run: npm run test:browser
+
       - name: Build
         working-directory: frontend
         run: npm run build
