@@ -67,6 +67,9 @@ func (jt *JobTask) schedulePersistFlush() {
 }
 
 func (jt *JobTask) flushPersistBuffer() error {
+	// Finalization must wait for batches already removed from the buffer.
+	jt.persistWriteMu.Lock()
+	defer jt.persistWriteMu.Unlock()
 	jt.persistBufMu.Lock()
 	if len(jt.persistBuffer) == 0 {
 		jt.persistBufMu.Unlock()

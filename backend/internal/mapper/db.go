@@ -15,14 +15,17 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 var (
-	db   *sql.DB
-	once = &sync.Once{}
-	dbMu sync.RWMutex
+	db           *sql.DB
+	once         = &sync.Once{}
+	dbMu         sync.RWMutex
+	batchWriteMu sync.Mutex
 )
 
 const maxPageSize = 500
@@ -221,30 +224,40 @@ func ExecuteMany(query string, argsList [][]interface{}) error {
 	if len(argsList) == 0 {
 		return nil
 	}
-	tx, err := GetDB().Begin()
-	if err != nil {
-		return err
-	}
-	stmt, err := tx.Prepare(query)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	defer stmt.Close()
-
-	for _, args := range argsList {
-		_, err := stmt.Exec(args...)
-		if err != nil {
-			tx.Rollback()
+	// SQLite has one writer; serialize batches from different sync tasks.
+	batchWriteMu.Lock()
+	defer batchWriteMu.Unlock()
+	for attempt := 0; ; attempt++ {
+		err := func() error {
+			tx, err := GetDB().Begin()
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback()
+			stmt, err := tx.Prepare(query)
+			if err != nil {
+				return err
+			}
+			defer stmt.Close()
+			for _, args := range argsList {
+				if _, err := stmt.Exec(args...); err != nil {
+					return err
+				}
+			}
+			return tx.Commit()
+		}()
+		if err == nil {
+			return nil
+		}
+		var sqliteErr *sqlite.Error
+		if attempt >= 3 || !errors.As(err, &sqliteErr) ||
+			(sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY && sqliteErr.Code()&0xff != sqlite3.SQLITE_LOCKED) {
 			log.Printf("Database batch execute failed (size %d): %v", len(argsList), err)
 			return err
 		}
+		// Roll back before retrying the entire batch, including partial inserts.
+		time.Sleep(time.Duration(1<<attempt) * 100 * time.Millisecond)
 	}
-	if err := tx.Commit(); err != nil {
-		log.Printf("Database batch commit failed (size %d): %v", len(argsList), err)
-		return err
-	}
-	return nil
 }
 
 // FetchAllToPage executes a paginated query with a window count when SQLite
