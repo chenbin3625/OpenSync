@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const (
@@ -294,15 +297,27 @@ func deleteJobTasksByIDs(taskIDs []int64) error {
 		return nil
 	}
 	clause, args := int64InClause(taskIDs)
-	return withTx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec("DELETE FROM job_task_item WHERE taskId IN ("+clause+")", args...); err != nil {
+	// Share the batch writer lock so retention does not compete with sync batches.
+	batchWriteMu.Lock()
+	defer batchWriteMu.Unlock()
+	for attempt := 0; ; attempt++ {
+		err := withTx(func(tx *sql.Tx) error {
+			if _, err := tx.Exec("DELETE FROM job_task_item WHERE taskId IN ("+clause+")", args...); err != nil {
+				return err
+			}
+			_, err := tx.Exec("DELETE FROM job_task WHERE id IN ("+clause+")", args...)
+			return err
+		})
+		if err == nil {
+			return nil
+		}
+		var sqliteErr *sqlite.Error
+		if attempt >= 3 || !errors.As(err, &sqliteErr) ||
+			(sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY && sqliteErr.Code()&0xff != sqlite3.SQLITE_LOCKED) {
 			return err
 		}
-		if _, err := tx.Exec("DELETE FROM job_task WHERE id IN ("+clause+")", args...); err != nil {
-			return err
-		}
-		return nil
-	})
+		time.Sleep(time.Duration(1<<attempt) * 100 * time.Millisecond)
+	}
 }
 
 func withTx(fn func(*sql.Tx) error) error {
