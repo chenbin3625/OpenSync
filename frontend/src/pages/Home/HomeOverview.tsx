@@ -114,7 +114,7 @@ export default function HomeOverview({
           {/* 操作按钮组 */}
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
             {selectedJob.isCron !== 2 && (
-              <div className="flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-xs font-medium text-slate-600 shadow-sm">
+              <div className="flex h-9 items-center gap-2 rounded-md border border-line bg-surface px-3 text-xs font-medium text-slate-600 shadow-sm">
                 <span>任务开关</span>
                 <Switch
                   checked={isEnabled}

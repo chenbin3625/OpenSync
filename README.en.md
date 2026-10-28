@@ -23,6 +23,8 @@ If OpenSync fills the NAS sync gap for you, please consider starring the [GitHub
 - You need visible progress, retryable failures, history records, and notifications instead of a black-box sync command.
 - You want one Docker-friendly tool that works on x86_64, ARM64, and ARMv7 NAS devices.
 
+Use the moon / sun button on the login page or top bar to switch between light and dark mode. The current browser remembers your choice across refreshes and logout.
+
 ## 60-second Demo
 
 The demo walks through the main workflow: add an AList / OpenList engine, create a sync job, run it manually, watch realtime progress, and receive a notification.

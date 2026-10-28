@@ -51,7 +51,7 @@ export const text = {
 /** 表面：卡片、内嵌面板、提示条 */
 export const surface = {
   /** 标准卡片 */
-  card: 'bg-white rounded-xl border border-line shadow-xs',
+  card: 'bg-surface rounded-xl border border-line shadow-xs',
   /** 卡片内边距（响应式，窄屏收紧） */
   cardPadding: 'p-4 sm:p-5',
   /** 可点击卡片的悬浮反馈 */
@@ -59,7 +59,7 @@ export const surface = {
   /** 内嵌面板（卡片内部的次级容器） */
   inset: 'bg-tint rounded-lg border border-line-soft p-3',
   /** 空状态 / 错误态占位容器 */
-  placeholder: 'bg-white rounded-xl border border-dashed border-line py-16 text-center',
+  placeholder: 'bg-surface rounded-xl border border-dashed border-line py-16 text-center',
   /** 品牌色图标底座 */
   iconTile: 'rounded-lg bg-teal-50 text-teal-700 flex items-center justify-center shrink-0',
   /** 区块分隔线 */
@@ -95,7 +95,7 @@ export const badge = {
     /** 处理中（扫描、排队等中性进行态） */
     info: 'bg-blue-100 text-blue-800 border-blue-200',
     /** 描边：白底，用于需要与中性标签区分开的次要标记 */
-    outline: 'bg-white text-slate-700 border-line',
+    outline: 'bg-surface text-slate-700 border-line',
   },
 } as const;
 
@@ -105,7 +105,7 @@ export const table = {
   root: 'w-full text-left text-xs divide-y divide-line',
   head: 'bg-tint text-slate-600 uppercase font-medium tracking-wider',
   headCell: 'px-3 py-2.5',
-  body: 'divide-y divide-line-soft bg-white',
+  body: 'divide-y divide-line-soft bg-surface',
   /** 单元格纵向内距统一为 py-2.5 */
   cell: 'px-3 py-2.5',
   row: 'transition-colors hover:bg-tint',

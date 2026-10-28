@@ -24,6 +24,7 @@ import {
 import { Button } from '../ui/button';
 import { cn } from '../../lib/utils';
 import { icon } from '../../lib/styles';
+import { ThemeToggle } from '../common/ThemeToggle';
 
 const navItems = [
   { path: '/home', label: '任务管理', icon: Home },
@@ -74,7 +75,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-dvh flex flex-col md:h-dvh md:overflow-hidden">
       {/* 顶部导航栏 */}
-      <header className="sticky top-0 z-40 h-14 border-b border-line bg-white/85 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between shadow-xs">
+      <header className="sticky top-0 z-40 h-14 border-b border-line bg-surface/85 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-6">
           {/* 品牌标识 */}
           <div
@@ -131,11 +132,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <ExternalLink className={icon.sm} aria-hidden="true" />
               </a>
             ))}
-            <span className="ml-1 inline-flex h-7 items-center rounded-full border border-line bg-white px-2 text-2xs font-medium text-slate-500">
+            <span className="ml-1 inline-flex h-7 items-center rounded-full border border-line bg-surface px-2 text-2xs font-medium text-slate-500">
               v{appVersion}
             </span>
           </div>
 
+          <ThemeToggle />
           <div>
             <Dropdown>
               <DropdownMenuTrigger asChild>
@@ -177,7 +179,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* 移动端下拉折叠菜单 */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-b border-line bg-white px-4 py-3 space-y-1 shadow-sm animate-in slide-in-from-top-2">
+        <div className="md:hidden border-b border-line bg-surface px-4 py-3 space-y-1 shadow-sm animate-in slide-in-from-top-2">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentSection === item.path;

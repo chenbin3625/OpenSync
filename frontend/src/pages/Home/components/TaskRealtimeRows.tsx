@@ -49,7 +49,7 @@ const TaskRealtimeRows = memo(function TaskRealtimeRows({
           <EmptyState icon={FileText} title={`暂无${activeTabLabel}文件明细`} size="sm" />
         </div>
       ) : (
-        <div className="border border-line rounded-lg divide-y divide-line-soft overflow-hidden bg-white">
+        <div className="border border-line rounded-lg divide-y divide-line-soft overflow-hidden bg-surface">
           <div>
             {visibleRows.map((task, index) => {
               const name = getTaskDisplayName(task);

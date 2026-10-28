@@ -79,12 +79,12 @@ export function Toaster() {
 
         const borderClass =
           item.type === 'success'
-            ? 'border-emerald-200 bg-white text-emerald-950'
+            ? 'border-emerald-200 bg-surface text-emerald-950'
             : item.type === 'error'
-            ? 'border-rose-200 bg-white text-rose-950'
+            ? 'border-rose-200 bg-surface text-rose-950'
             : item.type === 'warning'
-            ? 'border-amber-200 bg-white text-amber-950'
-            : 'border-line bg-white text-slate-900';
+            ? 'border-amber-200 bg-surface text-amber-950'
+            : 'border-line bg-surface text-slate-900';
 
         const iconColor =
           item.type === 'success'

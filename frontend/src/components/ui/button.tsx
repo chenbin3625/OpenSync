@@ -3,7 +3,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '../../lib/utils';
 
 const button = {
-  base: 'inline-flex min-w-[5rem] items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+  base: 'inline-flex min-w-[5rem] items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:pointer-events-none disabled:opacity-50',
 } as const;
 
 export const buttonVariants = cva(
@@ -11,11 +11,11 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-teal-700 text-white shadow hover:bg-teal-800 active:bg-teal-900',
-        destructive: 'bg-rose-600 text-white shadow-sm hover:bg-rose-700 active:bg-rose-800',
+        default: 'bg-action text-white shadow hover:bg-action-strong active:bg-action-pressed',
+        destructive: 'bg-destructive text-white shadow-sm hover:bg-destructive-strong active:bg-destructive-pressed',
         danger:
-          'border border-rose-200 bg-white text-rose-700 shadow-sm hover:bg-rose-50 hover:text-rose-800 active:bg-rose-100',
-        outline: 'border border-line-strong bg-white shadow-sm hover:bg-line-soft hover:text-slate-900 text-slate-700',
+          'border border-rose-200 bg-surface text-rose-700 shadow-sm hover:bg-rose-50 hover:text-rose-800 active:bg-rose-100',
+        outline: 'border border-line-strong bg-surface shadow-sm hover:bg-line-soft hover:text-slate-900 text-slate-700',
         secondary: 'bg-line-soft text-slate-900 shadow-sm hover:bg-line',
         ghost: 'hover:bg-line-soft hover:text-slate-900 text-slate-700',
         link: 'text-teal-700 underline-offset-4 hover:underline',
