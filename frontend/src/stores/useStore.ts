@@ -2,11 +2,21 @@ import { create } from 'zustand';
 import type { UserInfo } from '../types';
 
 interface AppState {
+  theme: 'light' | 'dark';
+  setTheme: (theme: 'light' | 'dark') => void;
   userInfo: UserInfo | null;
   authChecked: boolean;
   setUserInfo: (user: UserInfo | null) => void;
   setAuthChecked: (checked: boolean) => void;
 }
+
+const getInitialTheme = (): 'light' | 'dark' => {
+  try {
+    return localStorage.getItem('opensync_theme') === 'dark' ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
+};
 
 const isUserInfo = (value: unknown): value is UserInfo => {
   if (!value || typeof value !== 'object') return false;
@@ -48,6 +58,12 @@ const persistState = (key: string, value: unknown) => {
 };
 
 export const useStore = create<AppState>((set) => ({
+  theme: getInitialTheme(),
+  setTheme: (theme) => {
+    document.documentElement.dataset.theme = theme;
+    persistState('opensync_theme', theme);
+    set({ theme });
+  },
   userInfo: getInitialUser(),
   authChecked: false,
   setUserInfo: (user) => {

@@ -2,6 +2,14 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <style>:root { color-scheme: light; } :root[data-theme='dark'] { color-scheme: dark; }</style>
+    <script>
+      try {
+        document.documentElement.dataset.theme = localStorage.getItem('opensync_theme') === 'dark' ? 'dark' : 'light';
+      } catch {
+        document.documentElement.dataset.theme = 'light';
+      }
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OpenSync</title>

@@ -188,7 +188,7 @@ export function PathTreeSelect({
           role="button"
           tabIndex={disabled ? -1 : 0}
           className={cn(
-            'min-h-9 w-full rounded-md border border-line-strong bg-white px-3 py-1.5 text-sm shadow-sm flex items-center justify-between gap-2 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal-600 focus-visible:border-teal-600',
+            'min-h-9 w-full rounded-md border border-line-strong bg-surface px-3 py-1.5 text-sm shadow-sm flex items-center justify-between gap-2 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal-600 focus-visible:border-teal-600',
             disabled && 'cursor-not-allowed opacity-50 bg-tint',
             className
           )}
@@ -231,7 +231,7 @@ export function PathTreeSelect({
         <PopoverPrimitive.Content
           sideOffset={4}
           align="start"
-          className="z-50 w-[var(--radix-popover-trigger-width)] max-w-[min(500px,calc(100vw-1rem))] rounded-lg border border-line bg-white p-2.5 shadow-xl animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
+          className="z-50 w-[var(--radix-popover-trigger-width)] max-w-[min(500px,calc(100vw-1rem))] rounded-lg border border-line bg-surface p-2.5 shadow-xl animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95"
         >
           <div className="relative mb-2 flex items-center gap-2">
             <Search className="absolute left-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
@@ -240,7 +240,7 @@ export function PathTreeSelect({
               placeholder="快速搜索路径..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-8 min-w-0 flex-1 rounded-md border border-line bg-tint pl-8 pr-3 text-xs placeholder:text-slate-400 focus:outline-none focus:border-teal-600 focus:bg-white transition-colors"
+              className="h-8 min-w-0 flex-1 rounded-md border border-line bg-tint pl-8 pr-3 text-xs placeholder:text-slate-400 focus:outline-none focus:border-teal-600 focus:bg-surface transition-colors"
             />
             {onRefresh && (
               <Tooltip title="刷新目录">

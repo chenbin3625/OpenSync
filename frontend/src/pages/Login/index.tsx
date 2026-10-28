@@ -18,13 +18,14 @@ import { Field } from '../../components/common/Field';
 import { Alert } from '../../components/common/Alert';
 import { cn } from '../../lib/utils';
 import { icon, surface, text } from '../../lib/styles';
+import { ThemeToggle } from '../../components/common/ThemeToggle';
 
 /** 兜底重置命令：等宽整行可选中，便于原样复制到服务器执行 */
 function CliCommand({ command, children }: { command: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1">
       <p className={text.muted}>{children}</p>
-      <code className="block select-all whitespace-pre-wrap break-words rounded-md border border-line bg-white px-2 py-1.5 font-mono text-2xs text-slate-700">
+      <code className="block select-all whitespace-pre-wrap break-words rounded-md border border-line bg-surface px-2 py-1.5 font-mono text-2xs text-slate-700">
         {command}
       </code>
     </div>
@@ -168,7 +169,7 @@ export default function Login() {
 
   // 启动态与登录态共用同一背景，避免初始化检查结束时出现背景闪烁
   const pageShell =
-    'min-h-screen flex items-center justify-center bg-gradient-to-br from-tint to-line-soft px-4 py-12';
+    'relative min-h-screen flex items-center justify-center bg-gradient-to-br from-tint to-line-soft px-4 py-12';
 
   if (checkingInit) {
     return (
@@ -180,6 +181,7 @@ export default function Login() {
 
   return (
     <div className={pageShell}>
+      <div className="absolute right-4 top-4"><ThemeToggle /></div>
       <div className={cn(surface.card, 'w-full max-w-md shadow-lg p-8 space-y-6 overflow-hidden')}>
         {/* Logo 与标题 */}
         <div className="text-center space-y-2">

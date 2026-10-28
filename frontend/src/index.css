@@ -67,10 +67,82 @@
   --color-danger-strong: var(--color-rose-700);
   --color-success: var(--color-emerald-600);
   --color-warning: var(--color-amber-600);
+  --color-surface: #ffffff;
+  --color-background: var(--color-surface);
+  --color-action: #0f766e;
+  --color-action-strong: #115e59;
+  --color-action-pressed: #134e4a;
+  --color-destructive: #e11d48;
+  --color-destructive-strong: #be123c;
+  --color-destructive-pressed: #9f1239;
+  --color-tooltip: #0f172a;
+  --color-tooltip-foreground: #f8fafc;
 }
 
 :root {
   color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-surface: #22262d;
+  --color-tint: #171a20;
+  --color-line: #3b494b;
+  --color-line-strong: #59676d;
+  --color-line-soft: #30383c;
+  --color-slate-50: #171c22;
+  --color-slate-100: #2c333d;
+  --color-slate-200: #424b58;
+  --color-slate-300: #657282;
+  --color-slate-400: #929eae;
+  --color-slate-500: #9da8b5;
+  --color-slate-600: #b6beca;
+  --color-slate-700: #c9d1da;
+  --color-slate-800: #e0e5eb;
+  --color-slate-900: #f2f4f7;
+  --color-slate-950: #f8fafc;
+  --color-teal-50: #1b302d;
+  --color-teal-100: #233f39;
+  --color-teal-200: #34564e;
+  --color-teal-300: #56766c;
+  --color-teal-500: #5ec1aa;
+  --color-teal-600: #75cfbb;
+  --color-teal-700: #88d8c7;
+  --color-teal-800: #a3e4d6;
+  --color-teal-900: #b8ecdf;
+  --color-teal-950: #d2f5ec;
+  --color-rose-50: #351e28;
+  --color-rose-100: #492532;
+  --color-rose-200: #713447;
+  --color-rose-500: #fb7185;
+  --color-rose-600: #fda4af;
+  --color-rose-700: #fecdd3;
+  --color-rose-800: #fecdd3;
+  --color-rose-900: #ffe4e6;
+  --color-rose-950: #fff1f2;
+  --color-emerald-50: #182e27;
+  --color-emerald-100: #203c31;
+  --color-emerald-200: #345e49;
+  --color-emerald-600: #6ee7b7;
+  --color-emerald-700: #a7f3d0;
+  --color-emerald-800: #a7f3d0;
+  --color-emerald-950: #d1fae5;
+  --color-amber-50: #332b1a;
+  --color-amber-100: #40341c;
+  --color-amber-200: #65512a;
+  --color-amber-600: #fcd34d;
+  --color-amber-700: #fde68a;
+  --color-amber-800: #fde68a;
+  --color-amber-950: #fef3c7;
+  --color-blue-50: #1c293b;
+  --color-blue-100: #23344b;
+  --color-blue-200: #354f72;
+  --color-blue-600: #93c5fd;
+  --color-blue-700: #bfdbfe;
+  --color-blue-800: #bfdbfe;
+  --color-blue-950: #dbeafe;
+  --color-tooltip: #343a43;
+  --color-tooltip-foreground: #f1f5f9;
 }
 
 html,

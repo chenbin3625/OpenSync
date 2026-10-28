@@ -181,7 +181,7 @@ test('buttons use shared dimensions and semantic color variants', () => {
   assert.match(buttonSource, /default:\s*'h-9 min-w-\[5rem\] px-4 py-2'/);
   assert.match(buttonSource, /sm:\s*'h-8 min-w-\[4\.5rem\] rounded-md px-3 text-xs'/);
   assert.match(buttonSource, /iconSm:\s*'h-7 w-7 min-w-0 p-0'/);
-  assert.match(buttonSource, /danger:\s*'border border-rose-200 bg-white text-rose-700/);
+  assert.match(buttonSource, /danger:\s*'border border-rose-200 bg-surface text-rose-700/);
 
   for (const source of [
     engineSource,
@@ -260,7 +260,7 @@ test('task execution views use compact operational surfaces', () => {
   // 卡片外壳与表格样式取自共享配方，不再内联 rounded-xl / px-3 py-2.5
   assert.match(taskListSource, /surface\.card/);
   assert.match(taskListSource, /table\.wrapper/);
-  assert.match(stylesSource, /card: 'bg-white rounded-xl/);
+  assert.match(stylesSource, /card: 'bg-surface rounded-xl/);
 });
 
 test('realtime task refresh logic is split into local hooks', () => {
@@ -339,7 +339,7 @@ test('structural borders, dividers and tints are derived from the theme color', 
   assert.match(cssSource, /scrollbar-color: var\(--color-line-soft\) transparent/);
 
   // 共享配方不再写死灰色骨架
-  assert.match(stylesSource, /card: 'bg-white rounded-xl border border-line/);
+  assert.match(stylesSource, /card: 'bg-surface rounded-xl border border-line/);
   assert.match(stylesSource, /inset: 'bg-tint rounded-lg border border-line-soft/);
   assert.match(stylesSource, /wrapper: 'overflow-x-auto border border-line rounded-lg'/);
   assert.match(stylesSource, /head: 'bg-tint text-slate-600/);
@@ -400,7 +400,7 @@ test('structural borders, dividers and tints are derived from the theme color', 
   );
   // 2. Switch 关闭态的轨道：轨道染上主题色会被读成「已开启」（开启才用品牌色）
   assert.match(switchSource, /data-\[state=unchecked\]:bg-slate-200/);
-  assert.match(switchSource, /data-\[state=checked\]:bg-teal-700/);
+  assert.match(switchSource, /data-\[state=checked\]:bg-action/);
 });
 
 test('dialog scrolls its body so the close button stays pinned', () => {

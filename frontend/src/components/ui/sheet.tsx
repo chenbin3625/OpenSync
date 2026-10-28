@@ -27,7 +27,7 @@ SheetOverlay.displayName = SheetPrimitive.Overlay.displayName;
 export const sheetVariants = cva(
   // 抽屉与页面贴合的那条边要显式给色：Tailwind 的 border-* 宽度类不带颜色，
   // 不指定时退回 currentColor，会画出一条跟正文同色的深线，而不是主题骨架色
-  'fixed z-50 gap-4 bg-white p-6 shadow-xl border-line transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-400',
+  'fixed z-50 gap-4 bg-surface p-6 shadow-xl border-line transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-400',
   {
     variants: {
       side: {

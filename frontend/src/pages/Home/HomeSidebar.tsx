@@ -86,7 +86,7 @@ export default function HomeSidebar({
                   // 也不再用 teal-50/70、tint/80 这类透明度变体，浅底统一取令牌
                   isSelected
                     ? 'bg-line border-line-strong shadow-xs'
-                    : 'bg-white border-line-soft hover:border-line hover:bg-line-soft'
+                    : 'bg-surface border-line-soft hover:border-line hover:bg-line-soft'
                 )}
               >
                 <div className="flex items-center justify-between gap-2 min-w-0">
