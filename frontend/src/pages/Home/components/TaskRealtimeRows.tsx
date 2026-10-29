@@ -63,7 +63,7 @@ const TaskRealtimeRows = memo(function TaskRealtimeRows({
               return (
                 <div
                   key={rowKey}
-                  className="p-3 hover:bg-tint transition-colors flex items-center justify-between gap-3 text-xs min-w-0"
+                  className="p-3 hover:bg-tint transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs min-w-0"
                 >
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     <Badge variant={typeVariant}>
@@ -71,7 +71,7 @@ const TaskRealtimeRows = memo(function TaskRealtimeRows({
                     </Badge>
 
                     <div className="min-w-0 flex-1 space-y-0.5">
-                      <div className="font-medium text-slate-800 truncate" title={name}>
+                      <div className="font-medium text-slate-800 break-all sm:truncate" title={name}>
                         {name}
                       </div>
                       <div className="flex items-center gap-2 text-2xs text-slate-400 truncate">
@@ -86,7 +86,7 @@ const TaskRealtimeRows = memo(function TaskRealtimeRows({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4 shrink-0 text-right">
+                  <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0 text-right">
                     <span className="font-mono text-slate-500 w-16">
                       {formatSize(task.fileSize || 0)}
                     </span>

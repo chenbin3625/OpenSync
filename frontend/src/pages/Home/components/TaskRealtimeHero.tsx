@@ -149,7 +149,7 @@ export default function TaskRealtimeHero({
               {item.icon}
               <span>{item.label}</span>
             </div>
-            <div className={cn(text.stat, 'truncate')}>{item.value}</div>
+            <div className={cn(text.stat, 'whitespace-normal [overflow-wrap:anywhere]')}>{item.value}</div>
           </div>
         ))}
       </div>
