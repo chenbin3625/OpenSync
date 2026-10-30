@@ -102,6 +102,29 @@ docker compose exec --user "${PUID:-1000}:${PGID:-1000}" opensync ./opensync res
 - Account recovery: a 24-digit recovery key is generated on first setup; supports web password reset and a `reset-password` CLI fallback.
 - Adaptive UI: desktop and mobile layouts, a consistent light theme, and realtime updates when a task finishes.
 
+## How Target Directories Are Built
+
+Where a file ends up depends only on the target directory and which source directories you picked; all three sync modes (Add-only / Full sync / Move) follow the same rule. A target is only a root — OpenSync never adds an extra level named after the source directory. The number of targets only changes how many copies are made, not the relative path inside each target.
+
+Will the source folder name (the `C` in the examples below) appear in the target? **With one source it never does. With multiple sources it does, with one exception: when `C` is itself the shared parent of every source.**
+
+| Scenario (source → target) | Source | Target | Keep `C`? | Result |
+| --- | --- | --- | --- | --- |
+| 1 source → 1 target | `/A/B/C` | `/D/E` | No | `/D/E/file` |
+| 1 source → many targets | `/A/B/C` | `/D/E`, `/D/H` | No | `/D/E/file`, `/D/H/file` |
+| Many sources → 1 target (shared parent) | `/A/B/C`, `/A/F/G` | `/D/E` | Yes, with `B` | `/D/E/B/C/file`, `/D/E/F/G/file` |
+| Many sources → 1 target (no shared parent) | `/A/B/C`, `/X/F/G` | `/D/E` | Yes, one level only | `/D/E/C/file`, `/D/E/G/file` |
+| Many sources → 1 target (same folder name) | `/A/B/C`, `/X/Y/C` | `/D/E` | Yes, with `A/B` and `X/Y` | `/D/E/A/B/C/file`, `/D/E/X/Y/C/file` |
+| Many sources → 1 target (one source nested in another) | `/A/B/C`, `/A/B/C/H` | `/D/E` | No, `C` is the shared parent | `/D/E/file`, `/D/E/H/file` |
+| Many sources → many targets | `/A/B/C`, `/A/F/G` | `/D/E`, `/D/H` | Yes, with `B` | `/D/E/B/C/file`, `/D/H/B/C/file`, `/D/E/F/G/file`, `/D/H/F/G/file` |
+
+Before you change it:
+
+| Change | Effect |
+| --- | --- |
+| Going from 1 source to 2 | Everything lands one level deeper, so the target ends up with both the old and the new copy |
+| Changing the source count under Full sync | The target root changes, and the new root may treat the old subtree as extra files and delete it — check that root holds nothing else before switching |
+
 ## Interface Preview
 
 ### Task Management
