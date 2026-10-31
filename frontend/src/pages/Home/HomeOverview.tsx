@@ -67,10 +67,10 @@ export default function HomeOverview({
         <div
           className={cn(
             surface.card,
-            'p-5 flex flex-col md:flex-row md:items-center justify-between gap-4'
+            'p-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4'
           )}
         >
-          <div className="flex items-start gap-4 min-w-0">
+          <div className="flex items-start gap-4 min-w-0 flex-1">
             <div className={cn(surface.iconTile, 'h-12 w-12')}>
               {isEnabled ? (
                 <CheckCircle2 className={cn(icon.lg, 'text-emerald-600')} />
@@ -79,10 +79,9 @@ export default function HomeOverview({
               )}
             </div>
 
-            <div className="space-y-2 min-w-0">
-              {/* 标题行固定单行：任务名过长时省略，状态标签不再被挤到第二行 */}
-              <div className="flex items-center gap-2 min-w-0">
-                <h1 className={cn(text.pageTitle, 'truncate min-w-0')} title={getJobName(selectedJob)}>
+            <div className="space-y-2 min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                <h1 className={cn(text.pageTitle, 'w-full min-w-0 break-all')} title={getJobName(selectedJob)}>
                   {getJobName(selectedJob)}
                 </h1>
                 <Badge variant={isEnabled ? 'success' : 'secondary'}>

@@ -74,12 +74,12 @@ const TaskRealtimeRows = memo(function TaskRealtimeRows({
                       <div className="font-medium text-slate-800 break-all sm:truncate" title={name}>
                         {name}
                       </div>
-                      <div className="flex items-center gap-2 text-2xs text-slate-400 truncate">
-                        <span className="truncate max-w-[45%]" title={srcPath}>
+                      <div className="flex flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-2 text-2xs text-slate-400 min-w-0">
+                        <span className="min-w-0 max-w-full break-all sm:truncate sm:max-w-[45%]" title={srcPath}>
                           源: {srcPath}
                         </span>
-                        <span>→</span>
-                        <span className="truncate max-w-[45%]" title={dstPath}>
+                        <span className="hidden sm:inline shrink-0">→</span>
+                        <span className="min-w-0 max-w-full break-all sm:truncate sm:max-w-[45%]" title={dstPath}>
                           目标: {dstPath}
                         </span>
                       </div>

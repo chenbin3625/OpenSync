@@ -81,7 +81,7 @@ test('login page inherits the active theme and uses shared color tokens', () => 
 
 test('home dashboard exposes scannable task workspace sections', () => {
   assert.match(homeSidebarSource, /overflow-y-auto/);
-  assert.match(homeOverviewSource, /md:flex-row/);
+  assert.match(homeOverviewSource, /xl:flex-row/);
   assert.match(homeOverviewSource, /md:grid-cols-2/);
   // 侧边栏 + 内容区两栏栅格，窄屏塌陷为单栏
   assert.match(homeSource, /md:grid-cols-\[300px_minmax\(0,1fr\)\]/);
@@ -168,10 +168,9 @@ test('badges share one recipe and never wrap onto a second line', () => {
   assert.match(pathTreeSelectSource, /cn\(badge\.base, badge\.tone\.neutral/);
   assert.doesNotMatch(pathTreeSelectSource, /rounded bg-slate-100 border border-slate-200 px-2/);
 
-  // 标题行固定单行：标签不再被 flex-wrap 挤到第二行
-  assert.doesNotMatch(homeOverviewSource, /flex items-center gap-2 flex-wrap/);
-  assert.match(homeOverviewSource, /flex items-center gap-2 min-w-0/);
-  assert.match(homeOverviewSource, /truncate min-w-0/);
+  // 任务名完整换行，标签换至下一行但自身保持单行。
+  assert.match(homeOverviewSource, /flex flex-wrap items-center gap-2 min-w-0/);
+  assert.match(homeOverviewSource, /w-full min-w-0 break-all/);
   assert.doesNotMatch(realtimeHeroSource, /<h2 className=\{text\.sectionTitle\}>/);
   assert.match(realtimeHeroSource, /truncate min-w-0/);
 });
