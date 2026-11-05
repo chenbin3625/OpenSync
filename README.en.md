@@ -8,11 +8,22 @@
 
 [Website](https://opensync.u1n1.com/) | [中文文档](README.md) | [60-second demo GIF](docs/demo/opensync-demo.gif) | [Docker Hub](https://hub.docker.com/r/chenbin3625/opensync) | [Discussions](https://github.com/chenbin3625/OpenSync/discussions)
 
-OpenSync is an AList / OpenList automation layer for fnOS (FeiNiu NAS), general NAS, and Docker environments. It connects local folders, cloud drives, object storage, WebDAV, and other storage backends through AList / OpenList, then uses visual jobs to handle backup, mirror, archive, and migration workflows.
+OpenSync is an AList / OpenList sync automation tool for fnOS (FeiNiu NAS), general NAS, and Docker environments: it turns local folders, cloud drives, object storage, and WebDAV into scheduled, observable, retryable backup, mirror, archive, and migration jobs.
 
-On fnOS, install the native fpk build linked above. If you are on a general NAS, a server, or Docker and want a Cloud Sync-style experience for a photo library, media library, download folder, or document folder, the Docker deployment below is built for that exact gap.
+It is for people who already use AList / OpenList and want a Synology Cloud Sync-style workflow with scheduling, progress, retries, and notifications. Use the native fpk build on fnOS, or Docker Compose on other NAS and servers.
 
-If OpenSync fills the NAS sync gap for you, please consider starring the [GitHub repository](https://github.com/chenbin3625/OpenSync) so more fnOS, NAS, Docker, AList, and OpenList users can find it.
+### Start in 30 seconds
+
+| Environment | Recommended entry | Next step |
+| --- | --- | --- |
+| fnOS | [Native fpk releases](https://github.com/chenbin3625/OpenSync-fnOS/releases) | Download the matching `.fpk` and install it from the fnOS app manager |
+| Docker / other NAS | [Docker Compose](#docker-composeyml) | Copy the three commands below, then open `http://<your-device-ip>:8023/` |
+
+```bash
+mkdir -p opensync && cd opensync
+curl -fsSLO https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docker-compose.yml
+docker compose up -d
+```
 
 ![OpenSync task overview](docs/images/tasks-overview.png)
 
@@ -72,6 +83,12 @@ docker compose exec --user "${PUID:-1000}:${PGID:-1000}" opensync ./opensync res
 | Media library mirror | Mirror a media folder from one AList / OpenList backend to another. |
 | Document protection | Run add-only backups for work documents and notify only when files changed. |
 | Storage migration | Move or mirror files between different cloud drives exposed through AList / OpenList. |
+
+## Scenario guides
+
+- [Back up an fnOS photo library to WebDAV / S3](docs/guides/fnos-photo-backup.md)
+- [Archive a download directory to another NAS](docs/guides/download-archive.md)
+- [Schedule a migration between AList / OpenList storage backends](docs/guides/storage-migration.md)
 
 ## OpenSync vs Alternatives
 

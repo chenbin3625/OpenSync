@@ -8,11 +8,22 @@
 
 [官网](https://opensync.u1n1.com/) | [English](README.en.md) | [60 秒演示动图](docs/demo/opensync-demo.gif) | [Docker Hub](https://hub.docker.com/r/chenbin3625/opensync) | [Discussions](https://github.com/chenbin3625/OpenSync/discussions)
 
-OpenSync 是面向飞牛 fnOS / 飞牛 NAS、普通 NAS 和 Docker 环境的 AList / OpenList 自动同步工具。它通过 AList / OpenList 连接本地目录、网盘、对象存储、WebDAV 等存储端，并用可视化任务完成备份、镜像、归档和迁移。
+OpenSync 是面向飞牛 fnOS / 飞牛 NAS、普通 NAS 和 Docker 环境的 AList / OpenList 自动同步工具：把本地目录、网盘、对象存储和 WebDAV 组织成可定时、可追踪、可重试的备份、镜像、归档和迁移任务。
 
-如果你在飞牛 NAS 上想找一个类似群晖 Cloud Sync 的同步工具，用来把照片库、影音库、下载目录或文档目录同步到网盘、对象存储或另一台存储设备，OpenSync 就是面向这个场景做的。飞牛用户直接安装上面的 fpk 原生版即可；普通 NAS、服务器和 Docker 环境请按下方「快速部署」使用 Docker 镜像。
+适合已经在使用 AList / OpenList、又需要类似群晖 Cloud Sync 的定时任务、实时进度、失败重试和通知的人。飞牛用户使用原生 fpk；普通 NAS、服务器和 Docker 环境使用 Docker Compose。
 
-如果 OpenSync 正好补上了你的 NAS 自动同步缺口，欢迎在 [GitHub](https://github.com/chenbin3625/OpenSync) 点一个 Star，帮助更多飞牛、NAS、Docker、AList / OpenList 用户发现它。
+### 30 秒开始
+
+| 环境 | 推荐入口 | 下一步 |
+| --- | --- | --- |
+| 飞牛 fnOS | [原生 fpk Releases](https://github.com/chenbin3625/OpenSync-fnOS/releases) | 下载对应架构的 `.fpk`，在 fnOS 应用管理界面安装 |
+| Docker / 其它 NAS | [Docker Compose](#docker-composeyml) | 复制下面的三条命令并打开 `http://你的设备IP:8023/` |
+
+```bash
+mkdir -p opensync && cd opensync
+curl -fsSLO https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docker-compose.yml
+docker compose up -d
+```
 
 ![OpenSync 任务总览](docs/images/tasks-overview.png)
 
@@ -90,6 +101,12 @@ docker compose exec --user "${PUID:-1000}:${PGID:-1000}" opensync ./opensync res
 | 影音库镜像 | 把一个 AList / OpenList 后端中的媒体目录镜像到另一个后端。 |
 | 文档保护 | 对工作文档做仅新增备份，并在确实有文件同步时通知。 |
 | 存储迁移 | 在 AList / OpenList 暴露的不同网盘之间迁移或镜像文件。 |
+
+## 真实场景教程
+
+- [飞牛相册自动备份到 WebDAV / S3](docs/guides/fnos-photo-backup.md)
+- [下载目录自动归档到另一台 NAS](docs/guides/download-archive.md)
+- [AList / OpenList 多存储之间的定时迁移](docs/guides/storage-migration.md)
 
 ## OpenSync 与其它方案对比
 
