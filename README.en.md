@@ -277,6 +277,8 @@ Ports: publish `8023` or whatever you set `OPENSYNC_PORT` to.
 
 > Note: once `data/config.ini` exists, environment variables other than `OPENSYNC_TLS_CERT` / `OPENSYNC_TLS_KEY` no longer take effect after a restart; the config file wins. History retention, task timeout, copy/scan concurrency, and retry counts can also be adjusted online from the System Settings page.
 
+Task timeout uses hours in System Settings, the config file, and environment variables: `1` means one hour and `0` means unlimited. Changes apply to newly started tasks. In v1.16.2 and earlier, the settings page incorrectly labeled this value as minutes. Existing values are not converted automatically; if you entered `60` for one hour, change it to `1` and restart the task. At the deadline, scanning and transfers stop and remote task cancellation is requested; remote responses and cleanup can take additional time.
+
 ## Data Persistence
 
 Mount `/app/data`. It holds the database, secret key, config, and logs. Losing it means losing your account, engines, jobs, and history.

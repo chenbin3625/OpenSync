@@ -95,12 +95,6 @@ function RealtimeTaskCard({
   onTabChange: (status: number) => void;
 }) {
   const getTabCount = (tabKey: number): number => {
-    if (tabKey === activeTab) {
-      return total;
-    }
-    if (tabKey === 1) {
-      return currentTask.doingTask?.length || 0;
-    }
     const tab = statusTabs.find((t) => t.key === tabKey);
     return tab ? (currentTask.num?.[tab.numKey] || 0) : 0;
   };

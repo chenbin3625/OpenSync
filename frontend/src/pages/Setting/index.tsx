@@ -31,7 +31,7 @@ export default function Setting() {
 
   // 表单受控状态
   const [expires, setExpires] = useState(720);
-  const [taskTimeout, setTaskTimeout] = useState(1440);
+  const [taskTimeout, setTaskTimeout] = useState(48);
   const [taskSave, setTaskSave] = useState(500);
   const [copyConcurrency, setCopyConcurrency] = useState(4);
   const [scanConcurrency, setScanConcurrency] = useState(4);
@@ -61,7 +61,7 @@ export default function Setting() {
       if (res.data) {
         setConfigValues(res.data);
         setExpires(res.data.expires ?? 720);
-        setTaskTimeout(res.data.taskTimeout ?? 1440);
+        setTaskTimeout(res.data.taskTimeout ?? 48);
         setTaskSave(res.data.taskSave ?? 500);
         setCopyConcurrency(res.data.copyConcurrency ?? 4);
         setScanConcurrency(res.data.scanConcurrency ?? 4);
@@ -98,9 +98,10 @@ export default function Setting() {
     {
       name: 'taskTimeout',
       label: '单次任务超时时间',
-      tooltip: '同步任务最长持续运行限制，超过该时间将被强制中止，单位：分钟',
-      unit: '分钟',
-      min: 1,
+      tooltip: '同步任务最长运行时间，单位：小时，0 表示不限制；仅对新启动任务生效，超时后停止扫描与传输并请求取消远端任务',
+      unit: '小时',
+      min: 0,
+      max: 8760,
       value: taskTimeout,
       onChange: setTaskTimeout,
     },
