@@ -1,23 +1,82 @@
 # OpenSync
 
-> **飞牛用户请使用 [OpenSync-fnOS](https://github.com/chenbin3625/OpenSync-fnOS) 飞牛原生 fpk 版，安装即用。**
+> **飞牛 fnOS 用户看这里**：请安装 [OpenSync-fnOS 原生 fpk 版](https://github.com/chenbin3625/OpenSync-fnOS)，在飞牛 NAS 应用管理界面安装后即可使用，不需要 Docker。
 >
-> 在 [OpenSync-fnOS Releases](https://github.com/chenbin3625/OpenSync-fnOS/releases) 下载 `opensync-amd64.fpk`（x86 / amd64）或 `opensync-arm64.fpk`（ARM / arm64），在飞牛 NAS 应用管理界面安装完成后即可打开使用，无需 Docker。
+> 在 [OpenSync-fnOS Releases](https://github.com/chenbin3625/OpenSync-fnOS/releases) 下载 `opensync-amd64.fpk`（x86 / amd64）或 `opensync-arm64.fpk`（ARM / arm64）。
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Release](https://img.shields.io/github/v/release/chenbin3625/OpenSync)](https://github.com/chenbin3625/OpenSync/releases) [![CI](https://github.com/chenbin3625/OpenSync/actions/workflows/ci.yml/badge.svg)](https://github.com/chenbin3625/OpenSync/actions/workflows/ci.yml) [![Docker Pulls](https://img.shields.io/docker/pulls/chenbin3625/opensync)](https://hub.docker.com/r/chenbin3625/opensync)
+[![Release](https://img.shields.io/github/v/release/chenbin3625/OpenSync)](https://github.com/chenbin3625/OpenSync/releases) [![Docker Pulls](https://img.shields.io/docker/pulls/chenbin3625/opensync)](https://hub.docker.com/r/chenbin3625/opensync) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[官网](https://opensync.u1n1.com/) | [English](README.en.md) | [60 秒演示动图](docs/demo/opensync-demo.gif) | [Docker Hub](https://hub.docker.com/r/chenbin3625/opensync) | [Discussions](https://github.com/chenbin3625/OpenSync/discussions)
+[官网](https://opensync.u1n1.com/) | [30 秒演示](#30-秒演示) | [下载](https://github.com/chenbin3625/OpenSync/releases) | [Docker Hub](https://hub.docker.com/r/chenbin3625/opensync) | [讨论区](https://github.com/chenbin3625/OpenSync/discussions)
 
-OpenSync 是面向飞牛 fnOS / 飞牛 NAS、普通 NAS 和 Docker 环境的 AList / OpenList 自动同步工具：把本地目录、网盘、对象存储和 WebDAV 组织成可定时、可追踪、可重试的备份、镜像、归档和迁移任务。
+OpenSync 是一个给 **AList / OpenList** 加上「自动同步」的可视化小工具。
 
-适合已经在使用 AList / OpenList、又需要类似群晖 Cloud Sync 的定时任务、实时进度、失败重试和通知的人。飞牛用户使用原生 fpk；普通 NAS、服务器和 Docker 环境使用 Docker Compose。
+你已经在 AList / OpenList 里接好了网盘、NAS、WebDAV 或对象存储，但还想让文件按时自动备份、归档或迁移——OpenSync 就是做这件事的。打开网页，点几下就能建好任务，不用写脚本，也不用记命令行参数。
 
-### 30 秒开始
+- 可以**定时自动执行**，也可以随时手动跑一次。
+- 能看到**每个文件的实时进度**、速度和剩余时间。
+- 失败的文件可以**只重试没完成的部分**。
+- 任务完成或失败时，可以推送到**钉钉、企业微信、飞书、Server 酱或自定义 Webhook**。
 
-| 环境 | 推荐入口 | 下一步 |
-| --- | --- | --- |
-| 飞牛 fnOS | [原生 fpk Releases](https://github.com/chenbin3625/OpenSync-fnOS/releases) | 下载对应架构的 `.fpk`，在 fnOS 应用管理界面安装 |
-| Docker / 其它 NAS | [Docker Compose](#docker-composeyml) | 复制下面的三条命令并打开 `http://你的设备IP:8023/` |
+![OpenSync 任务总览](docs/images/tasks-overview.png)
+
+## 目录
+
+- [30 秒演示](#30-秒演示)
+- [开始之前](#开始之前)
+- [安装 OpenSync](#安装-opensync)
+- [5 分钟完成第一个同步任务](#5-分钟完成第一个同步任务)
+- [三种同步方式怎么选](#三种同步方式怎么选)
+- [自动执行怎么设置](#自动执行怎么设置)
+- [常见使用场景](#常见使用场景)
+- [界面预览](#界面预览)
+- [常见问题](#常见问题)
+- [升级、备份与数据安全](#升级备份与数据安全)
+- [高级配置](#高级配置)
+- [反馈与社区](#反馈与社区)
+
+## 30 秒演示
+
+![OpenSync 演示](docs/demo/opensync-demo.gif)
+
+演示内容：添加 AList / OpenList 引擎、新建同步任务、手动运行、查看实时进度和接收通知。
+
+## 开始之前
+
+使用 OpenSync 只需要准备两样东西：
+
+1. **一台能装 Docker 的设备**，例如飞牛 NAS、群晖、威联通、绿联、极空间、软路由或一台常开的 Linux 电脑；飞牛用户也可以直接安装原生 fpk。
+2. **一个已经能正常使用的 AList / OpenList**。OpenSync 不直接连接各家网盘，而是通过 AList / OpenList 读写文件，所以请先在 AList / OpenList 里添加好你要同步的存储端。
+
+### 准备 AList / OpenList 的地址和令牌
+
+在 OpenSync 里添加引擎时，需要填写 AList / OpenList 的**服务地址**和**访问令牌（Token）**：
+
+- 服务地址形如 `http://192.168.1.100:5244`，就是平时打开 AList / OpenList 网页的地址。
+- 访问令牌可以在 AList / OpenList 管理后台的「设置 → 其他」中找到并复制；不同版本的菜单名称可能略有差异。
+
+> 令牌相当于账号密码，请不要发到群里、截图里或公开的 Issue 中。
+
+同一个同步任务里的源目录和目标目录，需要位于**同一个 AList / OpenList 实例**中。如果源和目标在不同的网盘，请先在 AList / OpenList 里把它们都添加为存储，再在 OpenSync 里选择对应目录。
+
+## 安装 OpenSync
+
+### 方式一：飞牛 fnOS 安装原生 fpk（推荐）
+
+1. 打开 [OpenSync-fnOS Releases](https://github.com/chenbin3625/OpenSync-fnOS/releases)，下载与设备架构匹配的安装包：
+   - x86 / amd64：`opensync-amd64.fpk`
+   - ARM / arm64：`opensync-arm64.fpk`
+2. 在飞牛 NAS 的「应用管理」中安装下载好的 fpk 包。
+3. 安装完成后，在应用列表中打开 OpenSync。
+
+发布页同时提供 `SHA256SUMS`，需要校验安装包时可以使用：
+
+```bash
+shasum -a 256 -c SHA256SUMS
+```
+
+### 方式二：Docker Compose（群晖 / 威联通 / Linux / 其它 NAS）
+
+在设备的终端里执行：
 
 ```bash
 mkdir -p opensync && cd opensync
@@ -25,184 +84,333 @@ curl -fsSLO https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docker-c
 docker compose up -d
 ```
 
-![OpenSync 任务总览](docs/images/tasks-overview.png)
+如果你更喜欢图形界面，也可以在 NAS 的 Docker 管理界面中新建项目，把上面的 `docker-compose.yml` 内容粘贴进去再启动。
 
-## 为什么做 OpenSync
-
-- 你已经用 AList / OpenList 接好了各种存储端，但还缺少定时备份、迁移和归档任务。
-- 你想把 NAS 本地目录同步到网盘、对象存储、WebDAV 或另一台设备，不想每次手动复制。
-- 你希望看到实时进度、失败文件、历史记录和失败重试，而不是只看命令行日志。
-- 你需要一个适合 Docker、飞牛 NAS、普通 NAS 和 ARM 设备的可视化同步工具。
-
-登录页和顶栏的月亮 / 太阳按钮可切换浅色与深色模式，主题偏好保存在当前浏览器，刷新和退出登录后仍保留。
-
-## 60 秒演示
-
-这张动图展示 OpenSync 的主流程：添加 AList / OpenList 引擎、新建同步任务、手动运行、查看实时进度和接收通知。
-
-![OpenSync 60 秒演示](docs/demo/opensync-demo.gif)
-
-## 快速部署
-
-### 飞牛 fnOS：安装原生 fpk（推荐）
-
-飞牛用户不需要 Docker，直接安装原生 fpk 包即可：
-
-1. 打开 [OpenSync-fnOS Releases](https://github.com/chenbin3625/OpenSync-fnOS/releases)，下载与设备架构匹配的安装包：
-   - x86 / amd64：`opensync-amd64.fpk`
-   - ARM / arm64：`opensync-arm64.fpk`
-2. 在飞牛 NAS 的应用管理界面安装该 fpk 包。
-3. 安装完成后在应用列表中打开 OpenSync 即可使用。
-
-发布页附带 `SHA256SUMS`，可用于校验安装包：
-
-```bash
-shasum -a 256 -c SHA256SUMS
-```
-
-### Docker / 其它 NAS：Docker Compose 部署
-
-推荐使用 Docker Compose 部署：
-
-```bash
-mkdir -p opensync
-cd opensync
-curl -O https://raw.githubusercontent.com/chenbin3625/OpenSync/main/docker-compose.yml
-docker compose up -d
-```
-
-启动后访问：
+启动完成后，在浏览器打开：
 
 ```text
 http://你的设备IP:8023/
 ```
 
-首次启动后，打开 Web 页面按提示创建管理员用户名和密码。创建完成时页面会一次性展示 24 位恢复密钥，请立即保存；忘记密码时可用“用户名 + 恢复密钥”在 Web 端设置新密码，成功后旧恢复密钥会失效并生成新的恢复密钥。
+例如设备 IP 是 `192.168.1.100`，就访问 `http://192.168.1.100:8023/`。
 
-如果恢复密钥也丢失，需要登录服务器执行 CLI 兜底重置：
+> 打不开页面时，先确认容器正在运行、设备防火墙放行了 `8023` 端口，并且手机 / 电脑和 NAS 在同一个局域网内。
+
+### 首次打开：创建管理员账号
+
+第一次访问时，页面会让你创建管理员用户名和密码。创建完成后，页面会**一次性显示一个 24 位恢复密钥**，请立刻保存到密码管理器或其它安全的地方。
+
+- 这个恢复密钥只显示这一次。
+- 忘记密码时，可以用「用户名 + 恢复密钥」在登录页重置密码。
+- 重置成功后，旧的恢复密钥会失效，并生成一份新的恢复密钥。
+
+如果恢复密钥也找不到了，可以在服务器上执行 CLI 兜底重置：
 
 ```bash
 ./opensync reset-password --user admin
 ```
 
-Docker Compose 部署可执行：
+Docker Compose 部署可以执行：
 
 ```bash
 [ -f .env ] && . ./.env
 docker compose exec --user "${PUID:-1000}:${PGID:-1000}" opensync ./opensync reset-password --user admin
 ```
 
-## 典型场景
+运行后会输出新的密码和新的恢复密钥，请一并保存。
 
-| 场景 | 示例 |
+## 5 分钟完成第一个同步任务
+
+下面以「把 NAS 上的照片目录每天自动备份到网盘」为例。第一次使用建议**先只选一个源目录和一个目标目录**，确认流程跑通后再增加。
+
+### 第 1 步：添加存储引擎
+
+1. 打开左侧菜单的「引擎管理」，点击「添加引擎」。
+2. 填写 AList / OpenList 的服务地址和访问令牌，备注名称可以写成「家庭 NAS」「阿里云盘」等方便识别的名字。
+3. 保存。OpenSync 会先验证地址和令牌是否可用，验证通过后才会保存。
+
+可以添加多个引擎，但每个任务只能选择一个引擎。
+
+### 第 2 步：新建同步任务
+
+打开「任务管理」，点击「新建任务」，按顺序填写：
+
+| 项目 | 怎么填 |
 | --- | --- |
-| 飞牛相册备份 | 把本地照片库自动备份到网盘或对象存储。 |
-| 下载目录归档 | 把下载完成的文件定时移动到 WebDAV、另一台 NAS 或冷存储目录。 |
-| 影音库镜像 | 把一个 AList / OpenList 后端中的媒体目录镜像到另一个后端。 |
-| 文档保护 | 对工作文档做仅新增备份，并在确实有文件同步时通知。 |
-| 存储迁移 | 在 AList / OpenList 暴露的不同网盘之间迁移或镜像文件。 |
+| 存储引擎 | 选择刚才添加的 AList / OpenList。 |
+| 任务备注 | 给自己看的名字，例如「相册每日备份」。 |
+| 源目录 | 要备份的目录，可以从目录树中选择，支持多选。 |
+| 目标目录 | 备份放到哪里，同样支持多选。 |
+| 同步方式 | 第一次备份建议选「仅新增」。 |
+| 调度方式 | 想每天自动跑就选「Cron」，不想自动跑就选「仅手动」。 |
+| 任务启用状态 | 保持开启，否则到点不会执行。 |
 
-## 真实场景教程
+下面的「高级选项」可以按需设置：
+
+- **最小 / 最大文件大小**：不限制时保持 `0`。
+- **排除规则**：使用 .gitignore 格式，每行一条。默认已经排除了 `.DS_Store`、`Thumbs.db`、`@eaDir`、临时下载文件等常见垃圾文件。
+- **源端 / 目标端缓存、扫描间隔**：不确定时保持默认即可。
+
+填好后保存。任务会出现在任务列表中。
+
+### 第 3 步：先手动跑一次
+
+在任务卡片上点击「手动执行」，确认整条链路是通的。
+
+运行期间点开「实时任务」，可以看到：
+
+- 已扫描和已完成的文件数量；
+- 当前传输速度与预计剩余时间；
+- 已完成、失败、等待和正在传输的文件明细；
+- 运行中的任务可以随时点击「停止」。
+
+第一次备份文件较多时耗时会比较长，可以先去忙别的，任务会在后台继续。
+
+### 第 4 步：查看结果并设置自动执行
+
+手动跑完后，打开「历史任务」查看本次结果：
+
+- **成功**：所有文件都已同步。
+- **部分失败**：有文件没同步成功，点开详情可以看到具体文件和错误原因。
+- **无需同步**：目标端已经是最新的，没有需要复制的文件。
+
+确认手动执行没有问题后，再回到任务编辑页，把「调度方式」改成你需要的自动计划（下一节有详细说明），并保持任务启用。
+
+### 第 5 步：配置通知（可选）
+
+打开「通知配置」，点击「添加通知」，可以选择：
+
+- 自定义 Webhook
+- Server 酱
+- 钉钉机器人
+- 企业微信应用
+- 飞书 / Lark 机器人
+
+保存前可以点击「测试」发送一条测试消息。打开「无需同步时静默」后，没有文件需要同步时就不会打扰你。
+
+### 第 6 步：失败后怎么处理
+
+如果任务失败或部分失败：
+
+1. 打开「历史任务」，点进对应的记录。
+2. 查看失败文件的错误信息，常见原因是目标端空间不足、目录没有写入权限、Token 失效或网络不稳定。
+3. 修复问题后，点击「重试未完成项」，OpenSync 只会重试失败和未完成的文件，不会从头再来。
+
+## 三种同步方式怎么选
+
+| 同步方式 | 会做什么 | 适合场景 | 要注意 |
+| --- | --- | --- | --- |
+| **仅新增** | 复制源端有、目标端没有或内容变化的文件；不会删除目标端多余的文件。 | 相册备份、文档备份、日常增量备份。 | 源端删除了文件，目标端仍会保留。 |
+| **全同步** | 让目标目录和源目录保持一致，会删除目标端多出来的文件。 | 影音库镜像、需要严格一致的副本。 | 删除操作不可撤销，第一次使用前请先确认目标目录选对了。 |
+| **移动模式** | 文件成功传到目标后，从源端删除，相当于「归档 + 腾空间」。 | 下载目录归档、把旧文件迁到冷存储。 | 会删除源文件，第一次请只选一个小目录试跑。 |
+
+> **移动模式特别提醒**：不要把同一个目录同时设为源和目标，也不要把同一份数据的重复挂载、别名或符号链接当作不同的源和目标。
+
+## 自动执行怎么设置
+
+新建或编辑任务时，「调度方式」有三种选择：
+
+| 调度方式 | 说明 | 例子 |
+| --- | --- | --- |
+| **间隔(分钟)** | 每隔 N 分钟执行一次，从任务保存或启用后开始计算。 | 填 `60` 表示每小时跑一次。 |
+| **Cron** | 按指定时间执行，适合固定时间备份。 | 每天凌晨 2 点跑一次。 |
+| **仅手动** | 不自动执行，只在你点「手动执行」时运行。 | 临时迁移、偶尔整理。 |
+
+Cron 使用 6 个字段，依次是「秒 分 时 日 月 周」：
+
+| 需求 | Cron 表达式 |
+| --- | --- |
+| 每天凌晨 2:00 | `0 0 2 * * *` |
+| 每小时整点 | `0 0 * * * *` |
+| 每周日凌晨 3:00 | `0 0 3 * * 0` |
+| 每 30 分钟 | `0 */30 * * * *` |
+
+任务使用容器或系统设置的 `TZ` 时区（默认 `Asia/Shanghai`）。如果发现执行时间和预期差了几个小时，先检查时区配置。
+
+## 常见使用场景
+
+| 我想做什么 | 怎么做 |
+| --- | --- |
+| 手机照片自动备份到网盘或对象存储 | 源目录选照片文件夹，目标目录选网盘备份目录，用「仅新增」，每天执行。 |
+| 下载完成的文件自动搬到另一台 NAS | 先用「仅新增」验证路径和权限，再改成「移动模式」定时执行。 |
+| 把一个影音库完整镜像到另一个存储 | 使用「全同步」，让目标端与源端保持一致。 |
+| 在不同网盘之间迁移文件 | 在 AList / OpenList 中同时挂载两个存储，任务里选择对应的源目录和目标目录。 |
+| 只备份某些类型的文件 | 用最小 / 最大文件大小筛选，或在排除规则中排除不需要的目录和扩展名。 |
+
+更详细的分步教程：
 
 - [飞牛相册自动备份到 WebDAV / S3](docs/guides/fnos-photo-backup.md)
 - [下载目录自动归档到另一台 NAS](docs/guides/download-archive.md)
 - [AList / OpenList 多存储之间的定时迁移](docs/guides/storage-migration.md)
 
-## OpenSync 与其它方案对比
-
-| 能力 | OpenSync | rclone | 群晖 Cloud Sync | AList / OpenList 自带复制 |
-| --- | --- | --- | --- | --- |
-| 目标用户 | 飞牛、NAS、Docker、AList / OpenList 用户 | 命令行和脚本用户 | 群晖用户 | AList / OpenList 用户 |
-| 可视化任务管理 | 支持 | 不支持，除非额外封装 UI | 支持 | 偏手动操作 |
-| AList / OpenList 集成 | 原生管理多个引擎 | 通常通过 WebDAV 或配置文件 | 不面向 AList / OpenList | 原生，但不是调度器 |
-| 多源多目标任务 | 支持 | 可脚本化 | 受产品能力限制 | 手动操作为主 |
-| 仅新增 / 全同步 / 移动 | 支持 | 支持，依赖命令组合 | 受产品能力限制 | 复制 / 移动为主 |
-| 实时逐文件进度 | 支持 | 命令行输出或日志 | 产品 UI | 有限 |
-| 历史任务失败重试 | 支持 | 可脚本化 | 受产品能力限制 | 无专门历史重试 |
-| 通知渠道 | Webhook、Server 酱、钉钉、企业微信、飞书 | 可脚本化 | 受产品能力限制 | 无专门通知层 |
-| 最适合 | 给 AList / OpenList 加一层可视化 Cloud Sync | 高级用户和自动化脚本 | 只用群晖生态的场景 | 偶尔手动复制文件 |
-
-## 重点功能
-
-- 多源多目标：支持单个或多个源目录同步到单个或多个目标目录。
-- 三种同步模式：仅新增、全同步和移动模式，分别适合增量备份、目标镜像和归档迁移。
-- 灵活调度：支持手动执行、按分钟间隔执行、Cron 定时执行，以及一键执行全部已启用任务。
-- 精确筛选：支持 Gitignore 风格排除规则和最小/最大文件大小过滤。
-- 实时进度：展示扫描数量、传输速度、剩余时间，以及已完成、失败、等待和运行中的文件明细。
-- 任务管理：运行中的任务可以停止；历史任务可以查看详情、重试未完成项和删除记录。
-- 多引擎：可管理多个 AList / OpenList 实例，保存前验证地址和令牌，已保存令牌不会回显。
-- 通知渠道：支持自定义 Webhook、Server 酱、钉钉、企业微信和飞书 / Lark；可设置无文件需要同步时静默。
-- Webhook 定制：支持 GET / POST / PUT、JSON 请求体模板、自定义请求头和发送测试。
-- 在线运行配置：可调整历史任务保留时间、任务超时、复制/扫描并发和失败自动重试次数。
-- 账号恢复：首次初始化生成 24 位恢复密钥，支持网页重置密码和 `reset-password` CLI 兜底重置。
-- 自适应界面：支持桌面端和移动端布局，保持统一浅色主题，任务结束后实时视图会立即更新。
-
 ## 界面预览
 
 ### 任务管理
 
-任务以卡片形式展示源目录、目标目录、同步模式与调度计划，可实时查看统计并一键执行、停止、编辑或删除。
+任务卡片会显示源目录、目标目录、同步方式和调度计划，可以直接执行、停止、编辑或删除。
 
 ![任务管理](docs/images/tasks-overview.png)
 
 ### 实时任务
 
-任务运行时可实时查看扫描文件数、传输速度、剩余时间，以及已完成、失败、等待和运行中的文件明细。
+运行过程中可以查看扫描数量、传输速度、剩余时间和每个文件的状态。
 
 ![实时任务](docs/images/realtime-task.png)
 
 ### 历史任务
 
-历史任务记录每次执行的开始时间、耗时与结果，可查看详情、重试未完成项或删除记录。
+每次执行都会留下记录，可以查看开始时间、耗时、结果，并重试未完成项。
 
 ![历史任务](docs/images/task-history.png)
 
 ### 任务详情
 
-任务详情页汇总扫描结果与传输统计，并可逐条查看每个文件的同步状态与错误信息。
+汇总扫描与传输统计，并逐条列出每个文件的同步状态和错误信息。
 
 ![任务详情](docs/images/task-detail.png)
 
 ### 引擎管理
 
-可维护多个 AList / OpenList 实例，添加引擎时自动验证地址与令牌，已保存令牌不会回显。
+管理多个 AList / OpenList 实例，保存前自动验证地址和令牌，已保存的令牌不会回显。
 
 ![引擎管理](docs/images/engines.png)
 
 ### 通知配置
 
-支持自定义 Webhook、Server 酱、钉钉、企业微信和飞书 / Lark 等通知渠道，保存前可发送测试消息。
+添加 Webhook、Server 酱、钉钉、企业微信或飞书通知，保存前可以发送测试消息。
 
 ![通知配置](docs/images/notifications.png)
 
 ### 系统设置
 
-在线调整历史任务保留时间、任务超时、复制/扫描并发与失败自动重试，并支持账号与密码管理。
+在这里调整登录有效期、任务超时、历史记录保留时间、并发和自动重试，也可以修改管理员密码。
 
 ![系统设置](docs/images/settings.png)
 
-## 自定义 Webhook 通知
+## 常见问题
 
-在通知配置页新增通知时，选择“自定义Webhook”即可接入支持 HTTP/HTTPS 回调的消息服务或自动化平台。
+### 打开页面提示无法访问
 
-- `URL` 为必填项，必须填写有效的 HTTP 或 HTTPS Webhook 地址，可指向内网或本机服务。
-- `HTTP方法` 支持 `GET`、`POST`、`PUT`，默认使用 `POST`。
-- `GET` 会把通知标题和内容作为 `title`、`content` 查询参数发送。
-- `POST` / `PUT` 默认以 `application/json` 发送请求体。
-- `请求体模板` 可选，必须是 JSON 对象，支持 `{title}` 和 `{content}` 占位符；留空时默认发送 `{"title":"通知标题","content":"通知内容"}`。
-- `请求头 JSON` 可选，必须是 JSON 对象，适合填写 `Authorization`、`X-Token` 等鉴权头。
-- 打开“无需同步时不发送”后，当任务没有需要同步的内容时不会发送通知。
-- 保存前可以点击“测试”发送测试消息，确认目标服务能够正常接收。
+1. 确认容器正在运行：Docker 中查看 `opensync` 容器的状态和日志。
+2. 确认端口 `8023` 没有被其它程序占用。
+3. 确认 NAS 防火墙或路由器没有拦截该端口。
+4. 使用 `http://设备IP:8023/` 访问，注意是 `http` 而不是 `https`（除非你自行配置了反向代理）。
 
-示例请求体模板：
+### 忘记管理员密码怎么办
+
+在登录页点击「忘记密码？使用恢复密钥找回」，输入用户名、之前保存的 24 位恢复密钥和新密码。重置成功后请保存新生成的恢复密钥。
+
+如果恢复密钥也丢了，使用上面的 `reset-password` 命令在服务器上重置。
+
+### 任务为什么没有自动执行
+
+- 检查任务是否处于「已启用」状态。
+- 检查调度方式是不是「仅手动」。
+- 检查 Cron 表达式是否正确，特别注意它是 6 位（包含秒）。
+- 检查时区是否符合预期。
+- 如果上一次任务还没结束，本次定时触发会被跳过，避免同一个任务并发运行。可以等它结束，或先停止正在运行的任务。
+
+### 为什么一直显示「无需同步」
+
+说明目标端已经和源端一致，没有需要复制的文件。这是正常状态。如果同时开启了「无需同步时静默」，这种情况下不会发送通知。
+
+### 同步失败了，源文件会丢吗
+
+「仅新增」和「全同步」不会删除源端文件。「移动模式」只有在文件成功传输后才会删除源端文件；未成功的文件不会被删除，可以先修复问题再重试。
+
+### 目标端少了一些文件
+
+按顺序检查：
+
+1. 文件是否被排除规则过滤掉了（默认排除临时文件、系统缓存目录等）。
+2. 是否设置了最小 / 最大文件大小限制。
+3. 该文件是否在历史任务里显示失败，点开详情看具体错误。
+4. 目标端是否空间不足或没有写入权限。
+
+### 支持哪些网盘和存储
+
+OpenSync 通过 AList / OpenList 访问存储，所以支持范围取决于你的 AList / OpenList 版本和已配置的存储端，包括本地磁盘、WebDAV、S3 兼容对象存储以及 AList / OpenList 支持的各类网盘。
+
+### 可以多选源目录和目标目录吗
+
+可以。任务会把每个源目录同步到每个目标目录；选择多个源目录时，目标端会自动保留各自的目录层级，避免不同来源的文件混在一起。第一次使用仍建议先单源单目标跑通。
+
+### 任务运行很久会超时吗
+
+默认单次任务超时为 48 小时，可以在「系统设置」中调整，单位为**小时**，填 `0` 表示不限制。超时后 OpenSync 会停止扫描和传输，并请求取消远端任务。修改后只对新启动的任务生效。
+
+### 手机能使用吗
+
+可以。OpenSync 的网页适配了手机浏览器，在同一局域网内用手机访问 `http://设备IP:8023/` 即可查看和操作任务。
+
+### 想从公网访问怎么办
+
+建议通过带 HTTPS 的反向代理（例如 Nginx Proxy Manager、Caddy）访问，并配置强密码。不要直接把 `8023` 端口暴露到公网，也不要公开 `data/` 目录。
+
+## 升级、备份与数据安全
+
+### 升级 OpenSync
+
+1. 先备份挂载出来的 `data/` 目录。
+2. 拉取最新镜像（或指定版本镜像）并重新启动容器。
+3. 首次启动会自动完成数据库迁移。
+
+飞牛 fpk 用户直接在应用管理界面安装新版本 fpk 即可。
+
+### 数据保存在哪里
+
+Docker 部署的所有数据都在 `data/` 目录中，包括账号、引擎配置、任务、历史记录、日志和密钥。
+
+**请定期备份这个目录。** 丢失 `data/` 等于丢失所有任务和历史记录。
+
+### 升级时不要删除 secret.key
+
+`data/secret.key` 用于加密敏感信息和登录 Cookie。升级时保留它，否则旧登录状态和已保存的敏感信息可能失效。
+
+### 安全提醒
+
+- 不要公开 `data/` 目录，也不要把包含 AList / OpenList Token 的文件、日志或截图发到网上。
+- 如果误分享了运行数据目录，请立即更换相关 Token。
+- 漏洞反馈和加固建议见 [SECURITY.md](SECURITY.md)。
+
+## 高级配置
+
+大多数用户不需要修改下面的内容。Docker 部署时，可以在 `docker-compose.yml` 的 `environment` 中按需添加环境变量：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `TZ` | `Asia/Shanghai` | 容器和定时任务使用的时区 |
+| `PUID` / `PGID` | `1000` / `1000` | 运行容器使用的宿主机用户和用户组，用于避免产生 root 权限文件 |
+| `OPENSYNC_PORT` | `8023` | Web 服务端口 |
+| `OPENSYNC_EXPIRES` | `7` | 登录有效期，单位天 |
+| `OPENSYNC_TASK_SAVE` | `30` | 历史任务保留天数，`0` 表示永久保留 |
+| `OPENSYNC_TASK_TIMEOUT` | `48` | 单次任务超时，单位小时，`0` 表示不限制 |
+| `OPENSYNC_COPY_CONCURRENCY` | `5` | 单个任务的文件复制并发数，范围 1 到 100 |
+| `OPENSYNC_SCAN_CONCURRENCY` | `8` | 单个任务的目录扫描并发数，范围 1 到 20 |
+| `OPENSYNC_MAX_RETRIES` | `2` | 单个文件失败后的自动重试次数，`0` 表示不重试 |
+| `OPENSYNC_TRUSTED_PROXIES` | 空 | 信任的反向代理 CIDR 列表，逗号分隔 |
+
+历史任务保留时间、任务超时、并发和重试次数也可以直接登录网页，在「系统设置」中修改，不需要重启容器。
+
+> `data/config.ini` 一旦存在，除 TLS 相关配置外的环境变量在重启后将不再生效，以配置文件为准。
+
+### 自定义 Webhook
+
+在「通知配置」中选择「自定义 Webhook」后：
+
+- `URL` 必填，支持内网或本机地址。
+- HTTP 方法支持 `GET`、`POST`、`PUT`，默认 `POST`。
+- `GET` 会把标题和内容作为 `title`、`content` 查询参数发送。
+- `POST` / `PUT` 默认以 `application/json` 发送。
+- 请求体模板可选，必须是 JSON 对象，支持 `{title}` 和 `{content}` 占位符。
+- 自定义请求头可选，适合填写 `Authorization`、`X-Token` 等鉴权头。
+
+示例请求体：
 
 ```json
 {
-  "msg_type": "text",
-  "text": {
-    "title": "{title}",
-    "content": "{content}"
-  }
+  "title": "{title}",
+  "content": "{content}"
 }
 ```
 
@@ -214,7 +422,23 @@ docker compose exec --user "${PUID:-1000}:${PGID:-1000}" opensync ./opensync res
 }
 ```
 
-## docker-compose.yml
+### 使用 Docker 命令部署
+
+不使用 Docker Compose 时，也可以直接运行容器：
+
+```bash
+docker run -d \
+  --name opensync \
+  --restart unless-stopped \
+  -p 8023:8023 \
+  -v opensync-data:/app/data \
+  --tmpfs /tmp:mode=1777 \
+  -e TZ=Asia/Shanghai \
+  -e OPENSYNC_PORT=8023 \
+  chenbin3625/opensync:latest
+```
+
+完整的 `docker-compose.yml`：
 
 ```yaml
 services:
@@ -239,164 +463,15 @@ services:
       GIN_MODE: release
 ```
 
-每次发布同时推送版本号标签和 `latest`，`latest` 始终指向最新的稳定版本。
+每次发布同时提供版本号标签和 `latest`，`latest` 始终指向最新稳定版。
 
-## Docker 命令部署
+## 反馈与社区
 
-```bash
-docker run -d \
-  --name opensync \
-  --restart unless-stopped \
-  -p 8023:8023 \
-  -v opensync-data:/app/data \
-  --tmpfs /tmp:mode=1777 \
-  -e TZ=Asia/Shanghai \
-  -e SQLITE_TMPDIR=/tmp \
-  -e TMPDIR=/tmp \
-  -e OPENSYNC_BIND=0.0.0.0 \
-  -e OPENSYNC_PORT=8023 \
-  -e GIN_MODE=release \
-  chenbin3625/opensync:latest
-```
+- 遇到可复现的问题：提交 [Issue](https://github.com/chenbin3625/OpenSync/issues)。
+- 使用求助、部署经验、功能建议：发到 [Discussions](https://github.com/chenbin3625/OpenSync/discussions)。
+- 提交代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## 升级说明
-
-1. 备份当前挂载的 `data/` 目录。
-2. 拉取最新镜像或指定版本镜像。
-3. 重新启动容器。
-4. 首次启动会自动执行数据库迁移。
-
-升级时不要删除 `data/secret.key`，否则旧登录 Cookie 和敏感信息加解密会失效。Web 端密码重置只使用恢复密钥，不会要求输入或暴露 `data/secret.key`。
-
-## 配置
-
-定时任务时区始终由 `TZ` 控制；当 `data/config.ini` 不存在时，其它启动配置会读取环境变量：
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `TZ` | `Asia/Shanghai` | 容器和定时任务使用的时区 |
-| `PUID` / `PGID` | `1000` / `1000` | 容器运行使用的宿主机用户和用户组 |
-| `SQLITE_TMPDIR` / `TMPDIR` | `/tmp` | SQLite 和运行时使用的临时目录 |
-| `OPENSYNC_BIND` | `0.0.0.0` | HTTP 监听地址 |
-| `OPENSYNC_PORT` | `8023` | HTTP 服务端口 |
-| `OPENSYNC_EXPIRES` | `7` | 登录有效期，单位天 |
-| `OPENSYNC_LOG_LEVEL` | `1` | 文件日志等级 |
-| `OPENSYNC_CONSOLE_LEVEL` | `2` | 控制台日志等级 |
-| `OPENSYNC_LOG_SAVE` | `7` | 日志保留天数 |
-| `OPENSYNC_TASK_SAVE` | `30` | 历史任务保留天数，`0` 表示保留全部 |
-| `OPENSYNC_TASK_TIMEOUT` | `48` | 单次任务超时时间，单位小时，`0` 表示不限制 |
-| `OPENSYNC_COPY_CONCURRENCY` | `5` | 单个任务的复制并发数，范围 `1` 到 `100` |
-| `OPENSYNC_SCAN_CONCURRENCY` | `8` | 单个任务的扫描并发数，范围 `1` 到 `20` |
-| `OPENSYNC_MAX_RETRIES` | `2` | 单个复制项失败后的最大自动重试次数，`0` 表示不自动重试 |
-| `OPENSYNC_TRUSTED_PROXIES` | 空 | 信任的反向代理 CIDR 列表（逗号分隔） |
-| `OPENSYNC_CHOWN` | 自动 | 容器数据目录权限策略：`always` 强制递归修改，`never` 跳过，未设置时仅在目录所有者不匹配时修改 |
-
-端口：映射 `8023`，或你设置的 `OPENSYNC_PORT`。
-
-> 注意：`data/config.ini` 一旦存在，除 `OPENSYNC_TLS_CERT` / `OPENSYNC_TLS_KEY` 外的环境变量在重启后将不再生效，配置文件优先。历史任务保留、任务超时、复制/扫描并发和自动重试次数也可以在系统设置页在线调整。
-
-任务超时在系统设置、配置文件和环境变量中均以小时为单位：`1` 表示一小时，`0` 表示不限时，修改后对新启动的任务生效。v1.16.2 及更早版本的设置页曾将该单位误标为分钟；已有数值不会自动换算，如果曾为一小时填写 `60`，请改为 `1` 并重新启动任务。到达超时后会停止扫描和传输，并请求取消远端任务；远端响应和清理可能需要额外时间。
-
-## 数据持久化
-
-请持久化 `/app/data`，它包含数据库、密钥、配置和日志。丢失该目录意味着丢失账号、引擎、任务和历史记录。
-
-- Docker Compose 使用 `./data:/app/data`；Docker 命令示例使用命名卷 `opensync-data:/app/data`。
-- 容器启动时会根据 `PUID` / `PGID` 检查 `/app/data` 的文件归属，避免宿主机目录生成 root 权限文件。可通过 `OPENSYNC_CHOWN=always` 强制递归修改，或通过 `OPENSYNC_CHOWN=never` 跳过。
-- 升级时不要删除 `data/secret.key`，否则旧登录 Cookie 和敏感信息加解密会失效。Web 端密码重置只使用恢复密钥，不会暴露 `secret.key`。
-- 升级前建议先备份挂载的 `data/` 目录，首次启动会自动执行数据库迁移。
-- 不要公开 `data/` 目录或任何包含 AList / OpenList Token 的文件；如果误分享了运行数据目录，请及时更换 Token。
-
-## 本地构建镜像
-
-```bash
-docker build -t opensync .
-docker run -d \
-  --name opensync \
-  --restart unless-stopped \
-  -p 8023:8023 \
-  -v opensync-data:/app/data \
-  --tmpfs /tmp:mode=1777 \
-  -e TZ=Asia/Shanghai \
-  -e OPENSYNC_PORT=8023 \
-  -e GIN_MODE=release \
-  opensync
-```
-
-## 不使用 Docker 的生产构建
-
-先构建前端，构建结果会写入 Go 的静态资源嵌入目录：
-
-```bash
-cd frontend
-npm install
-npm run build
-```
-
-再构建并运行后端：
-
-```bash
-cd ../backend
-go build -o opensync ./cmd/server
-./opensync
-```
-
-## 本地开发
-
-启动后端：
-
-```bash
-cd backend
-go run ./cmd/server
-```
-
-启动前端开发服务：
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-前端开发服务地址：
-
-```text
-http://127.0.0.1:3000/
-```
-
-开发服务会把 `/svr` 接口代理到：
-
-```text
-http://localhost:8023
-```
-
-## 开发检查
-
-```bash
-cd frontend
-npm run build
-
-cd ../backend
-go test ./...
-```
-
-## 社区讨论
-
-GitHub Discussions 已开启：
-
-- `Q&A`：使用求助、部署排障和配置问题。
-- `Ideas`：功能建议、改进想法和路线讨论。
-- `Show and tell`：部署案例、截图、NAS 方案分享。
-
-可复现的问题请提交 Issue；使用问题和部署经验优先发 Discussions。
-
-## 安全
-
-不要提交或公开 `backend/data`、Docker 挂载的 `data/` 目录或任何包含 AList / OpenList Token 的文件。漏洞反馈和加固建议见 [SECURITY.md](SECURITY.md)。
-
-## 贡献
-
-欢迎提交 Issue、Discussion 和 Pull Request。提交代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+提交问题前请先搜索已有内容，并记得给 Token、私有路径、账号名和主机名打码。
 
 ## 许可证
 
