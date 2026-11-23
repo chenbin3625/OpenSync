@@ -6,10 +6,25 @@ import (
 )
 
 func (jt *JobTask) taskSubmit() {
+	jt.submitActive.Store(true)
 	jt.runCopyExecutor()
+	if !jt.isBreak() && jt.context().Err() == nil && jt.fatalError() == nil && jt.taskPersistenceError() == nil && jt.queuedCopyFailures.Load() == 0 {
+		jt.runDeferredDeletes()
+	}
 	jt.stopCopyMonitor()
 	persistErr := jt.persistRemainingTaskItems()
 	jt.finishSubmittedTask(persistErr)
+}
+
+func (jt *JobTask) cleanupAfterSubmitPanic(errMsg string) {
+	jt.cancelTaskContext()
+	jt.markWaitingAsAborted()
+	jt.waitScanDone()
+	jt.markWaitingAsAborted()
+	jt.copyWG.Wait()
+	jt.stopCopyMonitor()
+	_ = jt.persistRemainingTaskItems()
+	jt.finishFailedTask(errMsg)
 }
 
 func (jt *JobTask) runCopyExecutor() {
@@ -41,7 +56,14 @@ func (jt *JobTask) runCopyExecutor() {
 		jt.waitForCopyExecutorSignal(ticker.C)
 	}
 
-	if jt.isBreak() {
+	// Ensure the scan goroutine has fully exited before waiting on copyWG,
+	// stopping the monitor, persisting remaining items, or releasing JobClient.
+	if jt.isBreak() || jt.context().Err() != nil {
+		jt.cancelTaskContext()
+		jt.markWaitingAsAborted()
+	}
+	jt.waitScanDone()
+	if jt.isBreak() || jt.context().Err() != nil {
 		jt.markWaitingAsAborted()
 	}
 	jt.copyWG.Wait()
@@ -57,18 +79,21 @@ func (jt *JobTask) stopCopyExecutorIfBroken() bool {
 
 func (jt *JobTask) startAvailableCopyItems() bool {
 	started := false
-	limits := runtimeTaskLimits()
-	for jt.doingLen() < limits.CopyConcurrency {
+	for {
 		if jt.isBreak() {
 			jt.markWaitingAsAborted()
+			break
+		}
+		if !jt.tryAcquireCopySlot() {
 			break
 		}
 
 		item, ok := jt.Waiting.pop()
 		if !ok {
+			jt.releaseCopySlot()
 			break
 		}
-		jt.startCopyItem(item)
+		jt.startCopyItemTrackedWithSlot(item, nil)
 		started = true
 	}
 	return started
@@ -94,18 +119,30 @@ func (jt *JobTask) doingLen() int {
 }
 
 func (jt *JobTask) startCopyItem(item *CopyItem) {
-	jt.startCopyItemTracked(item, nil)
+	if jt.acquireCopySlot() {
+		jt.startCopyItemTrackedWithSlot(item, nil)
+	}
 }
 
 // startCopyItemTracked starts item and, when batch is non-nil, also reports
 // completion to it. Callers outside the submit executor use the batch handle to
 // wait for their own items instead of every copy in flight.
 func (jt *JobTask) startCopyItemTracked(item *CopyItem, batch *sync.WaitGroup) {
+	if !jt.acquireCopySlot() {
+		return
+	}
+	jt.startCopyItemTrackedWithSlot(item, batch)
+}
+
+func (jt *JobTask) startCopyItemTrackedWithSlot(item *CopyItem, batch *sync.WaitGroup) {
 	if jt.FirstSync.Load() == 0 {
 		jt.FirstSync.CompareAndSwap(0, time.Now().Unix())
 	}
 	key := jt.QueueNum.Add(1)
+	item.mu.Lock()
 	item.DoingKey = key
+	item.copySlotHeld = true
+	item.mu.Unlock()
 
 	jt.DoingMu.Lock()
 	jt.Doing[key] = item
@@ -127,17 +164,33 @@ func (jt *JobTask) startCopyItemTracked(item *CopyItem, batch *sync.WaitGroup) {
 // waitForCopySlot blocks until the number of in-flight copies drops below limit.
 // It reports false when the task was stopped or cancelled while waiting.
 func (jt *JobTask) waitForCopySlot(limit int) bool {
-	for {
-		if jt.isBreak() || jt.context().Err() != nil {
-			return false
-		}
-		if jt.doingLen() < limit {
-			return true
-		}
-		if !jt.waitForBreak(50 * time.Millisecond) {
-			return false
-		}
+	_ = limit
+	return jt.acquireCopySlot()
+}
+
+func (jt *JobTask) tryAcquireCopySlot() bool {
+	jt.initRuntime()
+	select {
+	case jt.copySem <- struct{}{}:
+		return true
+	default:
+		return false
 	}
+}
+
+func (jt *JobTask) acquireCopySlot() bool {
+	jt.initRuntime()
+	select {
+	case jt.copySem <- struct{}{}:
+		return true
+	case <-jt.context().Done():
+		return false
+	}
+}
+
+func (jt *JobTask) releaseCopySlot() {
+	jt.initRuntime()
+	<-jt.copySem
 }
 
 func (jt *JobTask) runCopyItem(item *CopyItem) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, Lock, Key, ShieldCheck, HelpCircle, ChevronDown } from 'lucide-react';
 import { getInitStatus, initializeUser, login, resetPwd } from '../../api/user';
@@ -19,6 +19,20 @@ import { Alert } from '../../components/common/Alert';
 import { cn } from '../../lib/utils';
 import { icon, surface, text } from '../../lib/styles';
 import { ThemeToggle } from '../../components/common/ThemeToggle';
+import type { UserInfo } from '../../types';
+
+const MIN_PASSWORD_LENGTH = 8;
+const MAX_PASSWORD_BYTES = 72;
+
+const validateNewPassword = (value: string): string | null => {
+  if (value.trim().length < MIN_PASSWORD_LENGTH) {
+    return `密码长度不能少于 ${MIN_PASSWORD_LENGTH} 位`;
+  }
+  if (new TextEncoder().encode(value).length > MAX_PASSWORD_BYTES) {
+    return `密码长度不能超过 ${MAX_PASSWORD_BYTES} 字节`;
+  }
+  return null;
+};
 
 /** 兜底重置命令：等宽整行可选中，便于原样复制到服务器执行 */
 function CliCommand({ command, children }: { command: string; children: React.ReactNode }) {
@@ -37,6 +51,7 @@ export default function Login() {
   const { setUserInfo, setAuthChecked } = useStore();
   const [loading, setLoading] = useState(false);
   const [checkingInit, setCheckingInit] = useState(true);
+  const [initCheckError, setInitCheckError] = useState(false);
   const [initialized, setInitialized] = useState(true);
 
   // 表单状态
@@ -48,6 +63,7 @@ export default function Login() {
   // 恢复密钥弹窗展示
   const [recoveryModalOpen, setRecoveryModalOpen] = useState(false);
   const [newRecoveryKey, setNewRecoveryKey] = useState('');
+  const [pendingInitUser, setPendingInitUser] = useState<UserInfo | null>(null);
 
   // 重置密码弹窗
   const [resetModalOpen, setResetModalOpen] = useState(false);
@@ -60,29 +76,43 @@ export default function Login() {
   // 恢复密钥丢失时的兜底说明（默认收起，避免干扰正常重置流程）
   const [showRecoveryHelp, setShowRecoveryHelp] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    getInitStatus()
-      .then((res) => {
-        if (!active) return;
-        setInitialized(res.data.initialized);
-      })
-      .catch((err) => {
-        console.error('getInitStatus error', err);
-      })
-      .finally(() => {
-        if (active) setCheckingInit(false);
-      });
-    return () => {
-      active = false;
-    };
+  const initCheckReqRef = useRef(0);
+
+  const checkInitStatus = useCallback(async () => {
+    const reqID = ++initCheckReqRef.current;
+    setCheckingInit(true);
+    setInitCheckError(false);
+    try {
+      const res = await getInitStatus();
+      if (reqID !== initCheckReqRef.current) return;
+      setInitialized(res.data.initialized);
+    } catch (err) {
+      if (reqID !== initCheckReqRef.current) return;
+      console.error('getInitStatus error', err);
+      setInitCheckError(true);
+    } finally {
+      if (reqID === initCheckReqRef.current) {
+        setCheckingInit(false);
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    void checkInitStatus();
+    return () => {
+      initCheckReqRef.current += 1;
+    };
+  }, [checkInitStatus]);
+
+  const submitInitialize = (userName: string, passwd: string) =>
+    initializeUser({ userName: userName, passwd: passwd });
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
 
-    if (!userName.trim()) {
+    const trimmedUserName = userName.trim();
+    if (!trimmedUserName) {
       setFormError('请输入用户名');
       return;
     }
@@ -92,6 +122,11 @@ export default function Login() {
     }
 
     if (!initialized) {
+      const passwordErr = validateNewPassword(passwd);
+      if (passwordErr) {
+        setFormError(passwordErr);
+        return;
+      }
       if (passwd !== confirmPasswd) {
         setFormError('两次输入的密码不一致');
         return;
@@ -101,7 +136,7 @@ export default function Login() {
     setLoading(true);
     try {
       if (initialized) {
-        const res = await login({ userName, passwd });
+        const res = await login({ userName: trimmedUserName, passwd });
         setUserInfo(res.data);
         setAuthChecked(true);
         toast.success('登录成功');
@@ -110,10 +145,9 @@ export default function Login() {
       }
 
       // 首次初始化
-      const res = await initializeUser({ userName: userName, passwd: passwd });
+      const res = await submitInitialize(trimmedUserName, passwd);
       const { recoveryKey, ...info } = res.data;
-      setUserInfo(info);
-      setAuthChecked(true);
+      setPendingInitUser(info);
       setNewRecoveryKey(recoveryKey);
       setRecoveryModalOpen(true);
     } catch (err) {
@@ -123,20 +157,54 @@ export default function Login() {
     }
   };
 
+  const finishRecoveryConfirmation = () => {
+    const initUser = pendingInitUser;
+    setPendingInitUser(null);
+    setNewRecoveryKey('');
+    setRecoveryModalOpen(false);
+    if (initUser) {
+      setUserInfo(initUser);
+      setAuthChecked(true);
+      navigate('/home');
+    }
+  };
+
+  const resetPasswordModalFields = () => {
+    setResetRecoveryKey('');
+    setResetNewPasswd('');
+    setResetConfirmPasswd('');
+    setResetError('');
+  };
+
+  const handleResetModalOpenChange = (open: boolean) => {
+    setResetModalOpen(open);
+    if (!open) {
+      resetPasswordModalFields();
+    }
+  };
+
   const handleResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setResetError('');
 
-    if (!resetUserName.trim()) {
+    const trimmedResetUserName = resetUserName.trim();
+    const trimmedRecoveryKey = resetRecoveryKey.trim();
+
+    if (!trimmedResetUserName) {
       setResetError('请输入用户名');
       return;
     }
-    if (!resetRecoveryKey.trim()) {
+    if (!trimmedRecoveryKey) {
       setResetError('请输入恢复密钥');
       return;
     }
     if (!resetNewPasswd) {
       setResetError('请输入新密码');
+      return;
+    }
+    const passwordErr = validateNewPassword(resetNewPasswd);
+    if (passwordErr) {
+      setResetError(passwordErr);
       return;
     }
     if (resetNewPasswd !== resetConfirmPasswd) {
@@ -147,11 +215,16 @@ export default function Login() {
     setResetLoading(true);
     try {
       const res = await resetPwd({
-        userName: resetUserName,
-        recoveryKey: resetRecoveryKey,
+        userName: trimmedResetUserName,
+        recoveryKey: trimmedRecoveryKey,
         passwd: resetNewPasswd,
       });
+      setPendingInitUser(null);
       setNewRecoveryKey(res.data);
+      if (!userName.trim()) {
+        setUserName(trimmedResetUserName);
+      }
+      resetPasswordModalFields();
       setResetModalOpen(false);
       setRecoveryModalOpen(true);
       toast.success('密码重置成功');
@@ -175,6 +248,27 @@ export default function Login() {
     return (
       <div className={pageShell}>
         <div className="animate-spin h-6 w-6 border-2 border-teal-600 border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  if (initCheckError) {
+    return (
+      <div className={pageShell}>
+        <div className="absolute right-4 top-4"><ThemeToggle /></div>
+        <div className={cn(surface.card, 'w-full max-w-md shadow-lg p-8 space-y-6 overflow-hidden')}>
+          <div className="text-center space-y-2">
+            <div className={cn(surface.iconTile, 'inline-flex h-16 w-16 mx-auto')}>
+              <img src="/favicon.svg" alt="OpenSync" className="h-10 w-10" />
+            </div>
+            <h1 className={text.pageTitle}>OpenSync</h1>
+            <p className={text.pageSubtitle}>无法连接服务以确认初始化状态</p>
+          </div>
+          <Alert>检查系统初始化状态失败，请确认服务端运行正常或检查网络连接后重试。</Alert>
+          <Button type="button" className="w-full" onClick={() => void checkInitStatus()}>
+            重试连接
+          </Button>
+        </div>
       </div>
     );
   }
@@ -210,11 +304,15 @@ export default function Login() {
             />
           </Field>
 
-          <Field label="密码" required>
+          <Field
+            label="密码"
+            required
+            hint={!initialized ? '密码长度为 8-72 字符' : undefined}
+          >
             <Input
               type="password"
               name="passwd"
-              placeholder="请输入密码"
+              placeholder={initialized ? '请输入密码' : '请输入 8-72 位密码'}
               value={passwd}
               onChange={(e) => setPasswd(e.target.value)}
               prefixIcon={<Lock className={icon.md} />}
@@ -261,7 +359,16 @@ export default function Login() {
       </div>
 
       {/* 恢复密钥展示弹窗（仅展示一次，强调必须保存） */}
-      <Dialog open={recoveryModalOpen} onOpenChange={setRecoveryModalOpen}>
+      <Dialog
+        open={recoveryModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            finishRecoveryConfirmation();
+          } else {
+            setRecoveryModalOpen(true);
+          }
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <div className="flex items-center gap-2 text-slate-900">
@@ -286,19 +393,16 @@ export default function Login() {
           <DialogFooter>
             <Button
               className="w-full"
-              onClick={() => {
-                setRecoveryModalOpen(false);
-                navigate('/home');
-              }}
+              onClick={finishRecoveryConfirmation}
             >
-              我已安全保存，进入系统
+              {pendingInitUser ? '我已安全保存，进入系统' : '我已安全保存，返回登录'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* 重置密码弹窗 */}
-      <Dialog open={resetModalOpen} onOpenChange={setResetModalOpen}>
+      <Dialog open={resetModalOpen} onOpenChange={handleResetModalOpenChange}>
         {/* 限高与滚动由 DialogContent 的内容区负责：弹窗自己不滚动，
             关闭按钮才不会跟着「找不到恢复密钥？」展开后的长文一起滚出视口 */}
         <DialogContent className="max-w-md">
@@ -385,10 +489,10 @@ export default function Login() {
               )}
             </div>
 
-            <Field label="新密码" required>
+            <Field label="新密码" required hint="密码长度为 8-72 字符">
               <Input
                 type="password"
-                placeholder="设置新密码"
+                placeholder="设置 8-72 位新密码"
                 value={resetNewPasswd}
                 onChange={(e) => setResetNewPasswd(e.target.value)}
                 prefixIcon={<Lock className={icon.md} />}
@@ -409,7 +513,7 @@ export default function Login() {
             </Field>
 
             <DialogFooter className="pt-2">
-              <Button type="button" variant="outline" onClick={() => setResetModalOpen(false)}>
+              <Button type="button" variant="outline" onClick={() => handleResetModalOpenChange(false)}>
                 取消
               </Button>
               <Button type="submit" loading={resetLoading}>

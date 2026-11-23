@@ -31,12 +31,12 @@ const jobs: JobItem[] = ['家庭影音资料与旅行照片每日自动备份到
 createRoot(document.getElementById('root')!).render(
   <main className="p-4 min-w-0">
     <div className="grid gap-4 grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]">
-      <HomeSidebar list={jobs} loading={false} selectedJobId={1} total={jobs.length}
+      <HomeSidebar list={jobs} loading={false} failed={false} selectedJobId={1} total={jobs.length}
         page={1} pageSize={12} onAdd={() => {}} onRunAll={() => {}} onSelectJob={() => {}}
-        onClearTaskDetail={() => {}} setPage={() => {}} />
+        setPage={() => {}} />
       <section className="min-w-0 p-4 sm:p-5">
         <TaskRealtimeHero currentTask={currentTask} onStop={() => {}}>
-          <TaskRealtimeRows activeTab={1} activeTabLabel="running" loading={false}
+          <TaskRealtimeRows activeTab={1} activeTabLabel="running" loading={false} error={false}
             page={1} pageSize={10} rows={rows} visibleRows={rows} total={rows.length}
             onPageChange={() => {}} />
         </TaskRealtimeHero>

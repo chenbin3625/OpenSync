@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"opensync/internal/mapper"
+	"opensync/internal/msg"
 )
 
 func TestFileListEntryUnmarshalAcceptsStringModified(t *testing.T) {
@@ -426,4 +427,170 @@ func TestNormalizeAlistTokenTrimsAndRejectsMissingRequiredToken(t *testing.T) {
 		}
 	}()
 	normalizeAlistToken(map[string]interface{}{}, true)
+}
+
+func TestIsAlistObjectNotFoundDistinguishesAlistJSONFromProxy404(t *testing.T) {
+	tests := []struct {
+		name         string
+		statusCode   int
+		contentType  string
+		body         string
+		wantNotFound bool
+		wantUnAuth   bool
+	}{
+		{
+			name:         "nginx html 404 is never object not found",
+			statusCode:   http.StatusNotFound,
+			contentType:  "text/html",
+			body:         "<html><head><title>404 Not Found</title></head><body>nginx</body></html>",
+			wantNotFound: false,
+		},
+		{
+			name:         "plain text 404 is never object not found",
+			statusCode:   http.StatusNotFound,
+			contentType:  "text/plain",
+			body:         "404 page not found",
+			wantNotFound: false,
+		},
+		{
+			name:         "non-alist json 404 is never object not found",
+			statusCode:   http.StatusNotFound,
+			contentType:  "application/json",
+			body:         `{"error":"route not found"}`,
+			wantNotFound: false,
+		},
+		{
+			name:         "alist json 200 envelope with code 500 object not found",
+			statusCode:   http.StatusOK,
+			contentType:  "application/json",
+			body:         `{"code":500,"message":"failed get objs: object not found","data":null}`,
+			wantNotFound: true,
+		},
+		{
+			name:         "alist json 200 envelope with code 404",
+			statusCode:   http.StatusOK,
+			contentType:  "application/json",
+			body:         `{"code":404,"message":"task not found","data":null}`,
+			wantNotFound: true,
+		},
+		{
+			name:         "alist json http 404 envelope with code 404",
+			statusCode:   http.StatusNotFound,
+			contentType:  "application/json",
+			body:         `{"code":404,"message":"object not found","data":null}`,
+			wantNotFound: true,
+		},
+		{
+			name:         "alist json 200 envelope with storage not found is real error",
+			statusCode:   http.StatusOK,
+			contentType:  "application/json",
+			body:         `{"code":500,"message":"storage not found; please add a storage first","data":null}`,
+			wantNotFound: false,
+		},
+		{
+			name:        "alist json http 401 triggers unauthorized error",
+			statusCode:  http.StatusUnauthorized,
+			contentType: "application/json",
+			body:        `{"code":401,"message":"token expired","data":null}`,
+			wantUnAuth:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tt.contentType)
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			client := &AlistClient{URL: server.URL, client: server.Client()}
+			_, err := client.PostContext(context.Background(), "/api/fs/get", alistPathRequest{Path: "/a/b.txt"}, nil)
+			if err == nil {
+				t.Fatal("PostContext() error = nil, want error")
+			}
+			if got := isAlistObjectNotFound(err); got != tt.wantNotFound {
+				t.Fatalf("isAlistObjectNotFound(%v) = %v, want %v", err, got, tt.wantNotFound)
+			}
+			if tt.wantUnAuth && err.Error() != msg.AlistUnAuth {
+				t.Fatalf("error = %q, want %q", err.Error(), msg.AlistUnAuth)
+			}
+
+			exists, fErr := client.FileExistsContext(context.Background(), "/a", "b.txt")
+			if tt.wantNotFound {
+				if exists || fErr != nil {
+					t.Fatalf("FileExistsContext() = (%v, %v), want (false, nil)", exists, fErr)
+				}
+			} else {
+				if exists || fErr == nil {
+					t.Fatalf("FileExistsContext() = (%v, %v), want (false, non-nil error)", exists, fErr)
+				}
+			}
+		})
+	}
+}
+
+func TestAlistClientGetFileInfoContextReturnsMetadataAndErrors(t *testing.T) {
+	t.Run("returns decoded file metadata", func(t *testing.T) {
+		var gotPath string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req alistPathRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			gotPath = req.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"name":"movie.mkv","size":4096,"is_dir":false,"modified":"2024-01-02T03:04:05Z","hash_info":{"md5":"DEADBEEF"}}}`))
+		}))
+		defer server.Close()
+
+		client := &AlistClient{URL: server.URL, client: server.Client()}
+		entry, exists, err := client.GetFileInfoContext(context.Background(), "/media/", "movie.mkv")
+		if err != nil {
+			t.Fatalf("GetFileInfoContext() error: %v", err)
+		}
+		if !exists || entry == nil {
+			t.Fatalf("GetFileInfoContext() = (%#v, %v), want entry and exists=true", entry, exists)
+		}
+		if gotPath != "/media/movie.mkv" {
+			t.Fatalf("requested path = %q, want /media/movie.mkv", gotPath)
+		}
+		wantMod := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC).Unix()
+		if entry.Name != "movie.mkv" || entry.Size != 4096 || entry.IsDir || entry.Modified != wantMod {
+			t.Fatalf("entry = %#v, want size=4096 isDir=false modified=%d", entry, wantMod)
+		}
+		meta := entry.Metadata()
+		if meta.Size != 4096 || meta.MD5 != "deadbeef" || meta.Modified != wantMod {
+			t.Fatalf("Metadata() = %#v", meta)
+		}
+	})
+
+	t.Run("not found returns false nil", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":500,"message":"failed get objs: object not found","data":null}`))
+		}))
+		defer server.Close()
+
+		client := &AlistClient{URL: server.URL, client: server.Client()}
+		entry, exists, err := client.GetFileInfoContext(context.Background(), "/media", "missing.mkv")
+		if err != nil || exists || entry != nil {
+			t.Fatalf("GetFileInfoContext(missing) = (%#v, %v, %v), want (nil, false, nil)", entry, exists, err)
+		}
+	})
+
+	t.Run("reverse proxy 404 returns error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte("<html>404 Not Found</html>"))
+		}))
+		defer server.Close()
+
+		client := &AlistClient{URL: server.URL, client: server.Client()}
+		entry, exists, err := client.GetFileInfoContext(context.Background(), "/media", "movie.mkv")
+		if err == nil || exists || entry != nil {
+			t.Fatalf("GetFileInfoContext(proxy 404) = (%#v, %v, %v), want (nil, false, non-nil err)", entry, exists, err)
+		}
+	})
 }

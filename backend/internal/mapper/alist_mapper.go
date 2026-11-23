@@ -43,9 +43,17 @@ func AddAlist(remark, url, userName, token string) (int64, error) {
 // UpdateAlist updates an alist entry
 func UpdateAlist(id int64, remark, url string, token *string) error {
 	if token != nil {
-		return ExecuteUpdate("UPDATE alist_list SET remark=?, url=?, token=? WHERE id=?", remark, url, *token, id)
+		return executeUpdateAffected(
+			errors.New(msg.AlistNotFound),
+			"UPDATE alist_list SET remark=?, url=?, token=? WHERE id=?",
+			remark, url, *token, id,
+		)
 	}
-	return ExecuteUpdate("UPDATE alist_list SET remark=?, url=? WHERE id=?", remark, url, id)
+	return executeUpdateAffected(
+		errors.New(msg.AlistNotFound),
+		"UPDATE alist_list SET remark=?, url=? WHERE id=?",
+		remark, url, id,
+	)
 }
 
 // RemoveAlist deletes an alist entry

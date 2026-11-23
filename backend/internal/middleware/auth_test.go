@@ -335,3 +335,197 @@ func TestAuthRequiredReusesRecentlyVerifiedCookieUser(t *testing.T) {
 		t.Fatalf("second authenticated status = %d, want cached success %d; body=%s", second.Code, http.StatusNoContent, second.Body.String())
 	}
 }
+
+func TestRevokeAuthSessionIgnoresStaleCookieAndRevokesCurrentCookie(t *testing.T) {
+	withAuthTestConfig(t)
+	gin.SetMode(gin.TestMode)
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE user_list(
+		id integer primary key,
+		userName text,
+		passwd text,
+		sessionVersion integer NOT NULL DEFAULT 1,
+		createTime integer DEFAULT 1
+	)`); err != nil {
+		t.Fatalf("create user_list: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO user_list(id, userName, passwd, sessionVersion) VALUES (7, 'admin', 'hash', 2)"); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	restoreDB := mapper.SetDBForTest(db)
+	t.Cleanup(restoreDB)
+
+	mintCookie := func(sessionVersion int64) *http.Cookie {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "http://example.test/", nil)
+		if err := SetAuthCookie(c, map[string]interface{}{
+			"id":             int64(7),
+			"userName":       "admin",
+			"passwd":         "hash",
+			"sessionVersion": sessionVersion,
+		}); err != nil {
+			t.Fatalf("SetAuthCookie() error: %v", err)
+		}
+		return w.Result().Cookies()[0]
+	}
+
+	staleCookie := mintCookie(1)
+	staleCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	staleCtx.Request = httptest.NewRequest(http.MethodDelete, "/svr/noAuth/login", nil)
+	staleCtx.Request.AddCookie(staleCookie)
+	if err := RevokeAuthSession(staleCtx); err != nil {
+		t.Fatalf("RevokeAuthSession(stale) error: %v", err)
+	}
+	var version int64
+	if err := db.QueryRow("SELECT sessionVersion FROM user_list WHERE id=7").Scan(&version); err != nil {
+		t.Fatalf("query sessionVersion: %v", err)
+	}
+	if version != 2 {
+		t.Fatalf("stale cookie bumped sessionVersion to %d, want unchanged 2", version)
+	}
+
+	activeCookie := mintCookie(2)
+	activeCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	activeCtx.Request = httptest.NewRequest(http.MethodDelete, "/svr/noAuth/login", nil)
+	activeCtx.Request.AddCookie(activeCookie)
+	if err := RevokeAuthSession(activeCtx); err != nil {
+		t.Fatalf("RevokeAuthSession(active) error: %v", err)
+	}
+	if err := db.QueryRow("SELECT sessionVersion FROM user_list WHERE id=7").Scan(&version); err != nil {
+		t.Fatalf("query sessionVersion: %v", err)
+	}
+	if version != 3 {
+		t.Fatalf("active cookie sessionVersion = %d, want 3", version)
+	}
+}
+
+func TestAuthRequiredPreservesCookieOnTransientDBError(t *testing.T) {
+	withAuthTestConfig(t)
+	gin.SetMode(gin.TestMode)
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	// Close DB immediately to trigger a non-ErrNoRows transient DB error.
+	_ = db.Close()
+	restoreDB := mapper.SetDBForTest(db)
+	t.Cleanup(restoreDB)
+
+	wCookie := httptest.NewRecorder()
+	cookieCtx, _ := gin.CreateTestContext(wCookie)
+	cookieCtx.Request = httptest.NewRequest(http.MethodGet, "http://example.test/", nil)
+	if err := SetAuthCookie(cookieCtx, map[string]interface{}{
+		"id":       int64(7),
+		"userName": "admin",
+		"passwd":   "hash",
+	}); err != nil {
+		t.Fatalf("SetAuthCookie() error: %v", err)
+	}
+	cookie := wCookie.Result().Cookies()[0]
+
+	router := gin.New()
+	router.Use(AuthRequired())
+	router.GET("/svr/user", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/svr/user", nil)
+	req.AddCookie(cookie)
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", resp.Code, http.StatusServiceUnavailable)
+	}
+	for _, c := range resp.Result().Cookies() {
+		if c.Name == cookieName && c.MaxAge < 0 {
+			t.Fatalf("transient DB error cleared auth cookie: %+v", c)
+		}
+	}
+}
+
+func TestAuthRequiredCSRFDefense(t *testing.T) {
+	withAuthTestConfig(t)
+	gin.SetMode(gin.TestMode)
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE user_list(
+		id integer primary key,
+		userName text,
+		passwd text,
+		createTime integer
+	)`); err != nil {
+		t.Fatalf("create user_list: %v", err)
+	}
+	user := map[string]interface{}{
+		"id":         int64(7),
+		"userName":   "admin",
+		"passwd":     "hash",
+		"createTime": int64(1),
+	}
+	if _, err := db.Exec("INSERT INTO user_list(id, userName, passwd, createTime) VALUES (7, 'admin', 'hash', 1)"); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	restoreDB := mapper.SetDBForTest(db)
+	t.Cleanup(restoreDB)
+
+	wCookie := httptest.NewRecorder()
+	cookieCtx, _ := gin.CreateTestContext(wCookie)
+	cookieCtx.Request = httptest.NewRequest(http.MethodGet, "https://example.test/", nil)
+	_ = SetAuthCookie(cookieCtx, user)
+	cookie := wCookie.Result().Cookies()[0]
+
+	router := gin.New()
+	router.Use(AuthRequired())
+	router.GET("/svr/job", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	router.POST("/svr/job", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	router.PUT("/svr/job", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	router.DELETE("/svr/job", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	cases := []struct {
+		name         string
+		method       string
+		host         string
+		origin       string
+		secFetchSite string
+		wantCode     int
+	}{
+		{"cross-site Sec-Fetch-Site POST", http.MethodPost, "example.test", "", "cross-site", http.StatusForbidden},
+		{"cross-origin Origin PUT", http.MethodPut, "example.test", "https://evil.example", "", http.StatusForbidden},
+		{"null Origin DELETE", http.MethodDelete, "example.test", "null", "", http.StatusForbidden},
+		{"same-origin Origin POST", http.MethodPost, "example.test", "https://example.test", "same-origin", http.StatusNoContent},
+		{"same-origin default port match", http.MethodPost, "example.test:443", "https://example.test", "same-origin", http.StatusNoContent},
+		{"no browser headers POST", http.MethodPost, "example.test", "", "", http.StatusNoContent},
+		{"safe GET with cross-site header", http.MethodGet, "example.test", "", "cross-site", http.StatusNoContent},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, "https://"+tc.host+"/svr/job", nil)
+			req.Host = tc.host
+			req.AddCookie(cookie)
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			if tc.secFetchSite != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.secFetchSite)
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			if w.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tc.wantCode, w.Body.String())
+			}
+		})
+	}
+}

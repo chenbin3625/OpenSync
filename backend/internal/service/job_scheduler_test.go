@@ -23,6 +23,28 @@ func TestBuildCronSpecFromSeparateFields(t *testing.T) {
 	}
 }
 
+func TestBuildCronSpecDefaultsOmittedSecondAndMinuteToZero(t *testing.T) {
+	spec, err := buildCronSpec(map[string]interface{}{
+		"hour": "3",
+	})
+	if err != nil {
+		t.Fatalf("buildCronSpec(hour=3) error: %v", err)
+	}
+	if spec != "0 0 3 * * *" {
+		t.Fatalf("buildCronSpec(hour=3) = %q, want %q", spec, "0 0 3 * * *")
+	}
+
+	spec2, err := buildCronSpec(map[string]interface{}{
+		"minute": "15",
+	})
+	if err != nil {
+		t.Fatalf("buildCronSpec(minute=15) error: %v", err)
+	}
+	if spec2 != "0 15 * * * *" {
+		t.Fatalf("buildCronSpec(minute=15) = %q, want %q", spec2, "0 15 * * * *")
+	}
+}
+
 func TestBuildCronSpecRejectsEmptySchedule(t *testing.T) {
 	spec, err := buildCronSpec(map[string]interface{}{})
 	if err != nil {

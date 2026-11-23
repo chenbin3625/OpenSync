@@ -7,7 +7,7 @@ import {
   defaultExclude, parseJobPathList, normalizeFormPaths,
   formatSchedulePlan, formatAlistLabel, type ScheduleValues,
 } from './homeUtils';
-import { usePathTree } from './usePathTree';
+import { useDirectoryRequests, usePathTree } from './usePathTree';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { NativeSelect } from '../../components/ui/native-select';
@@ -35,6 +35,12 @@ export interface JobFormDrawerProps {
   onSubmit: () => void;
 }
 
+type DirectorySelection = {
+  alistId: number;
+  sourcePaths?: string[];
+  destinationPaths?: string[];
+};
+
 export const cronFieldRanges: Record<string, [number, number]> = {
   second: [0, 59],
   minute: [0, 59],
@@ -45,18 +51,23 @@ export const cronFieldRanges: Record<string, [number, number]> = {
 };
 
 export function validateCronField(value: string, min: number, max: number): Promise<void> {
-  if (!value) return Promise.resolve();
-  const parts = value.split(',');
+  const normalized = value.trim();
+  if (!normalized) return Promise.resolve();
+  // Match backend isSafeCronField: no whitespace allowed inside a cron field
+  // (e.g. "1, 2" is rejected by backend).
+  if (/\s/.test(normalized)) {
+    return Promise.reject(new Error('不能包含空格'));
+  }
+  const parts = normalized.split(',');
   for (const part of parts) {
-    const trimmed = part.trim();
-    if (trimmed === '*') continue;
-    const stepMatch = trimmed.match(/^\*\/(\d+)$/);
+    if (part === '*') continue;
+    const stepMatch = part.match(/^\*\/(\d+)$/);
     if (stepMatch) {
       const step = Number(stepMatch[1]);
       if (step < 1 || step > max) return Promise.reject(new Error(`步长需在 1-${max}`));
       continue;
     }
-    const rangeMatch = trimmed.match(/^(\d+)-(\d+)(?:\/(\d+))?$/);
+    const rangeMatch = part.match(/^(\d+)-(\d+)(?:\/(\d+))?$/);
     if (rangeMatch) {
       const a = Number(rangeMatch[1]);
       const b = Number(rangeMatch[2]);
@@ -69,8 +80,8 @@ export function validateCronField(value: string, min: number, max: number): Prom
       }
       continue;
     }
-    if (/^\d+$/.test(trimmed)) {
-      const n = Number(trimmed);
+    if (/^\d+$/.test(part)) {
+      const n = Number(part);
       if (n < min || n > max) return Promise.reject(new Error(`值需在 ${min}-${max}`));
       continue;
     }
@@ -87,9 +98,11 @@ export default function JobFormDrawer({
   const submittingRef = useRef(false);
   const submitAbortRef = useRef<AbortController | null>(null);
   const treeLoadRequestRef = useRef(0);
+  const { readDirectory, cancelDirectoryRequests } = useDirectoryRequests();
 
   // 表单受控状态
-  const [alistId, setAlistId] = useState<number | undefined>(undefined);
+  const [directorySelection, setDirectorySelection] = useState<DirectorySelection | null>(null);
+  const alistId = directorySelection?.alistId;
   const [srcPath, setSrcPath] = useState<string | string[]>([]);
   const [dstPath, setDstPath] = useState<string | string[]>([]);
   const [remark, setRemark] = useState('');
@@ -117,10 +130,6 @@ export default function JobFormDrawer({
   const [exclude, setExclude] = useState(defaultExclude);
   const [formError, setFormError] = useState('');
 
-  const editingJobId = editingJob?.id;
-  const editingJobSrcPath = editingJob?.srcPath;
-  const editingJobDstPath = editingJob?.dstPath;
-
   const {
     treeData: srcTreeData,
     loadedKeys: srcLoadedKeys,
@@ -128,7 +137,7 @@ export default function JobFormDrawer({
     clearTree: clearSrcTree,
     onLoadData: onLoadSrcData,
     treeLoadError: srcTreeError,
-  } = usePathTree(alistId, treeLoadRequestRef);
+  } = usePathTree(alistId, treeLoadRequestRef, readDirectory);
 
   const {
     treeData: dstTreeData,
@@ -137,42 +146,48 @@ export default function JobFormDrawer({
     clearTree: clearDstTree,
     onLoadData: onLoadDstData,
     treeLoadError: dstTreeError,
-  } = usePathTree(alistId, treeLoadRequestRef);
+  } = usePathTree(alistId, treeLoadRequestRef, readDirectory);
 
-  const treeNotFoundContent = alistId
-    ? (srcTreeError || dstTreeError ? '目录加载失败，请检查引擎连接' : '请展开目录选择')
-    : '请先选择引擎';
+  const treeNotFoundContent = alistId ? '暂无可选目录' : '请先选择引擎';
 
   // 引擎切换时加载根目录
   useEffect(() => {
-    if (alistId) {
-      const requestID = ++treeLoadRequestRef.current;
-      setTreeLoading(true);
-      Promise.all([
-        loadSrcRoot(editingJobSrcPath),
-        loadDstRoot(editingJobDstPath),
-      ]).finally(() => {
-        if (requestID === treeLoadRequestRef.current) setTreeLoading(false);
-      });
-    } else {
-      treeLoadRequestRef.current += 1;
+    if (!visible || !directorySelection) {
       clearSrcTree();
       clearDstTree();
       setTreeLoading(false);
+      return undefined;
     }
-  }, [alistId, editingJobId, editingJobDstPath, editingJobSrcPath, loadSrcRoot, loadDstRoot, clearSrcTree, clearDstTree]);
+    const requestID = ++treeLoadRequestRef.current;
+    setTreeLoading(true);
+    void Promise.all([
+      loadSrcRoot(directorySelection.sourcePaths),
+      loadDstRoot(directorySelection.destinationPaths),
+    ]).finally(() => {
+      if (requestID === treeLoadRequestRef.current) setTreeLoading(false);
+    });
+    return () => {
+      treeLoadRequestRef.current += 1;
+      cancelDirectoryRequests();
+    };
+  }, [cancelDirectoryRequests, clearSrcTree, clearDstTree, directorySelection, loadSrcRoot, loadDstRoot, visible]);
 
   // 打开弹窗时初始化表单值
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      setDirectorySelection(null);
+      return;
+    }
     submittingRef.current = false;
     setSubmitting(false);
     setFormError('');
 
     if (editingJob) {
-      setAlistId(editingJob.alistId);
-      setSrcPath(parseJobPathList(editingJob.srcPath));
-      setDstPath(parseJobPathList(editingJob.dstPath));
+      const sourcePaths = parseJobPathList(editingJob.srcPath);
+      const destinationPaths = parseJobPathList(editingJob.dstPath);
+      setDirectorySelection({ alistId: editingJob.alistId, sourcePaths, destinationPaths });
+      setSrcPath(sourcePaths);
+      setDstPath(destinationPaths);
       setRemark(editingJob.remark || '');
       setMethod(editingJob.method ?? 0);
       setIsCron(editingJob.isCron ?? 1);
@@ -182,7 +197,7 @@ export default function JobFormDrawer({
       setUseCacheT(Boolean(editingJob.useCacheT));
       setScanIntervalS(editingJob.scanIntervalS ?? 0);
       setScanIntervalT(editingJob.scanIntervalT ?? 0);
-      setExclude(editingJob.exclude ?? defaultExclude);
+      setExclude(editingJob.exclude ?? '');
 
       const minObj = splitBytesToFileSize(editingJob.minFileSize);
       setMinFileSize(minObj.value);
@@ -201,7 +216,7 @@ export default function JobFormDrawer({
         day_of_week: editingJob.day_of_week || defaultCronFields.day_of_week,
       });
     } else {
-      setAlistId(alistList[0]?.id);
+      setDirectorySelection(null);
       setSrcPath([]);
       setDstPath([]);
       setRemark('');
@@ -219,10 +234,15 @@ export default function JobFormDrawer({
       setMaxFileSizeUnit('MB');
       setExclude(defaultExclude);
       setCronState({ ...defaultCronFields });
-      clearSrcTree();
-      clearDstTree();
     }
-  }, [visible, editingJob, alistList, clearSrcTree, clearDstTree]);
+  }, [visible, editingJob]);
+
+  const defaultAlistId = alistList[0]?.id;
+  useEffect(() => {
+    if (visible && !editingJob && defaultAlistId) {
+      setDirectorySelection((current) => current ?? { alistId: defaultAlistId });
+    }
+  }, [visible, editingJob, defaultAlistId]);
 
   // 取消提交
   useEffect(() => {
@@ -233,6 +253,14 @@ export default function JobFormDrawer({
     setSubmitting(false);
     return undefined;
   }, [visible]);
+
+  // 组件卸载时中止未完成的异步请求
+  useEffect(() => () => {
+    submitAbortRef.current?.abort();
+    submitAbortRef.current = null;
+    submittingRef.current = false;
+    cancelDirectoryRequests();
+  }, [cancelDirectoryRequests]);
 
   // 调度方案文本预览
   const scheduleValues: ScheduleValues = {
@@ -294,6 +322,14 @@ export default function JobFormDrawer({
     submitAbortRef.current = controller;
 
     try {
+      const normalizedCronState = {
+        second: cronState.second.trim(),
+        minute: cronState.minute.trim(),
+        hour: cronState.hour.trim(),
+        day: cronState.day.trim(),
+        month: cronState.month.trim(),
+        day_of_week: cronState.day_of_week.trim(),
+      };
       const jobData: Record<string, unknown> = {
         ...(editingJob ? { id: editingJob.id } : {}),
         alistId,
@@ -311,7 +347,7 @@ export default function JobFormDrawer({
         minFileSize: minBytes,
         maxFileSize: maxBytes,
         exclude: exclude.trim() || null,
-        ...cronState,
+        ...normalizedCronState,
       };
 
       await jobPost(jobData, { signal: controller.signal });
@@ -330,6 +366,15 @@ export default function JobFormDrawer({
     }
   };
 
+  const handleAlistChange = (value: number) => {
+    if (value === alistId) return;
+    setDirectorySelection({ alistId: value });
+    setSrcPath([]);
+    setDstPath([]);
+    clearSrcTree();
+    clearDstTree();
+  };
+
   return (
     <TooltipProvider>
       <Sheet open={visible} onOpenChange={(open) => !open && onClose()}>
@@ -345,7 +390,7 @@ export default function JobFormDrawer({
             <Field label="存储引擎" required>
               <NativeSelect
                 value={alistId ?? ''}
-                onChange={(e) => setAlistId(Number(e.target.value))}
+                onChange={(e) => handleAlistChange(Number(e.target.value))}
                 required
               >
                 <option value="" disabled>请选择引擎</option>

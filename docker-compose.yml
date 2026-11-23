@@ -4,7 +4,7 @@ services:
     container_name: opensync
     restart: unless-stopped
     ports:
-      - "8023:8023"
+      - "127.0.0.1:8023:8023"
     volumes:
       - ./data:/app/data
     tmpfs:
@@ -17,4 +17,6 @@ services:
       TMPDIR: /tmp
       OPENSYNC_BIND: 0.0.0.0
       OPENSYNC_PORT: 8023
+      OPENSYNC_ALLOW_INSECURE_HTTP: "true"
+      OPENSYNC_ALLOW_REMOTE_INIT: "true"
       GIN_MODE: release

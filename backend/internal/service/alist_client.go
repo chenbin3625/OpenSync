@@ -21,15 +21,18 @@ const (
 	// defaultMaxListResponseBytes is the cap for a single AList list/API
 	// response. Overridden by OPENSYNC_MAX_LIST_BYTES (must be >= 1MB).
 	defaultMaxListResponseBytes = 32 << 20 // 32MB
-	maxFileListEntries          = 100000
-	maxFileListPages            = 10000
 	maxAlistWaitBuckets         = 1024
 	alistValidationTimeout      = 30 * time.Second
 )
 
-// fileListPageSize is the AList /api/fs/list page size. Mutable in tests so
-// parallel remaining-page fetches can be proven without 500-entry fixtures.
-var fileListPageSize = 500
+// fileListPageSize, maxFileListEntries, and maxFileListPages govern AList
+// /api/fs/list pagination. Mutable in tests so pagination and cap enforcement
+// can be verified without large fixtures.
+var (
+	fileListPageSize   = 500
+	maxFileListEntries = 100000
+	maxFileListPages   = 10000
+)
 
 // maxResponseBytes is the current response-size cap. Kept as a mutable package
 // variable so tests can lower it; production uses loadMaxListResponseBytes().
@@ -173,20 +176,47 @@ func (e *alistStatusError) Error() string {
 	return fmt.Sprintf("%s (HTTP %d)", msg.CodeNot200, e.httpStatus)
 }
 
-// isAlistObjectNotFound reports whether err means "the requested path does not
-// exist": an HTTP 404, an AList business code 404, or AList's historical
-// 500-with-"object not found" response for a missing object. Deliberately
-// narrower than matching any "not found" text — infrastructure failures like
-// "storage not found" or a proxy 404 page must surface as real errors.
+// isAlistObjectNotFound reports whether err is a genuine AList JSON API
+// response indicating that the requested object or task does not exist: an
+// AList business code 404, or AList's historical code 500 with "object not
+// found". Non-AList HTTP 404 errors (e.g. a reverse proxy HTML/text 404 when
+// AList or its subpath is down) have alistCode == 0 and always return false, as
+// do infrastructure failures like "storage not found".
 func isAlistObjectNotFound(err error) bool {
 	var statusErr *alistStatusError
 	if !errors.As(err, &statusErr) {
 		return false
 	}
-	if statusErr.httpStatus == http.StatusNotFound || statusErr.alistCode == http.StatusNotFound {
+	if statusErr.alistCode == 0 {
+		return false
+	}
+	if statusErr.alistCode == http.StatusNotFound {
 		return true
 	}
-	return statusErr.alistCode == 500 && strings.Contains(strings.ToLower(statusErr.message), "object not found")
+	return statusErr.alistCode == http.StatusInternalServerError &&
+		strings.Contains(strings.ToLower(statusErr.message), "object not found")
+}
+
+// parseNonOKResponse interprets a non-200 HTTP response. If the body is a
+// genuine AList JSON API envelope (carrying non-zero code and a message field),
+// it delegates through checkAlistCode so auth eviction and business error codes
+// are preserved. Plain HTML/text or non-AList JSON responses (e.g. reverse
+// proxy 404 pages) produce an alistStatusError with alistCode == 0.
+func (c *AlistClient) parseNonOKResponse(httpStatus int, body []byte) error {
+	var res struct {
+		Code    int     `json:"code"`
+		Message *string `json:"message"`
+	}
+	if len(body) > 0 && json.Unmarshal(body, &res) == nil && res.Code != 0 && res.Code != http.StatusOK && res.Message != nil {
+		if err := c.checkAlistCode(res.Code, *res.Message); err != nil {
+			var statusErr *alistStatusError
+			if errors.As(err, &statusErr) {
+				statusErr.httpStatus = httpStatus
+			}
+			return err
+		}
+	}
+	return &alistStatusError{httpStatus: httpStatus}
 }
 
 func (c *AlistClient) doRequestContextLimit(ctx context.Context, method, apiPath string, data interface{}, params map[string]string, responseLimit int64) (json.RawMessage, error) {
@@ -194,15 +224,15 @@ func (c *AlistClient) doRequestContextLimit(ctx context.Context, method, apiPath
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer drainAndCloseBody(resp.Body)
 
 	respBody, err := readAllWithLimit(resp.Body, responseLimit)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode != 200 {
-		return nil, &alistStatusError{httpStatus: resp.StatusCode}
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.parseNonOKResponse(resp.StatusCode, respBody)
 	}
 
 	var res alistResponse
@@ -218,7 +248,7 @@ func (c *AlistClient) doRequestContextLimit(ctx context.Context, method, apiPath
 func (c *AlistClient) checkAlistCode(code int, message string) error {
 	if code == 401 {
 		if c.AlistID > 0 {
-			removeCachedAlistClient(c.AlistID)
+			evictCachedAlistClient(c.AlistID, c)
 		}
 		return errors.New(msg.AlistUnAuth)
 	}
@@ -387,7 +417,7 @@ func (c *AlistClient) enforceMaxWaitBucketsLocked() {
 	}
 }
 
-// FileListResponse represents a file list entry
+// FileListEntry represents an AList file or directory metadata entry.
 type FileListEntry struct {
 	Name     string      `json:"name"`
 	IsDir    bool        `json:"is_dir"`
@@ -454,6 +484,11 @@ type FileMetadata struct {
 	Size     int64
 	MD5      string
 	Modified int64
+}
+
+// Metadata extracts normalized comparison metadata (size, md5, modified).
+func (e FileListEntry) Metadata() FileMetadata {
+	return e.metadata()
 }
 
 func (e FileListEntry) metadata() FileMetadata {
@@ -551,6 +586,31 @@ func (c *AlistClient) FilePathList(ctx context.Context, path string) ([]map[stri
 	return result, nil
 }
 
+// GetFileInfoContext fetches metadata for a direct child named `name` in `dir`
+// via /api/fs/get. It returns (entry, true, nil) when found, (nil, false, nil)
+// when AList reports the object does not exist, and (nil, false, err) on
+// transport, auth, proxy, or decode errors.
+func (c *AlistClient) GetFileInfoContext(ctx context.Context, dir, name string) (*FileListEntry, bool, error) {
+	dir = strings.TrimRight(strings.TrimSpace(dir), "/")
+	filePath := dir + "/" + strings.TrimLeft(strings.TrimSpace(name), "/")
+	data, err := c.PostContext(ctx, "/api/fs/get", alistPathRequest{Path: filePath}, nil)
+	if err != nil {
+		if isAlistObjectNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, false, nil
+	}
+	var entry FileListEntry
+	if err := json.Unmarshal(trimmed, &entry); err != nil {
+		return nil, false, err
+	}
+	return &entry, true, nil
+}
+
 // FileExistsContext reports whether a direct child named `name` exists in `dir`.
 func (c *AlistClient) FileExistsContext(ctx context.Context, dir, name string) (bool, error) {
 	return c.FileGetContext(ctx, dir, name)
@@ -558,16 +618,8 @@ func (c *AlistClient) FileExistsContext(ctx context.Context, dir, name string) (
 
 // FileGetContext checks a single file via /api/fs/get (cheaper than listing the directory).
 func (c *AlistClient) FileGetContext(ctx context.Context, dir, name string) (bool, error) {
-	dir = strings.TrimRight(strings.TrimSpace(dir), "/")
-	filePath := dir + "/" + strings.TrimSpace(name)
-	_, err := c.PostContext(ctx, "/api/fs/get", alistPathRequest{Path: filePath}, nil)
-	if err != nil {
-		if isAlistObjectNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	_, exists, err := c.GetFileInfoContext(ctx, dir, name)
+	return exists, err
 }
 
 func (c *AlistClient) MkdirContext(ctx context.Context, path string, scanInterval int) error {

@@ -58,6 +58,8 @@ export default function HomeOverview({
 }: HomeOverviewProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const isEnabled = selectedJob.enable === 1;
+  const name = getJobName(selectedJob);
+  const schedule = formatSchedule(selectedJob);
   const fileSizeRange = formatFileSizeRange(selectedJob.minFileSize, selectedJob.maxFileSize);
 
   return (
@@ -67,11 +69,11 @@ export default function HomeOverview({
         <div
           className={cn(
             surface.card,
-            'p-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4'
+            'p-4 sm:p-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4'
           )}
         >
-          <div className="flex items-start gap-4 min-w-0 flex-1">
-            <div className={cn(surface.iconTile, 'h-12 w-12')}>
+          <div className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-3 sm:gap-x-4">
+            <div className={cn(surface.iconTile, 'h-10 w-10 sm:row-span-2 sm:h-12 sm:w-12')}>
               {isEnabled ? (
                 <CheckCircle2 className={cn(icon.lg, 'text-emerald-600')} />
               ) : (
@@ -79,34 +81,34 @@ export default function HomeOverview({
               )}
             </div>
 
-            <div className="space-y-2 min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2 min-w-0">
-                <h1 className={cn(text.pageTitle, 'w-full min-w-0 break-all')} title={getJobName(selectedJob)}>
-                  {getJobName(selectedJob)}
-                </h1>
-                <Badge variant={isEnabled ? 'success' : 'secondary'}>
-                  {isEnabled ? '已启用' : '已暂停'}
-                </Badge>
-                <Badge variant="outline">
-                  {methodNames[selectedJob.method] || selectedJob.method}
-                </Badge>
-              </div>
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              <h1 className={cn(text.pageTitle, 'w-full min-w-0 break-all')} title={name}>
+                {name}
+              </h1>
+              <Badge variant={isEnabled ? 'success' : 'secondary'}>
+                {isEnabled ? '已启用' : '已暂停'}
+              </Badge>
+              <Badge variant="outline">
+                {methodNames[selectedJob.method] || selectedJob.method}
+              </Badge>
+            </div>
 
-              {/* 统计小标签 */}
-              <div className={cn('flex items-center gap-4 pt-0.5 flex-wrap', text.muted)}>
-                <span className="flex items-center gap-1.5">
-                  <Folder className={cn(icon.sm, 'text-slate-400')} />
-                  源: <strong className="text-slate-700">{countJobPaths(selectedJob.srcPath)}</strong> 个
+            <div className={cn('col-span-2 flex min-w-0 flex-wrap items-start gap-x-4 gap-y-2 sm:col-span-1', text.muted)}>
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                <Folder className={cn(icon.sm, 'text-slate-400')} aria-hidden="true" />
+                源: <strong className="text-slate-700">{countJobPaths(selectedJob.srcPath)}</strong> 个
+              </span>
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                <HardDrive className={cn(icon.sm, 'text-slate-400')} aria-hidden="true" />
+                目标: <strong className="text-slate-700">{countJobPaths(selectedJob.dstPath)}</strong> 个
+              </span>
+              <span className="inline-flex min-w-0 items-start gap-1.5">
+                <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                  <Clock className={cn(icon.sm, 'text-slate-400')} aria-hidden="true" />
+                  调度:
                 </span>
-                <span className="flex items-center gap-1.5">
-                  <HardDrive className={cn(icon.sm, 'text-slate-400')} />
-                  目标: <strong className="text-slate-700">{countJobPaths(selectedJob.dstPath)}</strong> 个
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <Clock className={cn(icon.sm, 'text-slate-400')} />
-                  调度: <strong className="text-slate-700">{formatSchedule(selectedJob)}</strong>
-                </span>
-              </div>
+                <strong className="min-w-0 wrap-anywhere text-slate-700">{schedule}</strong>
+              </span>
             </div>
           </div>
 
@@ -165,7 +167,7 @@ export default function HomeOverview({
             <SectionHeading title="规则与调度" icon={Filter} bordered />
 
             <div className="space-y-3">
-              <InfoRow label="执行方式">{formatSchedule(selectedJob)}</InfoRow>
+              <InfoRow label="执行方式">{schedule}</InfoRow>
               <InfoRow label="文件大小过滤">{fileSizeRange || '不限制大小'}</InfoRow>
               <InfoRow label="排除规则 (Ignore)">
                 {selectedJob.exclude ? (

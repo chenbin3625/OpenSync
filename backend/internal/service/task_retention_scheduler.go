@@ -4,6 +4,7 @@ import (
 	"log"
 	"opensync/internal/config"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -14,11 +15,18 @@ const taskRetentionCleanupCronSpec = "0 0 3 * * *"
 var (
 	taskRetentionSchedulerMu sync.Mutex
 	taskRetentionCron        *cron.Cron
+	taskRetentionRunning     atomic.Bool
+	runRetentionCleanupFn    = CleanupExpiredTasks
 )
 
 // RunTaskRetentionCleanup deletes task history older than the configured retention window.
 func RunTaskRetentionCleanup() {
-	CleanupExpiredTasks(log.Default(), config.GetConfig().Server.TaskSave, time.Now())
+	if !taskRetentionRunning.CompareAndSwap(false, true) {
+		log.Printf("Skipping task retention cleanup because a previous run is still active")
+		return
+	}
+	defer taskRetentionRunning.Store(false)
+	runRetentionCleanupFn(log.Default(), config.GetConfig().Server.TaskSave, time.Now())
 }
 
 // StartTaskRetentionScheduler runs cleanup daily at 03:00 in the scheduler timezone.

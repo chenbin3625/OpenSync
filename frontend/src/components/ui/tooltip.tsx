@@ -2,7 +2,19 @@ import * as React from 'react';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { cn } from '../../lib/utils';
 
-export const TooltipProvider = TooltipPrimitive.Provider;
+const TooltipProviderContext = React.createContext(false);
+
+export function TooltipProvider({
+  children,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Provider>) {
+  return (
+    <TooltipProviderContext.Provider value={true}>
+      <TooltipPrimitive.Provider {...props}>{children}</TooltipPrimitive.Provider>
+    </TooltipProviderContext.Provider>
+  );
+}
+
 export const TooltipRoot = TooltipPrimitive.Root;
 export const TooltipTrigger = TooltipPrimitive.Trigger;
 
@@ -10,23 +22,25 @@ export const TooltipContent = React.forwardRef<
   React.ElementRef<typeof TooltipPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
 >(({ className, sideOffset = 4, ...props }, ref) => (
-  <TooltipPrimitive.Content
-    ref={ref}
-    sideOffset={sideOffset}
-    // 与视口边缘留出余量，避免卡片贴边时被裁掉半个字
-    collisionPadding={8}
-    className={cn(
-      // 限高 + 可滚动：悬浮卡片经常用来展示服务端返回的长文本（失败原因、重试记录），
-      // 不限高时卡片会长到顶出视口上方，被切掉的开头既看不到也滚不到，
-      // 所以这里不能整体裁掉溢出内容
-      'z-50 max-h-[min(60vh,20rem)] overflow-y-auto overscroll-contain rounded-md bg-tooltip px-3 py-1.5 text-xs text-tooltip-foreground shadow-md',
-      // 长文本保留服务端换行，并在超长不分词的内容上强制折行
-      'max-w-xs whitespace-pre-wrap break-words',
-      'animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2',
-      className
-    )}
-    {...props}
-  />
+  <TooltipPrimitive.Portal>
+    <TooltipPrimitive.Content
+      ref={ref}
+      sideOffset={sideOffset}
+      // 与视口边缘留出余量，避免卡片贴边时被裁掉半个字
+      collisionPadding={8}
+      className={cn(
+        // 限高 + 可滚动：悬浮卡片经常用来展示服务端返回的长文本（失败原因、重试记录），
+        // 不限高时卡片会长到顶出视口上方，被切掉的开头既看不到也滚不到，
+        // 所以这里不能整体裁掉溢出内容
+        'z-50 max-h-[min(60vh,20rem)] overflow-y-auto overscroll-contain rounded-md bg-tooltip px-3 py-1.5 text-xs text-tooltip-foreground shadow-md',
+        // 长文本保留服务端换行，并在超长不分词的内容上强制折行
+        'max-w-xs whitespace-pre-wrap break-words',
+        'animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2',
+        className
+      )}
+      {...props}
+    />
+  </TooltipPrimitive.Portal>
 ));
 TooltipContent.displayName = TooltipPrimitive.Content.displayName;
 
@@ -53,19 +67,19 @@ export function Tooltip({
   children: React.ReactNode;
   className?: string;
 }) {
+  const hasProvider = React.useContext(TooltipProviderContext);
   const tip = title ?? content;
-  return (
-    <TooltipProvider delayDuration={200}>
-      <TooltipPrimitive.Root>
-        {tip == null ? (
-          children
-        ) : (
-          <>
-            <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
-            <TooltipContent className={className}>{tip}</TooltipContent>
-          </>
-        )}
-      </TooltipPrimitive.Root>
-    </TooltipProvider>
+  const root = (
+    <TooltipPrimitive.Root>
+      {tip == null ? (
+        children
+      ) : (
+        <>
+          <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
+          <TooltipContent className={className}>{tip}</TooltipContent>
+        </>
+      )}
+    </TooltipPrimitive.Root>
   );
+  return hasProvider ? root : <TooltipProvider delayDuration={200}>{root}</TooltipProvider>;
 }

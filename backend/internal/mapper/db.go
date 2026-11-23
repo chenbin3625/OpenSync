@@ -1,6 +1,7 @@
 package mapper
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"net/url"
 	"opensync/internal/config"
 	"opensync/internal/msg"
-	"opensync/pkg/util"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,7 +23,6 @@ import (
 
 var (
 	db           *sql.DB
-	once         = &sync.Once{}
 	dbMu         sync.RWMutex
 	batchWriteMu sync.Mutex
 )
@@ -31,34 +30,83 @@ var (
 const maxPageSize = 500
 const defaultUnpagedLimit = 500
 const sqliteMaxOpenConns = 12
+const maxBusyRetries = 3
 
-// InitDB initializes the database connection
+// maxFloat64BeforeInt64Overflow is 2^63, the exact float64 boundary where
+// conversion to int64 overflows (and saturates to math.MaxInt64 on ARM64).
+const maxFloat64BeforeInt64Overflow = float64(uint64(1) << 63)
+
+// InitDB initializes the database connection.
 func InitDB() *sql.DB {
-	once.Do(func() {
-		cfg := config.GetConfig()
-		var err error
-		ensureSQLiteFileMode(cfg.DB.DBName)
-		db, err = sql.Open("sqlite", sqliteDSN(cfg.DB.DBName))
-		if err != nil {
-			log.Fatalf("Failed to open database: %v", err)
-		}
-		db.SetMaxOpenConns(sqliteMaxOpenConns)
-		db.SetMaxIdleConns(sqliteMaxOpenConns)
-		// Keep explicit PRAGMAs as a startup sanity pass; sqliteDSN applies
-		// them to each new pooled connection.
-		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-			log.Printf("Failed to set sqlite journal_mode: %v", err)
-		}
-		if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-			log.Printf("Failed to set sqlite busy_timeout: %v", err)
-		}
-		for _, pragma := range []string{"PRAGMA foreign_keys=ON", "PRAGMA temp_store=MEMORY", "PRAGMA cache_size=-16384", "PRAGMA mmap_size=67108864"} {
-			if _, err := db.Exec(pragma); err != nil {
-				log.Printf("Failed to set sqlite %s: %v", pragma, err)
-			}
-		}
-	})
+	dbMu.RLock()
+	if db != nil {
+		handle := db
+		dbMu.RUnlock()
+		return handle
+	}
+	dbMu.RUnlock()
+
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	if db != nil {
+		return db
+	}
+
+	cfg := config.GetConfig()
+	newDB, err := openConfiguredDB(cfg.DB.DBName)
+	if err != nil {
+		log.Fatalf("Failed to open database: %v", err)
+	}
+	db = newDB
+	resetFTSAvailability()
 	return db
+}
+
+func openConfiguredDB(dbName string) (*sql.DB, error) {
+	ensureSQLiteFileMode(dbName)
+	newDB, err := sql.Open("sqlite", sqliteDSN(dbName))
+	if err != nil {
+		return nil, err
+	}
+
+	if isIsolatedMemoryDB(dbName) {
+		// Isolated in-memory databases create a separate empty database per
+		// connection, so keep the pool capped to a single connection.
+		newDB.SetMaxOpenConns(1)
+		newDB.SetMaxIdleConns(1)
+	} else {
+		newDB.SetMaxOpenConns(sqliteMaxOpenConns)
+		newDB.SetMaxIdleConns(sqliteMaxOpenConns)
+	}
+
+	// Keep explicit PRAGMAs as a startup sanity pass on the local handle before
+	// publishing it; sqliteDSN also applies them to every pooled connection.
+	// Set auto_vacuum=INCREMENTAL before journal_mode=WAL so brand-new empty DBs
+	// record incremental vacuum mode before page 1 is initialized.
+	pragmas := []string{
+		"PRAGMA auto_vacuum=INCREMENTAL",
+		"PRAGMA busy_timeout=5000",
+	}
+	if !isMemoryDB(dbName) {
+		pragmas = append(pragmas,
+			"PRAGMA journal_mode=WAL",
+			"PRAGMA synchronous=NORMAL",
+		)
+	}
+	pragmas = append(pragmas,
+		"PRAGMA foreign_keys=ON",
+		"PRAGMA temp_store=MEMORY",
+		"PRAGMA cache_size=-16384",
+		"PRAGMA mmap_size=67108864",
+	)
+	for _, pragma := range pragmas {
+		if _, err := newDB.Exec(pragma); err != nil {
+			log.Printf("Failed to set sqlite %s: %v", pragma, err)
+		}
+	}
+
+	tightenSQLiteFilePermissions(dbName)
+	return newDB, nil
 }
 
 func ensureSQLiteFileMode(dbName string) {
@@ -80,13 +128,56 @@ func ensureSQLiteFileMode(dbName string) {
 	}
 }
 
-func sqliteDBPath(dbName string) (string, bool) {
+func tightenSQLiteFilePermissions(dbName string) {
+	path, ok := sqliteDBPath(dbName)
+	if !ok {
+		return
+	}
+	for _, target := range []string{path, path + "-wal", path + "-shm", path + "-journal"} {
+		if err := os.Chmod(target, 0600); err != nil && !os.IsNotExist(err) {
+			log.Printf("Failed to tighten sqlite file permissions for %s: %v", target, err)
+		}
+	}
+}
+
+func isMemoryDB(dbName string) bool {
 	if dbName == "" || dbName == ":memory:" {
+		return true
+	}
+	if !strings.HasPrefix(dbName, "file:") {
+		return false
+	}
+	u, err := url.Parse(dbName)
+	if err != nil {
+		return false
+	}
+	if u.Query().Get("mode") == "memory" {
+		return true
+	}
+	return u.Path == ":memory:" || u.Opaque == ":memory:" || strings.HasPrefix(u.Opaque, ":memory:")
+}
+
+func isIsolatedMemoryDB(dbName string) bool {
+	if !isMemoryDB(dbName) {
+		return false
+	}
+	if !strings.HasPrefix(dbName, "file:") {
+		return true
+	}
+	u, err := url.Parse(dbName)
+	if err != nil {
+		return true
+	}
+	return u.Query().Get("cache") != "shared"
+}
+
+func sqliteDBPath(dbName string) (string, bool) {
+	if isMemoryDB(dbName) {
 		return "", false
 	}
 	if strings.HasPrefix(dbName, "file:") {
 		u, err := url.Parse(dbName)
-		if err != nil || strings.Contains(u.RawQuery, "mode=memory") {
+		if err != nil {
 			return "", false
 		}
 		if u.Path != "" {
@@ -105,8 +196,18 @@ func sqliteDSN(dbName string) string {
 		return dbName
 	}
 	pragmas := url.Values{}
+	pragmas.Add("_pragma", "auto_vacuum(INCREMENTAL)")
 	pragmas.Add("_pragma", "busy_timeout(5000)")
-	pragmas.Add("_pragma", "journal_mode(WAL)")
+	if !isMemoryDB(dbName) {
+		pragmas.Add("_pragma", "journal_mode(WAL)")
+		pragmas.Add("_pragma", "synchronous(NORMAL)")
+	}
+	// Apply per connection, not just the first pooled connection: SQLite keeps
+	// page cache, temp store and mmap size as connection-local settings.
+	pragmas.Add("_pragma", "foreign_keys(ON)")
+	pragmas.Add("_pragma", "temp_store(MEMORY)")
+	pragmas.Add("_pragma", "cache_size(-16384)")
+	pragmas.Add("_pragma", "mmap_size(67108864)")
 	query := pragmas.Encode()
 	if strings.HasPrefix(dbName, "file:") {
 		sep := "?"
@@ -133,14 +234,14 @@ func GetDB() *sql.DB {
 // CloseDB closes the global database handle and allows later reinitialization.
 func CloseDB() error {
 	dbMu.Lock()
-	defer dbMu.Unlock()
-	if db == nil {
+	handle := db
+	db = nil
+	resetFTSAvailability()
+	dbMu.Unlock()
+	if handle == nil {
 		return nil
 	}
-	err := db.Close()
-	db = nil
-	once = &sync.Once{}
-	return err
+	return handle.Close()
 }
 
 // SetDBForTest swaps the package database handle and returns a restore function.
@@ -148,22 +249,31 @@ func SetDBForTest(testDB *sql.DB) func() {
 	dbMu.Lock()
 	oldDB := db
 	db = testDB
+	resetFTSAvailability()
 	dbMu.Unlock()
 	return func() {
 		dbMu.Lock()
 		db = oldDB
+		resetFTSAvailability()
 		dbMu.Unlock()
 	}
 }
 
 // FetchAllToTable executes a query and returns results as []map[string]interface{}
 func FetchAllToTable(query string, args ...interface{}) ([]map[string]interface{}, error) {
-	rows, err := GetDB().Query(query, args...)
+	return fetchAllToTableContext(context.Background(), query, args...)
+}
+
+func fetchAllToTableContext(ctx context.Context, query string, args ...interface{}) ([]map[string]interface{}, error) {
+	rows, err := GetDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanRowsToTable(rows)
+}
 
+func scanRowsToTable(rows *sql.Rows) ([]map[string]interface{}, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, err
@@ -219,133 +329,184 @@ func ExecuteUpdate(query string, args ...interface{}) error {
 	return err
 }
 
+func executeUpdateAffected(notFoundErr error, query string, args ...interface{}) error {
+	result, err := GetDB().Exec(query, args...)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return notFoundErr
+	}
+	return nil
+}
+
+func isSQLiteBusyOrLocked(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	primary := sqliteErr.Code() & 0xff
+	return primary == sqlite3.SQLITE_BUSY || primary == sqlite3.SQLITE_LOCKED
+}
+
+func retryOnBusy(ctx context.Context, fn func() error) error {
+	for attempt := 0; ; attempt++ {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		if attempt >= maxBusyRetries || !isSQLiteBusyOrLocked(err) {
+			return err
+		}
+		delay := time.Duration(1<<attempt) * 100 * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
+// runImmediateTx runs fn inside a BEGIN IMMEDIATE transaction on a dedicated
+// connection so WAL write transactions acquire the write lock up front instead
+// of upgrading from a read snapshot (which would hit SQLITE_BUSY_SNAPSHOT).
+func runImmediateTx(ctx context.Context, handle *sql.DB, fn func(ctx context.Context, conn *sql.Conn) error) error {
+	conn, err := handle.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+	if err := fn(ctx, conn); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// withImmediateWriteTx serializes multi-statement write transactions across
+// goroutines, runs BEGIN IMMEDIATE, and retries bounded times on busy/locked.
+func withImmediateWriteTx(ctx context.Context, fn func(ctx context.Context, conn *sql.Conn) error) error {
+	batchWriteMu.Lock()
+	defer batchWriteMu.Unlock()
+	return retryOnBusy(ctx, func() error {
+		return runImmediateTx(ctx, GetDB(), fn)
+	})
+}
+
 // ExecuteMany executes batch operations
 func ExecuteMany(query string, argsList [][]interface{}) error {
 	if len(argsList) == 0 {
 		return nil
 	}
-	// SQLite has one writer; serialize batches from different sync tasks.
-	batchWriteMu.Lock()
-	defer batchWriteMu.Unlock()
-	for attempt := 0; ; attempt++ {
-		err := func() error {
-			tx, err := GetDB().Begin()
-			if err != nil {
-				return err
-			}
-			defer tx.Rollback()
-			stmt, err := tx.Prepare(query)
-			if err != nil {
-				return err
-			}
-			defer stmt.Close()
-			for _, args := range argsList {
-				if _, err := stmt.Exec(args...); err != nil {
-					return err
-				}
-			}
-			return tx.Commit()
-		}()
-		if err == nil {
-			return nil
-		}
-		var sqliteErr *sqlite.Error
-		if attempt >= 3 || !errors.As(err, &sqliteErr) ||
-			(sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY && sqliteErr.Code()&0xff != sqlite3.SQLITE_LOCKED) {
-			log.Printf("Database batch execute failed (size %d): %v", len(argsList), err)
+	err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
+		stmt, err := conn.PrepareContext(ctx, query)
+		if err != nil {
 			return err
 		}
-		// Roll back before retrying the entire batch, including partial inserts.
-		time.Sleep(time.Duration(1<<attempt) * 100 * time.Millisecond)
+		defer stmt.Close()
+		for _, args := range argsList {
+			if _, err := stmt.ExecContext(ctx, args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("Database batch execute failed (size %d): %v", len(argsList), err)
 	}
+	return err
 }
 
-// FetchAllToPage executes a paginated query with a window count when SQLite
-// can keep the list and total in one round-trip.
+// FetchAllToPage executes a paginated query.
+//
+// When the page does not reveal the total, a separate COUNT query is used rather than a
+// COUNT(*) OVER() window column: the window forces SQLite to materialize the
+// whole result set and sort it in a temp B-tree before applying LIMIT, which
+// costs 5-40x more than the page query alone on large tables. Both queries run
+// inside a single read-only transaction so rows and total share one snapshot.
 func FetchAllToPage(baseSQL string, params map[string]interface{}, sqlArgs ...interface{}) (map[string]interface{}, error) {
+	return fetchAllToPageContext(context.Background(), baseSQL, params, sqlArgs...)
+}
+
+func fetchAllToPageContext(ctx context.Context, baseSQL string, params map[string]interface{}, sqlArgs ...interface{}) (map[string]interface{}, error) {
 	ps, pn, paginated, err := parsePageParams(params)
 	if err != nil {
 		return nil, err
 	}
 	if !paginated {
-		return fetchPage(baseSQL, defaultUnpagedLimit, 0, false, sqlArgs)
+		return fetchPage(ctx, baseSQL, defaultUnpagedLimit, 0, false, sqlArgs)
 	}
 	offset, err := pageOffset(ps, pn)
 	if err != nil {
 		return nil, err
 	}
-	return fetchPage(baseSQL, ps, offset, true, sqlArgs)
+	return fetchPage(ctx, baseSQL, ps, offset, true, sqlArgs)
 }
 
-const pageTotalColumn = "__opensync_page_total"
-
-func fetchPage(baseSQL string, limit int, offset int64, paginated bool, sqlArgs []interface{}) (map[string]interface{}, error) {
-	query, args, window := pageQuery(baseSQL, limit, offset, paginated, sqlArgs)
-	dataList, err := FetchAllToTable(query, args...)
+func fetchPage(ctx context.Context, baseSQL string, limit int, offset int64, paginated bool, sqlArgs []interface{}) (map[string]interface{}, error) {
+	tx, err := GetDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
-	total, hasTotal := takePageTotal(dataList)
-	if !hasTotal {
-		if len(dataList) == 0 && offset == 0 {
-			total = 0
-		} else {
-			count, err := FetchFirstVal("SELECT COUNT(*) FROM ("+stripOrderBy(baseSQL)+")", sqlArgs...)
-			if err != nil {
-				return nil, err
-			}
-			total = util.ToInt64(count)
+	defer tx.Rollback()
+
+	query, args := pageQuery(baseSQL, limit, offset, paginated, sqlArgs)
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	dataList, scanErr := scanRowsToTable(rows)
+	closeErr := rows.Close()
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+
+	var total int64
+	if rowCount := len(dataList); rowCount < limit && (rowCount > 0 || offset == 0) {
+		total = offset + int64(rowCount)
+	} else {
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM ("+stripOrderBy(baseSQL)+")", sqlArgs...).Scan(&total); err != nil {
+			return nil, err
 		}
 	}
 	result := map[string]interface{}{"dataList": dataList, "count": total}
-	if !paginated && window && total > int64(len(dataList)) {
+	if !paginated && total > int64(len(dataList)) {
 		result["truncated"] = true
 	}
 	return result, nil
 }
 
-func pageQuery(baseSQL string, limit int, offset int64, paginated bool, sqlArgs []interface{}) (string, []interface{}, bool) {
-	if !strings.Contains(strings.ToUpper(baseSQL), " UNION ") {
-		query := withPageTotal(baseSQL)
-		if paginated {
-			return query + " LIMIT ? OFFSET ?", appendSQLArgs(sqlArgs, limit, offset), true
-		}
-		return query + " LIMIT ?", appendSQLArgs(sqlArgs, limit), true
-	}
+func pageQuery(baseSQL string, limit int, offset int64, paginated bool, sqlArgs []interface{}) (string, []interface{}) {
 	if paginated {
-		return baseSQL + " LIMIT ? OFFSET ?", appendSQLArgs(sqlArgs, limit, offset), false
+		return baseSQL + " LIMIT ? OFFSET ?", appendSQLArgs(sqlArgs, limit, offset)
 	}
-	return baseSQL + " LIMIT ?", appendSQLArgs(sqlArgs, limit), false
+	return baseSQL + " LIMIT ?", appendSQLArgs(sqlArgs, limit)
 }
 
 func appendSQLArgs(args []interface{}, extra ...interface{}) []interface{} {
 	result := make([]interface{}, 0, len(args)+len(extra))
 	result = append(result, args...)
 	return append(result, extra...)
-}
-
-func withPageTotal(baseSQL string) string {
-	trimmed := strings.TrimSpace(baseSQL)
-	if len(trimmed) < 7 || !strings.EqualFold(trimmed[:6], "SELECT") || (trimmed[6] != ' ' && trimmed[6] != '\t' && trimmed[6] != '\n') {
-		return trimmed
-	}
-	return "SELECT COUNT(*) OVER() AS " + pageTotalColumn + "," + trimmed[6:]
-}
-
-func takePageTotal(rows []map[string]interface{}) (int64, bool) {
-	if len(rows) == 0 {
-		return 0, false
-	}
-	var total int64
-	found := false
-	for _, row := range rows {
-		if value, ok := row[pageTotalColumn]; ok {
-			total = util.ToInt64(value)
-			delete(row, pageTotalColumn)
-			found = true
-		}
-	}
-	return total, found
 }
 
 func pageOffset(pageSize, pageNum int) (int64, error) {
@@ -397,7 +558,10 @@ func positiveInt(v interface{}) (int, error) {
 	case int64:
 		n = val
 	case float64:
-		if math.Trunc(val) != val {
+		if math.IsNaN(val) || math.IsInf(val, 0) || math.Trunc(val) != val {
+			return 0, errors.New(msg.LostPart)
+		}
+		if val <= 0 || val >= maxFloat64BeforeInt64Overflow {
 			return 0, errors.New(msg.LostPart)
 		}
 		n = int64(val)

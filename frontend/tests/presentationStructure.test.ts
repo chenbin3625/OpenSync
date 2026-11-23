@@ -87,7 +87,7 @@ test('home dashboard exposes scannable task workspace sections', () => {
   assert.match(homeSource, /md:grid-cols-\[300px_minmax\(0,1fr\)\]/);
   // 左右两栏均具备白色卡片底，保持视觉结构对称一致
   assert.match(homeSidebarSource, /surface\.card/);
-  assert.match(homeSource, /<main className=\{cn\(surface\.card/);
+  assert.match(homeSource, /<section aria-label="同步任务内容" className=\{cn\(surface\.card/);
 });
 
 test('task management overview exposes the job enable switch in the right action area', () => {

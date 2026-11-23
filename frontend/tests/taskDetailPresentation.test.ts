@@ -52,14 +52,18 @@ test('task detail uses shared explicit task item status metadata', () => {
 
 test('task detail polling follows document visibility', () => {
   assert.match(taskDetailSource, /canPollCurrentDocument/);
-  assert.match(taskDetailSource, /if \(canPollCurrentDocument\(\)\) fetchData\(\{ silent: true \}\)/);
+  assert.match(taskDetailSource, /if \(!cancelled && canPollCurrentDocument\(\)\)/);
+  assert.match(taskDetailSource, /await fetchData\(\{ silent: true \}\)/);
 });
 
-test('task detail silent polling does not toggle table loading state', () => {
-  assert.match(taskDetailSource, /const showLoading = !options\?\.silent/);
-  assert.match(taskDetailSource, /if \(showLoading\) \{\s+setLoading\(true\);\s+setError\(false\);\s+\}/s);
-  // Loading cleanup is gated on the loading request only (not on whether a
-  // later silent poll superseded it), so a silent poll aborting an in-flight
-  // non-silent fetch cannot leave the spinner stuck.
-  assert.match(taskDetailSource, /showLoading && loadingRequestID === loadingRequestRef\.current/);
+test('task detail silent polling clears its in-flight guard after each request', () => {
+  assert.match(taskDetailSource, /if \(options\?\.silent && abortRef\.current\) return;/);
+  assert.match(taskDetailSource, /abortRef\.current = controller/);
+  assert.match(taskDetailSource, /if \(abortRef\.current === controller\) abortRef\.current = null;/);
+});
+
+test('task detail keeps its current rows during an unchanged refresh', () => {
+  assert.match(taskDetailSource, /const loading = Boolean\(taskId && !currentPage\);/);
+  assert.match(taskDetailSource, /mergeTaskItems\(previous\.items, items\)/);
+  assert.match(taskDetailSource, /if \(merged === previous\.items && count === previous\.count\) return previous;/);
 });

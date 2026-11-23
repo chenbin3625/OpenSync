@@ -16,10 +16,13 @@ func TestNormalizeDirPathAddsTrailingSlash(t *testing.T) {
 
 func TestNormalizeDirPathKeepsRootAndExistingSlash(t *testing.T) {
 	cases := map[string]string{
-		"/":        "/",
-		"/google/": "/google/",
-		" /dst ":   "/dst/",
-		"":         "",
+		"/":            "/",
+		"/google/":     "/google/",
+		"\n/dst\r\n":   "/dst/",
+		"/dir/space ":  "/dir/space /",
+		"/dir/ lead":   "/dir/ lead/",
+		"   ":          "",
+		"":             "",
 	}
 
 	for input, want := range cases {

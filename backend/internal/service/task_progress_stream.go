@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"opensync/internal/model"
 	"sync"
@@ -11,6 +12,10 @@ import (
 
 const progressNotifyDebounce = 400 * time.Millisecond
 const maxProgressSubscribersPerJob = 8
+
+// ErrTooManyProgressStreams is returned when a job already has the maximum
+// allowed concurrent SSE progress subscribers.
+var ErrTooManyProgressStreams = errors.New("too many progress streams")
 
 type progressItemState struct {
 	progress   float64
@@ -37,17 +42,25 @@ type progressFrame struct {
 }
 
 type progressHub struct {
-	mu          sync.Mutex
-	framesMu    sync.Mutex
-	subscribers map[int64]map[chan []byte]struct{}
-	pending     map[int64]struct{}
-	frames      map[int64]progressFrame
+	mu           sync.Mutex
+	framesMu     sync.Mutex
+	publishLocks [64]sync.Mutex
+	subscribers  map[int64]map[chan []byte]struct{}
+	subNeedsFull map[chan []byte]bool
+	pending      map[int64]struct{}
+	frames       map[int64]progressFrame
 }
 
 var jobProgressHub = &progressHub{
-	subscribers: make(map[int64]map[chan []byte]struct{}),
-	pending:     make(map[int64]struct{}),
-	frames:      make(map[int64]progressFrame),
+	subscribers:  make(map[int64]map[chan []byte]struct{}),
+	subNeedsFull: make(map[chan []byte]bool),
+	pending:      make(map[int64]struct{}),
+	frames:       make(map[int64]progressFrame),
+}
+
+func (h *progressHub) jobPublishLock(jobID int64) *sync.Mutex {
+	idx := uint64(jobID) % uint64(len(h.publishLocks))
+	return &h.publishLocks[idx]
 }
 
 func SubscribeJobProgress(jobID int64) <-chan []byte {
@@ -58,21 +71,68 @@ func SubscribeJobProgress(jobID int64) <-chan []byte {
 	return ch
 }
 
+// SubscribeJobProgressWithSnapshot validates that the job exists, subscribes to
+// its progress stream, and builds the initial full snapshot atomically under
+// the job's publish lock so no terminal "null" event can slip between snapshot
+// capture and subscription registration.
+func SubscribeJobProgressWithSnapshot(jobID int64) (<-chan []byte, []byte, error) {
+	// Validate the job exists before acquiring the publish lock so an unknown
+	// job still surfaces the normal public JobNotFound error.
+	_ = GetJobClientByID(jobID)
+
+	publishMu := jobProgressHub.jobPublishLock(jobID)
+	publishMu.Lock()
+	defer publishMu.Unlock()
+
+	ch := make(chan []byte, 1)
+	ok, hadOthers := jobProgressHub.subscribeTracked(jobID, ch)
+	if !ok {
+		return nil, nil, ErrTooManyProgressStreams
+	}
+
+	// If other subscribers already exist, build a standalone full snapshot
+	// without overwriting their shared diff baseline, and mark this new
+	// subscriber to receive a full frame on the next publish so it syncs onto
+	// the shared baseline cleanly.
+	payload, err := jobProgressHub.buildInitialSnapshotLocked(jobID, !hadOthers)
+	if err != nil {
+		jobProgressHub.unsubscribe(jobID, ch)
+		return nil, nil, err
+	}
+	return ch, payload, nil
+}
+
 func UnsubscribeJobProgress(jobID int64, ch <-chan []byte) {
 	jobProgressHub.unsubscribe(jobID, ch)
 }
 
 func (h *progressHub) subscribe(jobID int64, ch chan []byte) bool {
+	ok, _ := h.subscribeTracked(jobID, ch)
+	return ok
+}
+
+func (h *progressHub) subscribeTracked(jobID int64, ch chan []byte) (bool, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.subscribers == nil {
+		h.subscribers = make(map[int64]map[chan []byte]struct{})
+	}
+	if h.subNeedsFull == nil {
+		h.subNeedsFull = make(map[chan []byte]bool)
+	}
 	if h.subscribers[jobID] == nil {
 		h.subscribers[jobID] = make(map[chan []byte]struct{})
 	}
-	if len(h.subscribers[jobID]) >= maxProgressSubscribersPerJob {
-		return false
+	existing := len(h.subscribers[jobID])
+	if existing >= maxProgressSubscribersPerJob {
+		return false, false
 	}
 	h.subscribers[jobID][ch] = struct{}{}
-	return true
+	hadOthers := existing > 0
+	if hadOthers {
+		h.subNeedsFull[ch] = true
+	}
+	return true, hadOthers
 }
 
 func (h *progressHub) unsubscribe(jobID int64, ch <-chan []byte) {
@@ -86,6 +146,7 @@ func (h *progressHub) unsubscribe(jobID int64, ch <-chan []byte) {
 	for candidate := range subs {
 		if candidate == ch {
 			delete(subs, candidate)
+			delete(h.subNeedsFull, candidate)
 			break
 		}
 	}
@@ -98,9 +159,7 @@ func (h *progressHub) unsubscribe(jobID int64, ch <-chan []byte) {
 	// Release it immediately so a job with many completed/aborted viewers does
 	// not retain all active-item keys until the next task snapshot.
 	if clearFrame {
-		h.framesMu.Lock()
-		delete(h.frames, jobID)
-		h.framesMu.Unlock()
+		h.clearFrame(jobID)
 	}
 }
 
@@ -108,14 +167,14 @@ func (jt *JobTask) notifyProgressChange() {
 	if jt == nil || jt.JobClient == nil {
 		return
 	}
-	jobProgressHub.schedule(jt.JobClient.JobID)
+	jobProgressHub.schedule(jt.JobClient.idSnapshot())
 }
 
 func (jt *JobTask) notifyProgressNow() {
 	if jt == nil || jt.JobClient == nil {
 		return
 	}
-	jobProgressHub.publish(jt.JobClient.JobID)
+	jobProgressHub.publish(jt.JobClient.idSnapshot())
 }
 
 func (h *progressHub) schedule(jobID int64) {
@@ -123,6 +182,9 @@ func (h *progressHub) schedule(jobID int64) {
 	if len(h.subscribers[jobID]) == 0 {
 		h.mu.Unlock()
 		return
+	}
+	if h.pending == nil {
+		h.pending = make(map[int64]struct{})
 	}
 	if _, pending := h.pending[jobID]; pending {
 		h.mu.Unlock()
@@ -147,19 +209,148 @@ func (h *progressHub) schedule(jobID int64) {
 }
 
 func (h *progressHub) publish(jobID int64) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("panic in progressHub.publish for job %d: %v", jobID, r)
+		}
+	}()
+
+	publishMu := h.jobPublishLock(jobID)
+	publishMu.Lock()
+	defer publishMu.Unlock()
+
 	subs := h.subscriberSnapshot(jobID)
 	if len(subs) == 0 {
 		return
 	}
 
-	payload, err := marshalJobProgress(jobID, false)
+	payload, ok := currentJobProgressPayloadSafe(jobID)
+	if !ok {
+		h.clearFrame(jobID)
+		nullBytes, err := marshalProgressJSON(model.Success(nil))
+		if err != nil {
+			log.Printf("Failed to marshal idle job %d progress stream payload: %v", jobID, err)
+			return
+		}
+		h.broadcastLocked(subs, nullBytes, func() ([]byte, error) { return nullBytes, nil }, false)
+		return
+	}
+
+	fullCopy := payload
+	h.prepareStreamPayload(jobID, &payload, false)
+	isPatch := payload.DoingTask == nil
+	frameBytes, err := marshalProgressJSON(model.Success(payload))
 	if err != nil {
 		log.Printf("Failed to marshal job %d progress stream payload: %v", jobID, err)
 		return
 	}
-	for _, ch := range subs {
-		sendProgressPayload(ch, payload)
+
+	var fullBytes []byte
+	var fullOnce sync.Once
+	var fullErr error
+	getFullBytes := func() ([]byte, error) {
+		if !isPatch {
+			return frameBytes, nil
+		}
+		fullOnce.Do(func() {
+			fullBytes, fullErr = marshalProgressJSON(model.Success(fullCopy))
+		})
+		return fullBytes, fullErr
 	}
+
+	h.broadcastLocked(subs, frameBytes, getFullBytes, isPatch)
+}
+
+func (h *progressHub) broadcastLocked(subs []chan []byte, frameBytes []byte, getFullBytes func() ([]byte, error), isPatch bool) {
+	for _, ch := range subs {
+		needsFull := h.takeNeedsFull(ch)
+		if needsFull && isPatch {
+			fullBytes, err := getFullBytes()
+			if err != nil {
+				log.Printf("Failed to marshal full progress snapshot: %v", err)
+				continue
+			}
+			sendProgressPayload(ch, fullBytes)
+			continue
+		}
+
+		// Fast path: subscriber drained its buffer and is synchronized with the
+		// shared frame baseline.
+		select {
+		case ch <- frameBytes:
+			continue
+		default:
+		}
+
+		// Slow consumer: an older frame was still sitting in ch. Evicting it and
+		// pushing a delta patch would leave the client with an orphaned patch, so
+		// replace the evicted frame with a full snapshot instead.
+		payloadToSend := frameBytes
+		if isPatch {
+			fullBytes, err := getFullBytes()
+			if err == nil {
+				payloadToSend = fullBytes
+			}
+		}
+		select {
+		case <-ch:
+		default:
+		}
+		select {
+		case ch <- payloadToSend:
+		default:
+			if isPatch {
+				h.markNeedsFull(ch)
+			}
+		}
+	}
+}
+
+func (h *progressHub) takeNeedsFull(ch chan []byte) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.subNeedsFull == nil || !h.subNeedsFull[ch] {
+		return false
+	}
+	delete(h.subNeedsFull, ch)
+	return true
+}
+
+func (h *progressHub) markNeedsFull(ch chan []byte) {
+	h.mu.Lock()
+	if h.subNeedsFull == nil {
+		h.subNeedsFull = make(map[chan []byte]bool)
+	}
+	h.subNeedsFull[ch] = true
+	h.mu.Unlock()
+}
+
+func (h *progressHub) buildInitialSnapshotLocked(jobID int64, seedFrame bool) ([]byte, error) {
+	payload, ok := currentJobProgressPayloadSafe(jobID)
+	if !ok {
+		if seedFrame {
+			h.clearFrame(jobID)
+		}
+		return marshalProgressJSON(model.Success(nil))
+	}
+	if seedFrame {
+		h.prepareStreamPayload(jobID, &payload, true)
+	}
+	return marshalProgressJSON(model.Success(payload))
+}
+
+// currentJobProgressPayloadSafe retrieves the active task's current progress
+// snapshot without hitting the DB or panicking if the job was deleted.
+func currentJobProgressPayloadSafe(jobID int64) (jobCurrentPayload, bool) {
+	client, ok := getJobClientIfExists(jobID)
+	if !ok {
+		return jobCurrentPayload{}, false
+	}
+	task := client.currentTask()
+	if task == nil || task.finished.Load() {
+		return jobCurrentPayload{}, false
+	}
+	return task.getCurrentPayload(), true
 }
 
 func (h *progressHub) subscriberSnapshot(jobID int64) []chan []byte {
@@ -232,6 +423,9 @@ func marshalProgressJSON(v any) ([]byte, error) {
 }
 
 func BuildJobProgressStreamPayload(jobID int64) ([]byte, error) {
+	publishMu := jobProgressHub.jobPublishLock(jobID)
+	publishMu.Lock()
+	defer publishMu.Unlock()
 	return marshalJobProgress(jobID, true)
 }
 

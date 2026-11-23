@@ -1,14 +1,43 @@
 package handler
 
 import (
+	"encoding/json"
+	"errors"
+	"math"
 	"net/http"
 	"opensync/internal/model"
 	"opensync/internal/msg"
 	"opensync/internal/service"
-	"opensync/pkg/util"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+func parseNotifyIDValue(value interface{}, field string) (int64, error) {
+	switch v := value.(type) {
+	case string:
+		return parseRequiredID(strings.TrimSpace(v), field)
+	case json.Number:
+		return parseRequiredID(strings.TrimSpace(v.String()), field)
+	case int:
+		if v <= 0 {
+			return 0, errors.New(msg.LostPart)
+		}
+		return int64(v), nil
+	case int64:
+		if v <= 0 {
+			return 0, errors.New(msg.LostPart)
+		}
+		return v, nil
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 || math.Trunc(v) != v || v > float64(1<<53) {
+			return 0, errors.New(msg.LostPart)
+		}
+		return int64(v), nil
+	default:
+		return 0, errors.New(msg.LostPart)
+	}
+}
 
 // GetNotify handles GET /svr/notify
 func GetNotify(c *gin.Context) {
@@ -21,7 +50,7 @@ func AddNotify(c *gin.Context) {
 	var req struct {
 		Notify *map[string]interface{} `json:"notify"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Notify == nil {
+	if err := c.ShouldBindJSON(&req); err != nil || req.Notify == nil || *req.Notify == nil {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
@@ -42,7 +71,7 @@ func TestNotify(c *gin.Context) {
 	var req struct {
 		Notify *map[string]interface{} `json:"notify"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Notify == nil {
+	if err := c.ShouldBindJSON(&req); err != nil || req.Notify == nil || *req.Notify == nil {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
@@ -53,14 +82,14 @@ func TestNotify(c *gin.Context) {
 // UpdateNotify handles PUT /svr/notify
 func UpdateNotify(c *gin.Context) {
 	var req map[string]interface{}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil || req == nil {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 
-	if notifyIDStr, ok := req["notifyId"]; ok {
+	if notifyIDRaw, ok := req["notifyId"]; ok {
 		// Update status
-		notifyID, err := parseRequiredID(util.StringValue(notifyIDStr), "notifyId")
+		notifyID, err := parseNotifyIDValue(notifyIDRaw, "notifyId")
 		if err != nil {
 			c.JSON(http.StatusOK, model.Error(err.Error()))
 			return
@@ -78,7 +107,7 @@ func UpdateNotify(c *gin.Context) {
 		service.UpdateNotifyStatus(notifyID, enable)
 	} else if notify, ok := req["notify"]; ok {
 		// Edit notify
-		if nMap, ok := notify.(map[string]interface{}); ok {
+		if nMap, ok := notify.(map[string]interface{}); ok && nMap != nil {
 			service.EditNotify(nMap)
 		} else {
 			c.JSON(http.StatusOK, model.Error(msg.LostPart))

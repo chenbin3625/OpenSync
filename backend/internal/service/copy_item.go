@@ -3,8 +3,11 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
+	"net/http"
 	"opensync/internal/msg"
 	"opensync/pkg/util"
+	"strings"
 	"sync"
 	"time"
 )
@@ -31,6 +34,7 @@ type copyItemClient interface {
 	TaskUndoneListContext(context.Context, taskItemType) ([]map[string]interface{}, error)
 	DeleteFileContext(context.Context, string, []string, int) error
 	FileExistsContext(context.Context, string, string) (bool, error)
+	GetFileInfoContext(context.Context, string, string) (*FileListEntry, bool, error)
 }
 
 // maxTransientPollErrors is the number of consecutive transient TaskInfo polling
@@ -39,18 +43,24 @@ type copyItemClient interface {
 const maxTransientPollErrors = 3
 
 type CopyItem struct {
-	mu          sync.RWMutex
-	SrcPath     string
-	DstPath     string
-	FileName    string
-	FileSize    interface{}
-	CopyType    taskItemType
-	AlistTaskID string
-	Status      taskStatus
-	Progress    float64
-	ErrMsg      *string
-	CreateTime  int64
-	DoingKey    int64
+	mu               sync.RWMutex
+	SrcPath          string
+	DstPath          string
+	FileName         string
+	FileSize         interface{}
+	CopyType         taskItemType
+	AlistTaskID      string
+	Status           taskStatus
+	Progress         float64
+	ErrMsg           *string
+	CreateTime       int64
+	DoingKey         int64
+	copySlotHeld     bool
+	retryBlocked     bool
+	isRelocation     bool
+	expectedMD5      string
+	preCopyDst       *FileMetadata
+	attemptStartTime int64
 
 	runtime copyItemRuntime
 	client  copyItemClient
@@ -69,6 +79,29 @@ func newCopyItem(runtime copyItemRuntime, client copyItemClient, srcPath, dstPat
 		runtime:    runtime,
 		client:     client,
 	}
+}
+
+func clampProgress(progress float64) float64 {
+	if math.IsNaN(progress) || math.IsInf(progress, 0) || progress < 0 {
+		return 0
+	}
+	if progress > 100 {
+		return 100
+	}
+	return progress
+}
+
+func isValidMD5Digest(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func (ci *CopyItem) copyRuntime() copyItemRuntime {
@@ -91,6 +124,36 @@ func (ci *CopyItem) setTaskID(taskID string) {
 	ci.mu.Unlock()
 }
 
+func (ci *CopyItem) setRetryBlocked(blocked bool) {
+	ci.mu.Lock()
+	ci.retryBlocked = blocked
+	ci.mu.Unlock()
+}
+
+func (ci *CopyItem) isRetryBlocked() bool {
+	ci.mu.RLock()
+	defer ci.mu.RUnlock()
+	return ci.retryBlocked
+}
+
+func (ci *CopyItem) setAttemptStartTime(ts int64) {
+	ci.mu.Lock()
+	ci.attemptStartTime = ts
+	ci.mu.Unlock()
+}
+
+func (ci *CopyItem) setExpectedVerification(md5 string, preCopyDst *FileMetadata) {
+	ci.mu.Lock()
+	ci.expectedMD5 = strings.TrimSpace(md5)
+	if preCopyDst != nil {
+		copied := *preCopyDst
+		ci.preCopyDst = &copied
+	} else {
+		ci.preCopyDst = nil
+	}
+	ci.mu.Unlock()
+}
+
 func (ci *CopyItem) setFailure(err error) {
 	errMsg := err.Error()
 	ci.mu.Lock()
@@ -106,6 +169,7 @@ func (ci *CopyItem) setRunning() {
 	ci.Progress = 0
 	ci.ErrMsg = nil
 	ci.AlistTaskID = ""
+	ci.retryBlocked = false
 	ci.mu.Unlock()
 }
 
@@ -120,9 +184,10 @@ func (ci *CopyItem) setRetrying(err error) {
 }
 
 func (ci *CopyItem) setProgress(status taskStatus, progress float64, errMsg *string) {
+	clamped := clampProgress(progress)
 	ci.mu.Lock()
 	ci.Status = status
-	ci.Progress = progress
+	ci.Progress = clamped
 	ci.ErrMsg = errMsg
 	ci.mu.Unlock()
 	if runtime := ci.copyRuntime(); runtime != nil {
@@ -166,7 +231,7 @@ func (ci *CopyItem) toStreamItem() streamDoingItem {
 		FileSize:    util.ToInt64(ci.FileSize),
 		Type:        ci.CopyType.Int(),
 		Status:      ci.Status.Int(),
-		Progress:    ci.Progress,
+		Progress:    clampProgress(ci.Progress),
 		CreateTime:  ci.CreateTime,
 	}
 }
@@ -177,7 +242,7 @@ func (ci *CopyItem) ToMap(taskID int64) map[string]interface{} {
 
 	itemMap := NewCopyJobTaskItem(taskID, ci.SrcPath, ci.DstPath, ci.FileName, ci.FileSize,
 		ci.AlistTaskID, ci.Status, ci.ErrMsg, taskItemFile, ci.CopyType, ci.CreateTime).ToMap()
-	itemMap["progress"] = ci.Progress
+	itemMap["progress"] = clampProgress(ci.Progress)
 	return itemMap
 }
 
@@ -193,10 +258,19 @@ func (ci *CopyItem) DoIt() {
 		}
 
 		ci.setRunning()
+		ci.setAttemptStartTime(time.Now().Unix())
 		taskID, err := ci.startTransfer(runtime.context(), client)
 		if err != nil {
-			if errors.Is(err, context.Canceled) && runtime.isBreak() {
+			if runtime.isBreak() {
 				ci.setStatus(taskStatusStopped)
+				break
+			}
+			// A transport error after a mutating AList request was sent has an
+			// unknown outcome. Do not blindly replay copy/move, which can create
+			// duplicate remote work or report a completed move as failed. HTTP/API
+			// 5xx responses are explicit server failures and remain retryable.
+			if !isRetryableTransferError(err) {
+				ci.setFailure(err)
 				break
 			}
 			if attempt < maxRetries {
@@ -213,9 +287,13 @@ func (ci *CopyItem) DoIt() {
 
 		ci.setTaskID(taskID)
 		if taskID == "" && !ci.confirmSynchronousCopy(runtime, client) {
+			if runtime.isBreak() {
+				ci.setStatus(taskStatusStopped)
+				break
+			}
 			// AList accepted the request but returned no task id, and the file
-			// never arrived at the destination. Treat the attempt as failed so
-			// the bounded retry loop can resubmit it.
+			// could not be verified at the destination. Treat the attempt as failed
+			// so the bounded retry loop can resubmit it.
 			emptyTaskErr := errors.New(msg.AlistNoCopyTask)
 			if attempt < maxRetries {
 				ci.setRetrying(emptyTaskErr)
@@ -233,7 +311,7 @@ func (ci *CopyItem) DoIt() {
 		} else if ci.status() != taskStatusStopped {
 			runtime.waitForRemoteCopyCompletion(ci)
 		}
-		if ci.status() == taskStatusFailed && attempt < maxRetries {
+		if ci.status() == taskStatusFailed && !ci.isRetryBlocked() && attempt < maxRetries {
 			ci.setRetrying(errors.New(ci.errorMessage()))
 			if completed := runtime.waitForBreak(copyRetryDelay(attempt)); !completed {
 				ci.setStatus(taskStatusStopped)
@@ -246,6 +324,14 @@ func (ci *CopyItem) DoIt() {
 	ci.endIt()
 }
 
+func isRetryableTransferError(err error) bool {
+	var statusErr *alistStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	return statusErr.httpStatus >= http.StatusInternalServerError || statusErr.alistCode >= http.StatusInternalServerError
+}
+
 func (ci *CopyItem) startTransfer(ctx context.Context, client copyItemClient) (string, error) {
 	if ci.CopyType == taskItemTypeMove {
 		return client.MoveFileContext(ctx, ci.SrcPath, ci.DstPath, ci.FileName)
@@ -255,13 +341,9 @@ func (ci *CopyItem) startTransfer(ctx context.Context, client copyItemClient) (s
 
 // confirmSynchronousCopy handles a copy/move response with no task id: some
 // backends complete the operation synchronously. The destination is verified so
-// "no task" is only treated as success when the file actually arrived.
-//
-// A definitive "absent" answer fails the attempt. An erroring check is retried a
-// few times so a network blip does not decide the outcome; if it keeps failing
-// the legacy assume-success behavior is kept, because some drivers do not
-// support the existence probe at all and every such copy would otherwise be
-// reported as failed.
+// "no task" is only treated as success when the file actually arrived with
+// matching metadata. Persistent verification errors fail the attempt instead of
+// falsely assuming success.
 func (ci *CopyItem) confirmSynchronousCopy(runtime copyItemRuntime, client copyItemClient) bool {
 	for attempt := 0; attempt < maxTransientPollErrors; attempt++ {
 		exists, err := ci.verifyDstExists(runtime, client)
@@ -275,7 +357,7 @@ func (ci *CopyItem) confirmSynchronousCopy(runtime copyItemRuntime, client copyI
 			return false
 		}
 	}
-	return true
+	return false
 }
 
 func defaultCopyRetryDelay(attempt int) time.Duration {
@@ -298,14 +380,63 @@ func (ci *CopyItem) errorMessage() string {
 	return *ci.ErrMsg
 }
 
-// verifyDstExists checks whether the destination file is present. Used when the
-// AList task record has vanished (404) to decide whether a move/copy actually
-// completed. Runs on an independent cleanup context so it is not cut short by a
-// cancelling task context.
+// verifyDstExists checks whether the destination file is present and matches
+// expected size/MD5/freshness metadata. Used when the AList task record has
+// vanished (404) or returned synchronously with no task id. Runs on an
+// independent cleanup context so it is not cut short by a cancelling task context.
 func (ci *CopyItem) verifyDstExists(runtime copyItemRuntime, client copyItemClient) (bool, error) {
 	ctx, cancel := runtime.cleanupContext()
 	defer cancel()
-	return client.FileExistsContext(ctx, ci.DstPath, ci.FileName)
+	entry, exists, err := client.GetFileInfoContext(ctx, ci.DstPath, ci.FileName)
+	if err != nil {
+		return false, err
+	}
+	if !exists || entry == nil || entry.IsDir {
+		return false, nil
+	}
+
+	meta := entry.Metadata()
+	expectedSize := util.ToInt64(ci.FileSize)
+	if expectedSize > 0 && meta.Size != expectedSize {
+		return false, nil
+	}
+
+	ci.mu.RLock()
+	expectedMD5 := ci.expectedMD5
+	var preCopy *FileMetadata
+	if ci.preCopyDst != nil {
+		copied := *ci.preCopyDst
+		preCopy = &copied
+	}
+	attemptStart := ci.attemptStartTime
+	ci.mu.RUnlock()
+
+	md5Verified := false
+	if isValidMD5Digest(expectedMD5) && isValidMD5Digest(meta.MD5) {
+		if !strings.EqualFold(expectedMD5, meta.MD5) {
+			return false, nil
+		}
+		md5Verified = true
+	}
+
+	if preCopy != nil && !md5Verified {
+		if preCopy.Modified > 0 && meta.Modified > 0 && meta.Modified < preCopy.Modified {
+			return false, nil
+		}
+		if preCopy.Size == expectedSize {
+			// Overwrite with unchanged size and no MD5 proof: require a newer mtime
+			// so a pre-existing stale destination file is not mistaken for success.
+			if preCopy.Modified > 0 {
+				if meta.Modified <= preCopy.Modified {
+					return false, nil
+				}
+			} else if attemptStart > 0 && meta.Modified > 0 && meta.Modified < attemptStart {
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
 }
 
 func (ci *CopyItem) stopRemoteTask(client copyItemClient, cause error) {

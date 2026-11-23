@@ -29,14 +29,52 @@ export default function TaskRealtimeHero({
   onStop,
   children,
 }: TaskRealtimeHeroProps) {
-  const [nowTick, setNowTick] = useState(() => Math.floor(Date.now() / 1000));
+  const taskKey = `${currentTask.taskId}:${currentTask.createTime ?? 0}`;
+  const serverDuration = Math.max(0, Math.floor(Number(currentTask.duration) || 0));
+
+  // Anchor elapsed ticking to server-reported duration plus local delta since
+  // receipt so client/server clock skew never produces negative or jumped times.
+  const [clockAnchor, setClockAnchor] = useState(() => ({
+    taskKey,
+    baseDuration: serverDuration,
+    receivedAtMs: Date.now(),
+  }));
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const now = Date.now();
+    setNowMs(now);
+    setClockAnchor((prev) => {
+      if (prev.taskKey !== taskKey) {
+        return { taskKey, baseDuration: serverDuration, receivedAtMs: now };
+      }
+      const elapsed = Math.max(0, Math.floor((now - prev.receivedAtMs) / 1000));
+      const projected = prev.baseDuration + elapsed;
+      if (serverDuration < projected && projected - serverDuration <= 2) {
+        return prev;
+      }
+      return { taskKey, baseDuration: serverDuration, receivedAtMs: now };
+    });
+  }, [taskKey, serverDuration]);
+
+  useEffect(() => {
+    const tickID = setInterval(() => {
+      if (canPollCurrentDocument()) {
+        setNowMs(Date.now());
+      }
+    }, 1000);
+    return () => { clearInterval(tickID); };
+  }, []);
+
   const realtimeTotal = Object.values(currentTask.num || {})
     .reduce((sum, value) => sum + Number(value || 0), 0);
   const scanProgress = currentTask.scan;
-  const displayDuration = Math.max(
-    currentTask.duration || 0,
-    currentTask.createTime ? nowTick - currentTask.createTime : 0,
-  );
+  const displayDuration = clockAnchor.taskKey === taskKey
+    ? Math.max(
+        serverDuration,
+        clockAnchor.baseDuration + Math.max(0, Math.floor((nowMs - clockAnchor.receivedAtMs) / 1000)),
+      )
+    : serverDuration;
 
   const metrics = useMemo<ProgressMetric[]>(() => [
     {
@@ -73,15 +111,6 @@ export default function TaskRealtimeHero({
       value: formatSize(currentTask.remainSize || 0),
     },
   ], [currentTask.doneSize, currentTask.remainSize, currentTask.remainTime, currentTask.speed, currentTask.speedAvg, displayDuration]);
-
-  useEffect(() => {
-    const tickID = setInterval(() => {
-      if (canPollCurrentDocument()) {
-        setNowTick(Math.floor(Date.now() / 1000));
-      }
-    }, 1000);
-    return () => { clearInterval(tickID); };
-  }, []);
 
   return (
     <div className={cn(surface.card, surface.cardPadding, 'space-y-5')}>

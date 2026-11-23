@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Plus, Edit, Trash2, Server, Activity, Copy, Check
 } from 'lucide-react';
@@ -48,6 +48,35 @@ export const validateAlistURL = (value?: string): boolean => {
   }
 };
 
+const normalizeUrl = (value: string) => value.trim().replace(/\/+$/, '');
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall back to execCommand for HTTP LAN origins or restricted clipboard contexts.
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    textarea.style.pointerEvents = 'none';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export default function Engine() {
   const [list, setList] = useState<AlistItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -64,12 +93,23 @@ export default function Engine() {
 
   // 删除确认弹窗状态
   const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   // 测试连接状态与复制提示
   const [testingId, setTestingId] = useState<number | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
 
   const listReqRef = useRef(0);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
 
   const fetchList = useCallback(async () => {
     const reqID = ++listReqRef.current;
@@ -111,16 +151,21 @@ export default function Engine() {
     setModalVisible(true);
   };
 
-  const handleDeleteConfirm = async () => {
-    if (!deleteTargetId) return;
+  const handleDeleteConfirm = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (!deleteTargetId || deleting) return;
+    setDeleting(true);
+    setDeleteError('');
     try {
       await alistDelete(deleteTargetId);
       toast.success('删除成功');
-      fetchList();
-    } catch (err) {
-      console.error('alist delete failed', err);
-    } finally {
       setDeleteTargetId(null);
+      fetchList();
+    } catch (err: unknown) {
+      console.error('alist delete failed', err);
+      setDeleteError((err as Error).message || '删除失败，请重试');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -138,11 +183,16 @@ export default function Engine() {
     }
   };
 
+  const urlChangedInEdit = Boolean(
+    editingItem && normalizeUrl(url) !== normalizeUrl(editingItem.url || '')
+  );
+  const tokenRequired = !editingItem || urlChangedInEdit;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setUrlError('');
 
-    const trimmedUrl = url.trim().replace(/\/+$/, '');
+    const trimmedUrl = normalizeUrl(url);
     if (!trimmedUrl) {
       setUrlError('请输入 AList 地址');
       return;
@@ -151,8 +201,8 @@ export default function Engine() {
       setUrlError('请输入合法的 http 或 https 地址');
       return;
     }
-    if (!editingItem && !token.trim()) {
-      setUrlError('请输入 AList 访问令牌');
+    if (tokenRequired && !token.trim()) {
+      setUrlError(urlChangedInEdit ? '修改服务地址后必须重新输入访问令牌' : '请输入 AList 访问令牌');
       return;
     }
 
@@ -182,11 +232,21 @@ export default function Engine() {
     }
   };
 
-  const handleCopyUrl = (item: AlistItem) => {
-    navigator.clipboard.writeText(item.url);
+  const handleCopyUrl = async (item: AlistItem) => {
+    const ok = await copyTextToClipboard(item.url);
+    if (!ok) {
+      toast.error('复制失败，请手动复制地址');
+      return;
+    }
+    if (copyTimerRef.current !== null) {
+      clearTimeout(copyTimerRef.current);
+    }
     setCopiedId(item.id);
     toast.info('地址已复制到剪贴板');
-    setTimeout(() => setCopiedId(null), 2000);
+    copyTimerRef.current = setTimeout(() => {
+      copyTimerRef.current = null;
+      setCopiedId(null);
+    }, 2000);
   };
 
   return (
@@ -248,7 +308,10 @@ export default function Engine() {
                     <Button
                       variant="danger"
                       size="sm"
-                      onClick={() => setDeleteTargetId(item.id)}
+                      onClick={() => {
+                        setDeleteError('');
+                        setDeleteTargetId(item.id);
+                      }}
                     >
                       <Trash2 className={cn(icon.sm, 'mr-1')} />
                       删除
@@ -264,7 +327,7 @@ export default function Engine() {
                       </span>
                       <button
                         type="button"
-                        onClick={() => handleCopyUrl(item)}
+                        onClick={() => void handleCopyUrl(item)}
                         className="text-slate-400 hover:text-slate-700 p-0.5 rounded shrink-0 transition-colors"
                         aria-label="复制地址"
                         title="复制地址"
@@ -320,13 +383,29 @@ export default function Engine() {
               />
             </Field>
 
-            <Field label="访问令牌 (Token)" required={!editingItem}>
+            <Field
+              label="访问令牌 (Token)"
+              required={tokenRequired}
+              hint={
+                editingItem
+                  ? urlChangedInEdit
+                    ? '已修改服务地址，保存前必须重新填写新地址对应的访问令牌'
+                    : '未修改服务地址时留空可保留原有 Token；修改服务地址则需重新填写'
+                  : undefined
+              }
+            >
               <Input
                 type="password"
-                placeholder={editingItem ? '留空表示保持原有已存 Token' : '请输入 AList 后台生成的 Token'}
+                placeholder={
+                  !editingItem
+                    ? '请输入 AList 后台生成的 Token'
+                    : urlChangedInEdit
+                      ? '修改服务地址后必须填写新 Token'
+                      : '留空保持原有已存 Token（修改地址时需重填）'
+                }
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
-                required={!editingItem}
+                required={tokenRequired}
               />
             </Field>
 
@@ -343,18 +422,27 @@ export default function Engine() {
       </Dialog>
 
       {/* 删除确认弹窗 */}
-      <AlertDialog open={deleteTargetId !== null} onOpenChange={(o) => !o && setDeleteTargetId(null)}>
+      <AlertDialog
+        open={deleteTargetId !== null}
+        onOpenChange={(o) => {
+          if (!o && !deleting) {
+            setDeleteTargetId(null);
+            setDeleteError('');
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除此引擎？</AlertDialogTitle>
             <AlertDialogDescription>
               删除后，依赖此引擎的同步任务将无法继续连接该存储端。
             </AlertDialogDescription>
+            {deleteError && <Alert>{deleteError}</Alert>}
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={handleDeleteConfirm}>
-              确认删除
+            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={deleting} onClick={handleDeleteConfirm}>
+              {deleting ? '删除中...' : '确认删除'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

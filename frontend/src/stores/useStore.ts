@@ -41,8 +41,8 @@ const getInitialUser = (): UserInfo | null => {
 };
 
 // persistState writes the canonical key only. The legacy vuex `lifeData` blob
-// is read for backward compatibility above but is no longer written: it used
-// to keep stale user info around after logout.
+// is read for backward compatibility above, is never written, and is removed
+// on logout so stale user info cannot resurface on reload.
 const persistState = (key: string, value: unknown) => {
   try {
     if (value === null || value === undefined) {
@@ -71,6 +71,9 @@ export const useStore = create<AppState>((set) => ({
     // a "logged in" session.
     const valid = user === null || isUserInfo(user) ? user : null;
     persistState('opensync_userInfo', valid);
+    if (valid === null) {
+      persistState('lifeData', null);
+    }
     set({ userInfo: valid });
   },
   setAuthChecked: (checked) => set({ authChecked: checked }),

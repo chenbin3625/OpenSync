@@ -1,8 +1,13 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
+	"log"
+	"net"
 	"net/http"
 	"opensync/internal/config"
+	"opensync/internal/mapper"
 	"opensync/internal/middleware"
 	"opensync/internal/model"
 	"opensync/internal/msg"
@@ -11,6 +16,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+var runTaskRetentionCleanup = service.RunTaskRetentionCleanup
+
+func hasForwardingHeaders(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	for _, header := range []string{"X-Forwarded-For", "Forwarded", "X-Real-IP"} {
+		if strings.TrimSpace(r.Header.Get(header)) != "" {
+			return true
+		}
+	}
+	return false
+}
 
 // Login handles POST /svr/noAuth/login
 func Login(c *gin.Context) {
@@ -45,6 +64,18 @@ func GetInitStatus(c *gin.Context) {
 
 // Initialize handles POST /svr/noAuth/init
 func Initialize(c *gin.Context) {
+	serverCfg := config.GetConfig().Server
+	if !serverCfg.AllowRemoteInit {
+		clientIP := net.ParseIP(strings.TrimSpace(c.ClientIP()))
+		if clientIP == nil || !clientIP.IsLoopback() {
+			c.JSON(http.StatusForbidden, model.Error(msg.InitialSetupLocalOnly))
+			return
+		}
+		if len(serverCfg.TrustedProxies) == 0 && hasForwardingHeaders(c.Request) {
+			c.JSON(http.StatusForbidden, model.Error(msg.InitialSetupLocalOnly))
+			return
+		}
+	}
 	var req struct {
 		UserName string `json:"userName" form:"userName"`
 		Passwd   string `json:"passwd" form:"passwd"`
@@ -89,6 +120,10 @@ func ResetPassword(c *gin.Context) {
 
 // Logout handles DELETE /svr/noAuth/login
 func Logout(c *gin.Context) {
+	if err := middleware.RevokeAuthSession(c); err != nil {
+		c.JSON(http.StatusInternalServerError, model.Error("退出登录失败，请重试"))
+		return
+	}
 	middleware.ClearAuthCookie(c)
 	c.JSON(http.StatusOK, model.Success(nil))
 }
@@ -113,7 +148,17 @@ func EditPassword(c *gin.Context) {
 	userMap := user.(map[string]interface{})
 	userID := userMap["id"].(int64)
 	service.EditPasswd(userID, req.Passwd, req.OldPasswd)
+	if err := mapper.BumpSessionVersion(userID); err != nil {
+		middleware.ClearAuthUserCache()
+		c.JSON(http.StatusInternalServerError, model.Error(msg.SetCookieFail))
+		return
+	}
 	middleware.ClearAuthUserCache()
+	updatedUser := service.GetUser(userID, "")
+	if err := middleware.SetAuthCookie(c, updatedUser); err != nil {
+		c.JSON(http.StatusOK, model.Error(msg.SetCookieFail))
+		return
+	}
 	c.JSON(http.StatusOK, model.Success(nil))
 }
 
@@ -122,18 +167,64 @@ func GetSystemConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, model.Success(config.GetSystemSettings()))
 }
 
+type updateSystemConfigRequest struct {
+	Expires         *int `json:"expires"`
+	TaskTimeout     *int `json:"taskTimeout"`
+	TaskSave        *int `json:"taskSave"`
+	CopyConcurrency *int `json:"copyConcurrency"`
+	ScanConcurrency *int `json:"scanConcurrency"`
+	MaxRetries      *int `json:"maxRetries"`
+}
+
 // UpdateSystemConfig handles PUT /svr/system/config
 func UpdateSystemConfig(c *gin.Context) {
-	var req config.SystemSettings
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var raw json.RawMessage
+	if err := c.ShouldBindJSON(&raw); err != nil {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
-	if err := config.UpdateSystemSettings(req); err != nil {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
+		return
+	}
+	var req updateSystemConfigRequest
+	if err := json.Unmarshal(trimmed, &req); err != nil {
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
+		return
+	}
+	next := config.GetSystemSettings()
+	if req.Expires != nil {
+		next.Expires = *req.Expires
+	}
+	if req.TaskTimeout != nil {
+		next.TaskTimeout = *req.TaskTimeout
+	}
+	if req.TaskSave != nil {
+		next.TaskSave = *req.TaskSave
+	}
+	if req.CopyConcurrency != nil {
+		next.CopyConcurrency = *req.CopyConcurrency
+	}
+	if req.ScanConcurrency != nil {
+		next.ScanConcurrency = *req.ScanConcurrency
+	}
+	if req.MaxRetries != nil {
+		next.MaxRetries = *req.MaxRetries
+	}
+	if err := config.UpdateSystemSettings(next); err != nil {
 		c.JSON(http.StatusOK, model.Error(err.Error()))
 		return
 	}
 	middleware.InitSecureCookie()
-	service.RunTaskRetentionCleanup()
+	cleanupFn := runTaskRetentionCleanup
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("async task retention cleanup panic: %v", r)
+			}
+		}()
+		cleanupFn()
+	}()
 	c.JSON(http.StatusOK, model.Success(config.GetSystemSettings()))
 }

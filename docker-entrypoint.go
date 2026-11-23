@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +13,10 @@ import (
 	"syscall"
 )
 
+const maxUnixID = math.MaxInt32
+
 func main() {
+	euid := os.Geteuid()
 	uid, err := numericEnv("PUID", 1000)
 	if err != nil {
 		fatal(err)
@@ -29,13 +33,15 @@ func main() {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		fatal(fmt.Errorf("failed to create %s: %w", dataDir, err))
 	}
-	needChown, err := shouldChownRecursive(dataDir, uid, gid)
-	if err != nil {
-		fatal(err)
-	}
-	if needChown {
-		if err := chownRecursive(dataDir, uid, gid); err != nil {
-			fatal(fmt.Errorf("failed to change ownership of %s to %d:%d: %w", dataDir, uid, gid, err))
+	if shouldManageOwnership(euid) {
+		needChown, err := shouldChownRecursive(dataDir, uid, gid)
+		if err != nil {
+			fatal(err)
+		}
+		if needChown {
+			if err := chownRecursive(dataDir, uid, gid); err != nil {
+				fatal(fmt.Errorf("failed to change ownership of %s to %d:%d: %w", dataDir, uid, gid, err))
+			}
 		}
 	}
 	if err := prepareSQLiteTempDir(); err != nil {
@@ -49,7 +55,7 @@ func main() {
 		args = append([]string{"./opensync"}, args...)
 	}
 
-	if uid != 0 || gid != 0 {
+	if shouldDropPrivileges(euid, uid, gid) {
 		if err := syscall.Setgroups([]int{gid}); err != nil {
 			fatal(fmt.Errorf("failed to set groups: %w", err))
 		}
@@ -70,7 +76,19 @@ func main() {
 	}
 }
 
+func shouldManageOwnership(euid int) bool {
+	return euid == 0
+}
+
+func shouldDropPrivileges(euid, uid, gid int) bool {
+	return euid == 0 && (uid != 0 || gid != 0)
+}
+
 func prepareSQLiteTempDir() error {
+	return prepareSQLiteTempDirWithChmod(os.Chmod)
+}
+
+func prepareSQLiteTempDirWithChmod(chmodFn func(string, fs.FileMode) error) error {
 	tempDir := strings.TrimSpace(os.Getenv("SQLITE_TMPDIR"))
 	if tempDir == "" {
 		tempDir = "/tmp"
@@ -83,8 +101,10 @@ func prepareSQLiteTempDir() error {
 	if err := os.MkdirAll(tempDir, mode); err != nil {
 		return fmt.Errorf("failed to create sqlite temporary directory %s: %w", tempDir, err)
 	}
-	if err := os.Chmod(tempDir, mode); err != nil {
-		return fmt.Errorf("failed to set sqlite temporary directory permissions on %s: %w", tempDir, err)
+	if err := chmodFn(tempDir, mode); err != nil {
+		if !isPermissionError(err) || !isWritableDir(tempDir) {
+			return fmt.Errorf("failed to set sqlite temporary directory permissions on %s: %w", tempDir, err)
+		}
 	}
 	if err := os.Setenv("SQLITE_TMPDIR", tempDir); err != nil {
 		return fmt.Errorf("failed to configure SQLITE_TMPDIR: %w", err)
@@ -97,6 +117,25 @@ func prepareSQLiteTempDir() error {
 	return nil
 }
 
+func isPermissionError(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EROFS)
+}
+
+func isWritableDir(dir string) bool {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	probe, err := os.CreateTemp(dir, ".opensync-tmp-check-*")
+	if err != nil {
+		return false
+	}
+	name := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(name)
+	return true
+}
+
 func numericEnv(name string, fallback int) (int, error) {
 	value := os.Getenv(name)
 	if value == "" {
@@ -105,11 +144,14 @@ func numericEnv(name string, fallback int) (int, error) {
 	if strings.ContainsAny(value, "+-") {
 		return 0, fmt.Errorf("%s must be a numeric value", name)
 	}
-	parsed, err := strconv.Atoi(value)
+	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("%s must be a numeric value", name)
 	}
-	return parsed, nil
+	if parsed < 0 || parsed > maxUnixID {
+		return 0, fmt.Errorf("%s must be between 0 and %d", name, maxUnixID)
+	}
+	return int(parsed), nil
 }
 
 func chownRecursive(root string, uid int, gid int) error {

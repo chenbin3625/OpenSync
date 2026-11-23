@@ -15,9 +15,24 @@ type ToastListener = (messages: ToastMessage[]) => void;
 
 let listeners: ToastListener[] = [];
 let toasts: ToastMessage[] = [];
+const dismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function notify() {
   listeners.forEach((listener) => listener([...toasts]));
+}
+
+function scheduleDismiss(item: ToastMessage) {
+  if (!item.duration || item.duration <= 0 || dismissTimers.has(item.id)) return;
+  const timer = setTimeout(() => {
+    dismissTimers.delete(item.id);
+    toast.dismiss(item.id);
+  }, item.duration);
+  dismissTimers.set(item.id, timer);
+}
+
+function clearAllDismissTimers() {
+  dismissTimers.forEach((timer) => clearTimeout(timer));
+  dismissTimers.clear();
 }
 
 export const toast = {
@@ -38,15 +53,15 @@ export const toast = {
     const item: ToastMessage = { id, type, content, duration };
     toasts = [...toasts, item];
     notify();
-
-    if (duration > 0) {
-      setTimeout(() => {
-        toast.dismiss(id);
-      }, duration);
-    }
+    scheduleDismiss(item);
     return id;
   },
   dismiss(id: string) {
+    const timer = dismissTimers.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      dismissTimers.delete(id);
+    }
     toasts = toasts.filter((t) => t.id !== id);
     notify();
   },
@@ -57,16 +72,20 @@ export function Toaster() {
 
   useEffect(() => {
     listeners.push(setItems);
+    toasts.forEach(scheduleDismiss);
     setItems([...toasts]);
     return () => {
       listeners = listeners.filter((l) => l !== setItems);
+      if (listeners.length === 0) {
+        clearAllDismissTimers();
+      }
     };
   }, []);
 
   if (items.length === 0) return null;
 
   return (
-    <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none max-w-sm w-full">
+    <div className="fixed top-4 right-4 left-4 sm:left-auto z-[9999] flex flex-col gap-2 pointer-events-none sm:w-full max-w-[calc(100vw-2rem)] sm:max-w-sm">
       {items.map((item) => {
         const Icon =
           item.type === 'success'
@@ -99,15 +118,19 @@ export function Toaster() {
           <div
             key={item.id}
             className={cn(
-              'pointer-events-auto flex items-center justify-between gap-3 px-4 py-3 rounded-lg border shadow-lg transition-all animate-in slide-in-from-top-3',
+              'pointer-events-auto flex items-start justify-between gap-3 px-4 py-3 rounded-lg border shadow-lg transition-all animate-in slide-in-from-top-3',
               borderClass
             )}
           >
-            <div className="flex items-center gap-2.5 min-w-0">
-              <Icon className={cn('h-4 w-4 shrink-0', iconColor)} />
-              <div className="text-sm font-medium leading-tight truncate">{item.content}</div>
+            <div className="flex items-start gap-2.5 min-w-0 flex-1">
+              <Icon className={cn('h-4 w-4 shrink-0 mt-0.5', iconColor)} />
+              <div className="min-w-0 flex-1 text-sm font-medium leading-snug whitespace-pre-wrap break-words">
+                {item.content}
+              </div>
             </div>
             <button
+              type="button"
+              aria-label="关闭提示"
               onClick={() => toast.dismiss(item.id)}
               className="text-slate-400 hover:text-slate-600 rounded-sm p-0.5 shrink-0"
             >

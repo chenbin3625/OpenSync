@@ -30,6 +30,7 @@ export default defineConfig({
     },
   ],
   server: {
+    host: '0.0.0.0',
     port: 3000,
     proxy: {
       '/svr': {
@@ -52,9 +53,6 @@ export default defineConfig({
             id.includes('/node_modules/scheduler/')
           ) {
             return 'react-vendor'
-          }
-          if (id.includes('/@radix-ui/')) {
-            return 'radix-vendor'
           }
           if (id.includes('/lucide-react/')) {
             return 'icons-vendor'

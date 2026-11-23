@@ -4,41 +4,38 @@ import { dirname, join } from 'node:path';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = join(scriptDir, '..');
-const homeSource = readFileSync(join(frontendRoot, 'src/pages/Home/index.tsx'), 'utf8');
-const cssSource = readFileSync(join(frontendRoot, 'src/index.css'), 'utf8');
+const overviewSource = readFileSync(join(frontendRoot, 'src/pages/Home/HomeOverview.tsx'), 'utf8');
+const homeUtilsSource = readFileSync(join(frontendRoot, 'src/pages/Home/homeUtils.ts'), 'utf8');
+const tooltipSource = readFileSync(join(frontendRoot, 'src/components/ui/tooltip.tsx'), 'utf8');
 
 const checks = [
   {
-    ok: homeSource.includes('function JobExcludeText'),
-    message: '任务卡片排除项需要专用渲染组件，避免多行文本直接交给 Typography ellipsis tooltip。',
+    ok: overviewSource.includes('formatExcludePreview(selectedJob.exclude)'),
+    message: '任务概览排除项需要使用 formatExcludePreview 渲染紧凑预览，避免直接铺开多行文本。',
   },
   {
-    ok: !homeSource.includes('ellipsis={{ tooltip: job.exclude }}'),
-    message: '排除项不能继续使用原始多行文本作为 ellipsis tooltip。',
+    ok: !overviewSource.includes('ellipsis={{ tooltip:'),
+    message: '排除项不能使用已移除的 AntD ellipsis tooltip 写法。',
   },
   {
-    ok: homeSource.includes('<JobExcludeText value={selectedJob.exclude} />'),
-    message: '任务概览排除项需要使用 JobExcludeText。',
+    ok: /<Tooltip>[\s\S]*?<TooltipTrigger asChild>[\s\S]*?formatExcludePreview\(selectedJob\.exclude\)[\s\S]*?<TooltipContent className="font-mono">[\s\S]*?\{selectedJob\.exclude\}/.test(overviewSource),
+    message: '任务概览排除项需要通过 TooltipTrigger + font-mono TooltipContent 悬浮展示完整规则。',
   },
   {
-    ok: homeSource.includes('sync-job-exclude-tooltip'),
-    message: '排除项 Tooltip 需要稳定的浮层 className。',
+    ok: homeUtilsSource.includes('export function formatExcludePreview'),
+    message: 'homeUtils 需要导出 formatExcludePreview 以过滤注释并规范化预览文案。',
   },
   {
-    ok: cssSource.includes('.sync-job-exclude-preview'),
-    message: '排除项预览需要单行省略样式。',
+    ok: tooltipSource.includes('max-h-[min(60vh,20rem)]') && tooltipSource.includes('overflow-y-auto'),
+    message: 'TooltipContent 需要限高并支持内部滚动，避免长排除规则 hover 时撑满页面。',
   },
   {
-    ok: cssSource.includes('.ant-tooltip.sync-job-exclude-tooltip'),
-    message: '排除项 Tooltip 需要覆盖 AntD 默认浮层宽度。',
+    ok: tooltipSource.includes('whitespace-pre-wrap') && tooltipSource.includes('break-words'),
+    message: 'TooltipContent 需要保留换行并允许超长规则折行。',
   },
   {
-    ok: cssSource.includes('white-space: pre-wrap'),
-    message: '排除项 Tooltip 需要保留换行并允许内容换行。',
-  },
-  {
-    ok: cssSource.includes('max-height: 320px'),
-    message: '排除项 Tooltip 需要最大高度，避免 hover 时撑满页面。',
+    ok: tooltipSource.includes('max-w-xs'),
+    message: 'TooltipContent 需要最大宽度限制，避免超长单行规则横向溢出。',
   },
 ];
 

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { Tooltip } from '../../../components/ui/tooltip';
 import { displayText } from '../homeUtils';
 import { cn } from '../../../lib/utils';
@@ -24,12 +24,12 @@ export default function EllipsisText({
     <Tooltip title={tooltip || text}>
       <span
         className={cn(
-          'truncate inline-block align-bottom cursor-default',
+          'block min-w-0 wrap-anywhere cursor-default xl:inline-block xl:max-w-(--detail-path-width) xl:truncate xl:align-bottom',
           type === 'secondary' && 'text-slate-500',
           type === 'danger' && 'text-rose-600',
           className
         )}
-        style={maxWidth ? { maxWidth } : undefined}
+        style={maxWidth ? { '--detail-path-width': `${maxWidth}px` } as CSSProperties : undefined}
       >
         {text}
       </span>

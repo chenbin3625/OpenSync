@@ -20,6 +20,7 @@ type JobTask struct {
 	Job         map[string]interface{}
 	AlistClient *AlistClient
 	CreateTime  float64
+	RunTime     int64
 
 	FinishMu       sync.Mutex
 	FinishedCounts map[taskStatus]int
@@ -32,19 +33,27 @@ type JobTask struct {
 	// QueueNum is incremented by both the submit executor and the full-sync
 	// relocation path, so it has to be atomic: a plain ++ let two items share a
 	// DoingKey and silently overwrite each other in Doing.
-	QueueNum   atomic.Int64
-	ScanFinish atomic.Bool
-	FirstSync     atomic.Int64
-	BreakFlag     atomic.Bool
-	scanSem       chan struct{}
-	scanBranchSem chan struct{}
-	lastMeter     transferMeter
-	ctx           context.Context
-	cancel        context.CancelFunc
-	runtimeMu     sync.Mutex
-	copyWG        sync.WaitGroup
-	ScanTotalDirs atomic.Int64
-	ScanDoneDirs  atomic.Int64
+	QueueNum           atomic.Int64
+	ScanFinish         atomic.Bool
+	FirstSync          atomic.Int64
+	BreakFlag          atomic.Bool
+	submitActive       atomic.Bool
+	finished           atomic.Bool
+	queuedCopyFailures atomic.Int64
+	scanSem            chan struct{}
+	scanBranchSem      chan struct{}
+	copySem            chan struct{}
+	scanDone           chan struct{}
+	lastMeter          transferMeter
+	ctx                context.Context
+	cancel             context.CancelFunc
+	runtimeMu          sync.Mutex
+	copyWG             sync.WaitGroup
+	ScanTotalDirs      atomic.Int64
+	ScanDoneDirs       atomic.Int64
+
+	deferredDeletesMu sync.Mutex
+	deferredDeletes   []fullSyncDelete
 
 	// CurrentMu guards the transfer meter below (speed bookkeeping).
 	CurrentMu sync.RWMutex
@@ -60,6 +69,7 @@ type JobTask struct {
 	persistWriteMu            sync.Mutex
 	persistFlushMu            sync.Mutex
 	persistFlushScheduled     bool
+	persistFlushTimer         *time.Timer
 	copyMonitor               *copyTaskMonitor
 	copyMonitorClientOverride copyItemClient
 }
@@ -73,20 +83,30 @@ func NewJobTask(taskID int64, jc *JobClient) *JobTask {
 
 func newJobTask(taskID int64, jc *JobClient) *JobTask {
 	job := jc.jobSnapshot()
+	now := time.Now().Unix()
 	jt := &JobTask{
 		TaskID:         taskID,
 		JobClient:      jc,
 		Job:            job,
-		CreateTime:     float64(time.Now().Unix()),
+		CreateTime:     float64(now),
+		RunTime:        now,
 		FinishedCounts: make(map[taskStatus]int),
 		FinishedSizes:  make(map[taskStatus]int64),
 		Doing:          make(map[int64]*CopyItem),
 		Waiting:        newCopyQueue(),
 		scanSem:        make(chan struct{}, scanConcurrencyLimit()),
 		scanBranchSem:  make(chan struct{}, scanConcurrencyLimit()),
+		copySem:        make(chan struct{}, runtimeTaskLimits().CopyConcurrency),
 	}
 	jt.ctx, jt.cancel = newTaskContext(config.GetConfig().Server.Timeout)
+	ok := false
+	defer func() {
+		if !ok {
+			jt.cancelTaskContext()
+		}
+	}()
 	jt.AlistClient = GetClientByIDContext(jt.ctx, util.ToInt64(job["alistId"]))
+	ok = true
 	return jt
 }
 
@@ -98,12 +118,24 @@ func newTaskContext(timeoutHours int) (context.Context, context.CancelFunc) {
 }
 
 func (jt *JobTask) Start() {
-	jt.startWorker("scan", jt.sync)
-	jt.startWorker("submit", jt.taskSubmit)
+	jt.runtimeMu.Lock()
+	jt.ensureRuntimeLocked()
+	scanDone := make(chan struct{})
+	jt.scanDone = scanDone
+	jt.runtimeMu.Unlock()
+
+	jt.submitActive.Store(true)
+	jt.startWorker("scan", jt.sync, func() {
+		close(scanDone)
+	})
+	jt.startWorker("submit", jt.taskSubmit, nil)
 }
 
-func (jt *JobTask) startWorker(name string, fn func()) {
+func (jt *JobTask) startWorker(name string, fn func(), onExit func()) {
 	go func() {
+		if onExit != nil {
+			defer onExit()
+		}
 		defer func() {
 			if r := recover(); r != nil {
 				jt.handleWorkerPanic(name, r)
@@ -113,6 +145,15 @@ func (jt *JobTask) startWorker(name string, fn func()) {
 	}()
 }
 
+func (jt *JobTask) waitScanDone() {
+	jt.runtimeMu.Lock()
+	scanDone := jt.scanDone
+	jt.runtimeMu.Unlock()
+	if scanDone != nil {
+		<-scanDone
+	}
+}
+
 func (jt *JobTask) handleWorkerPanic(name string, recovered interface{}) {
 	errMsg := workerPanicMessage(name, recovered)
 	log.Printf("Task %d %s", jt.TaskID, errMsg)
@@ -120,7 +161,7 @@ func (jt *JobTask) handleWorkerPanic(name string, recovered interface{}) {
 	jt.ScanFinish.Store(true)
 	jt.requestBreak()
 	if name == "submit" {
-		jt.finishFailedTask(errMsg)
+		jt.cleanupAfterSubmitPanic(errMsg)
 	}
 }
 
@@ -198,6 +239,13 @@ func (jt *JobTask) ensureRuntimeLocked() {
 	if jt.scanBranchSem == nil {
 		jt.scanBranchSem = make(chan struct{}, scanConcurrencyLimit())
 	}
+	if jt.copySem == nil {
+		limit := runtimeTaskLimits().CopyConcurrency
+		if limit < 1 {
+			limit = 1
+		}
+		jt.copySem = make(chan struct{}, limit)
+	}
 	if jt.ctx == nil || jt.cancel == nil {
 		jt.ctx, jt.cancel = newTaskContext(config.GetConfig().Server.Timeout)
 	}
@@ -213,12 +261,21 @@ func (jt *JobTask) context() context.Context {
 	return jt.ctx
 }
 
+func (jt *JobTask) cancelTaskContext() {
+	jt.runtimeMu.Lock()
+	cancel := jt.cancel
+	jt.runtimeMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
 func (jt *JobTask) cleanupContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Second)
 }
 
 func (jt *JobTask) isBreak() bool {
-	return jt.BreakFlag.Load()
+	return jt.BreakFlag.Load() || jt.context().Err() != nil
 }
 
 func (jt *JobTask) requestBreak() {
@@ -234,7 +291,10 @@ func (jt *JobTask) requestBreak() {
 }
 
 func (jt *JobTask) waitForBreak(d time.Duration) bool {
-	ctx := jt.context()
+	return jt.waitForBreakContext(jt.context(), d)
+}
+
+func (jt *JobTask) waitForBreakContext(ctx context.Context, d time.Duration) bool {
 	if d <= 0 {
 		select {
 		case <-ctx.Done():
@@ -273,12 +333,31 @@ func (jt *JobTask) finishCopyItem(item *CopyItem) {
 	errMsg := item.ErrMsg
 	copyType := item.CopyType
 	createTime := item.CreateTime
+	doingKey := item.DoingKey
+	isRelocation := item.isRelocation
 	item.mu.RUnlock()
 
-	jt.CopyHook(srcPath, dstPath, fileName, fileSize, alistTaskID,
-		status, errMsg, taskItemFile, copyType, createTime)
+	if status == taskStatusFailed && !isRelocation {
+		jt.queuedCopyFailures.Add(1)
+	}
 
+	taskItem := NewCopyJobTaskItem(jt.TaskID, srcPath, dstPath, fileName, fileSize,
+		alistTaskID, status, errMsg, taskItemFile, copyType, createTime)
+
+	// Atomically move the item from Doing into Finished counters/buffer so
+	// progress snapshots never double-count or drop it, while releasing the copy
+	// concurrency slot before performing any synchronous DB flush.
 	jt.DoingMu.Lock()
-	delete(jt.Doing, item.DoingKey)
+	delete(jt.Doing, doingKey)
+	needFlush := jt.recordFinishNoFlush([]JobTaskItem{taskItem})
 	jt.DoingMu.Unlock()
+
+	item.mu.Lock()
+	if item.copySlotHeld {
+		item.copySlotHeld = false
+		<-jt.copySem
+	}
+	item.mu.Unlock()
+
+	jt.postRecordFinish(needFlush)
 }

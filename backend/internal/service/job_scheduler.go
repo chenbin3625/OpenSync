@@ -18,6 +18,10 @@ import (
 const defaultSchedulerTimeZone = "Asia/Shanghai"
 const schedulerStopTimeout = 5 * time.Second
 
+var cronSpecParser = cron.NewParser(
+	cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
+)
+
 // Scheduler wraps robfig/cron for job scheduling
 type Scheduler struct {
 	cron    *cron.Cron
@@ -55,6 +59,32 @@ func schedulerLocation() *time.Location {
 	return time.FixedZone(defaultSchedulerTimeZone, 8*60*60)
 }
 
+// validateJobSchedule checks whether jobData defines a valid schedule without
+// starting any cron goroutines.
+func validateJobSchedule(isCron int, jobData map[string]interface{}) error {
+	if isCron == 2 {
+		return nil
+	}
+	if isCron == 0 {
+		interval := util.ToInt(jobData["interval"])
+		if interval <= 0 {
+			return errors.New(msg.IntervalLost)
+		}
+		spec := fmt.Sprintf("@every %dm", interval)
+		_, err := cronSpecParser.Parse(spec)
+		return err
+	}
+	spec, err := buildCronSpec(jobData)
+	if err != nil {
+		return err
+	}
+	if spec == "" {
+		return errors.New(msg.CronLost)
+	}
+	_, err = cronSpecParser.Parse(spec)
+	return err
+}
+
 // AddJob adds a scheduled job
 // isCron: 0=interval, 1=cron, 2=manual only
 func (s *Scheduler) AddJob(isCron int, jobData map[string]interface{}, fn func()) error {
@@ -66,19 +96,17 @@ func (s *Scheduler) AddJob(isCron int, jobData map[string]interface{}, fn func()
 		return nil
 	}
 
+	// If disabled, do not register an active cron entry (will be resumed later).
+	enable := util.ToInt(jobData["enable"])
+	if enable == 0 {
+		return validateJobSchedule(isCron, jobData)
+	}
+
 	entryID, err := s.addJobLocked(isCron, jobData, fn)
 	if err != nil {
 		return err
 	}
 	s.entryID = entryID
-
-	// If disabled, remove the entry immediately (will be resumed later)
-	enable := util.ToInt(jobData["enable"])
-	if enable == 0 && s.entryID != 0 {
-		s.cron.Remove(s.entryID)
-		s.entryID = 0
-	}
-
 	return nil
 }
 
@@ -169,6 +197,7 @@ func (s *Scheduler) Stop() {
 func buildCronSpec(jobData map[string]interface{}) (string, error) {
 	fields := []string{"second", "minute", "hour", "day", "month", "day_of_week"}
 	parts := make([]string, 6)
+	provided := make([]bool, 6)
 	hasValue := false
 
 	for i, field := range fields {
@@ -183,12 +212,23 @@ func buildCronSpec(jobData map[string]interface{}) (string, error) {
 				return "", errors.New(msg.CronLost)
 			}
 			parts[i] = val
+			provided[i] = true
 			hasValue = true
 		}
 	}
 
 	if !hasValue {
 		return "", nil
+	}
+
+	// Default omitted finer-grained fields to "0" instead of "*" so leaving
+	// second/minute blank when setting an hour or day schedule does not fire
+	// 60x-3600x per cycle.
+	if !provided[0] {
+		parts[0] = "0"
+	}
+	if !provided[1] && (provided[2] || provided[3] || provided[4] || provided[5]) {
+		parts[1] = "0"
 	}
 
 	// robfig/cron format: second minute hour dayOfMonth month dayOfWeek.

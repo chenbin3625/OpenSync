@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Plus, Edit, Trash2, Send, Bell,
 } from 'lucide-react';
@@ -55,6 +55,41 @@ export const displayWebhookUrl = (value: string): string => maskWebhookUrl(value
 type NotifyParamValue = string | number | boolean | Record<string, unknown> | null | undefined;
 type NotifyParams = Record<string, NotifyParamValue>;
 
+type SavedSecretHints = {
+  url?: string;
+  body?: boolean;
+  sendKey?: string;
+  corpsecret?: string;
+};
+
+type PreservedWebhookParams = {
+  contentType?: string;
+  needContent?: boolean;
+  titleName?: string;
+  contentName?: string;
+};
+
+const isMaskedSecretPlaceholder = (value: string): boolean => {
+  if (!value) return false;
+  if (value.includes('****')) return true;
+  try {
+    return decodeURIComponent(value).includes('****');
+  } catch {
+    return false;
+  }
+};
+
+const isValidHttpUrl = (value: string, httpsOnly = false): boolean => {
+  try {
+    const parsed = new URL(value.trim());
+    if (!parsed.host) return false;
+    if (httpsOnly) return parsed.protocol === 'https:';
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
 export const notifyParamKeysByMethod: Record<number, Array<keyof NotifyFormValues>> = {
   0: ['url', 'httpMethod', 'contentType', 'needContent', 'titleName', 'contentName', 'body', 'headers', 'notSendNull'],
   1: ['sendKey', 'version', 'notSendNull'],
@@ -106,13 +141,19 @@ export const normalizeNotifyParams = (method: number, params: NotifyParams): Not
     normalized.needContent = normalized.needContent ?? true;
     normalized.titleName = normalized.titleName || 'title';
     normalized.contentName = normalized.contentName || 'content';
-    const body = parseOptionalJsonObject(normalized.body);
-    const headers = parseOptionalJsonObject(normalized.headers);
-    if (body) {
-      normalized.body = JSON.stringify(body);
-    } else {
+
+    if (typeof normalized.body === 'string' && isMaskedSecretPlaceholder(normalized.body.trim())) {
       delete normalized.body;
+    } else {
+      const body = parseOptionalJsonObject(normalized.body);
+      if (body) {
+        normalized.body = JSON.stringify(body);
+      } else {
+        delete normalized.body;
+      }
     }
+
+    const headers = parseOptionalJsonObject(normalized.headers);
     if (headers) {
       normalized.headers = headers;
     } else {
@@ -167,6 +208,10 @@ export default function Notify() {
   const [agentid, setAgentid] = useState('');
   const [touser, setTouser] = useState('@all');
 
+  // 编辑态下：记录后端脱敏的密钥占位提示，以及保留隐藏的自定义 Webhook 高级参数
+  const [savedSecretHints, setSavedSecretHints] = useState<SavedSecretHints>({});
+  const [preservedWebhookParams, setPreservedWebhookParams] = useState<PreservedWebhookParams>({});
+
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [testingForm, setTestingForm] = useState(false);
@@ -174,8 +219,12 @@ export default function Notify() {
   // 列表行测试与删除确认
   const [testingId, setTestingId] = useState<number | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const listReqRef = useRef(0);
+
+  const editingSameMethod = Boolean(editingItem && editingItem.method === method);
 
   // 虚拟的 form 兼容对象，满足测试断言和统一取值
   const form = useMemo(() => ({
@@ -191,14 +240,18 @@ export default function Notify() {
       setAgentid('');
       setTouser('@all');
       setNotSendNull(false);
+      setSavedSecretHints({});
+      setPreservedWebhookParams({});
       setFormError('');
     },
     setFieldsValue(vals: Partial<NotifyFormValues> | null) {
       if (!vals) return;
       if (vals.method !== undefined) setMethod(vals.method);
       if (vals.enable !== undefined) setEnable(vals.enable);
-      if (vals.notSendNull !== undefined) setNotSendNull(vals.notSendNull);
-      if (vals.url !== undefined) setUrl(vals.url);
+      if (vals.notSendNull !== undefined) setNotSendNull(Boolean(vals.notSendNull));
+      if (vals.url !== undefined || vals.webhook !== undefined) {
+        setUrl(vals.url ?? vals.webhook ?? '');
+      }
       if (vals.httpMethod !== undefined) setHttpMethod(vals.httpMethod);
       if (vals.body !== undefined) setBody(vals.body);
       if (vals.headers !== undefined) setHeaders(vals.headers);
@@ -215,29 +268,96 @@ export default function Notify() {
       return undefined;
     },
     validateFields(): Promise<NotifyFormValues> {
-      try {
-        if (body.trim()) parseOptionalJsonObject(body);
-        if (headers.trim()) parseOptionalJsonObject(headers);
-      } catch {
-        return Promise.reject(new Error('请输入有效 JSON 对象'));
+      const trimmedUrl = url.trim();
+      const trimmedSendKey = sendKey.trim();
+      const trimmedCorpId = corpid.trim();
+      const trimmedCorpSecret = corpsecret.trim();
+      const trimmedAgentId = agentid.trim();
+      const trimmedToUser = touser.trim();
+      const trimmedBody = body.trim();
+      const trimmedHeaders = headers.trim();
+
+      if (method === 0) {
+        if (!trimmedUrl && !(editingSameMethod && savedSecretHints.url)) {
+          return Promise.reject(new Error('请输入 Webhook URL'));
+        }
+        if (trimmedUrl && !isValidHttpUrl(trimmedUrl, false)) {
+          return Promise.reject(new Error('请输入合法的 http 或 https 地址'));
+        }
+        if (trimmedBody && !isMaskedSecretPlaceholder(trimmedBody)) {
+          try {
+            parseOptionalJsonObject(trimmedBody);
+          } catch {
+            return Promise.reject(new Error('请求体模板必须是有效 JSON 对象'));
+          }
+        }
+        if (trimmedHeaders) {
+          try {
+            parseOptionalJsonObject(trimmedHeaders);
+          } catch {
+            return Promise.reject(new Error('自定义请求头必须是有效 JSON 对象'));
+          }
+        }
+      } else if (method === 1) {
+        if (!trimmedSendKey && !(editingSameMethod && savedSecretHints.sendKey)) {
+          return Promise.reject(new Error('请输入 Server酱 SendKey'));
+        }
+      } else if (method === 2 || method === 4) {
+        if (!trimmedUrl && !(editingSameMethod && savedSecretHints.url)) {
+          return Promise.reject(
+            new Error(method === 2 ? '请输入钉钉机器人 Webhook' : '请输入飞书 / Lark 机器人 Webhook')
+          );
+        }
+        if (trimmedUrl && !isValidHttpUrl(trimmedUrl, true)) {
+          return Promise.reject(new Error('Webhook 地址必须是合法的 https 链接'));
+        }
+      } else if (method === 3) {
+        if (!trimmedCorpId) {
+          return Promise.reject(new Error('请输入企业ID (CorpId)'));
+        }
+        if (!trimmedCorpSecret && !(editingSameMethod && savedSecretHints.corpsecret)) {
+          return Promise.reject(new Error('请输入应用Secret (CorpSecret)'));
+        }
+        if (!trimmedAgentId) {
+          return Promise.reject(new Error('请输入应用 AgentId'));
+        }
       }
+
       return Promise.resolve({
         method,
         enable,
-        url,
+        url: trimmedUrl,
         httpMethod,
-        body,
-        headers,
-        sendKey,
+        ...(method === 0 ? preservedWebhookParams : {}),
+        body: trimmedBody && !isMaskedSecretPlaceholder(trimmedBody) ? trimmedBody : '',
+        headers: trimmedHeaders,
+        sendKey: trimmedSendKey,
         version,
-        corpid,
-        corpsecret,
-        agentid,
-        touser,
+        corpid: trimmedCorpId,
+        corpsecret: trimmedCorpSecret,
+        agentid: trimmedAgentId,
+        touser: trimmedToUser || '@all',
         notSendNull,
       });
     },
-  }), [agentid, body, corpid, corpsecret, enable, headers, httpMethod, method, notSendNull, sendKey, touser, url, version]);
+  }), [
+    agentid,
+    body,
+    corpid,
+    corpsecret,
+    editingSameMethod,
+    enable,
+    headers,
+    httpMethod,
+    method,
+    notSendNull,
+    preservedWebhookParams,
+    savedSecretHints,
+    sendKey,
+    touser,
+    url,
+    version,
+  ]);
 
   const fetchList = useCallback(async () => {
     const reqID = ++listReqRef.current;
@@ -279,8 +399,92 @@ export default function Notify() {
       console.error('notify params parse failed', err);
       toast.error('通知配置解析失败');
     }
+
     form.resetFields();
-    setPendingNotifyValues({ ...params, method: item.method, enable: item.enable === 1 } as Partial<NotifyFormValues>);
+
+    const nextHints: SavedSecretHints = {};
+    const nextPreserved: PreservedWebhookParams = {};
+    const initialValues: Partial<NotifyFormValues> = {
+      method: item.method,
+      enable: item.enable === 1,
+      notSendNull: Boolean(params.notSendNull),
+    };
+
+    if (item.method === 0) {
+      const savedUrl = paramString(params, 'url') || paramString(params, 'webhook');
+      if (isMaskedSecretPlaceholder(savedUrl)) {
+        nextHints.url = savedUrl;
+        initialValues.url = '';
+      } else {
+        initialValues.url = savedUrl;
+      }
+
+      const rawHttpMethod =
+        (typeof params.method === 'string' && params.method.trim()) ||
+        (typeof params.httpMethod === 'string' && params.httpMethod.trim()) ||
+        'POST';
+      initialValues.httpMethod = rawHttpMethod.toUpperCase();
+
+      if (typeof params.contentType === 'string' && params.contentType.trim()) {
+        nextPreserved.contentType = params.contentType;
+      }
+      if (typeof params.needContent === 'boolean') {
+        nextPreserved.needContent = params.needContent;
+      }
+      if (typeof params.titleName === 'string' && params.titleName.trim()) {
+        nextPreserved.titleName = params.titleName;
+      }
+      if (typeof params.contentName === 'string' && params.contentName.trim()) {
+        nextPreserved.contentName = params.contentName;
+      }
+
+      const savedBody = paramString(params, 'body');
+      if (isMaskedSecretPlaceholder(savedBody)) {
+        nextHints.body = true;
+        initialValues.body = '';
+      } else {
+        initialValues.body = savedBody;
+      }
+
+      if (params.headers && typeof params.headers === 'object' && !Array.isArray(params.headers)) {
+        initialValues.headers = JSON.stringify(params.headers, null, 2);
+      } else {
+        initialValues.headers = paramString(params, 'headers');
+      }
+    } else if (item.method === 1) {
+      const savedSendKey = paramString(params, 'sendKey');
+      if (isMaskedSecretPlaceholder(savedSendKey)) {
+        nextHints.sendKey = savedSendKey;
+        initialValues.sendKey = '';
+      } else {
+        initialValues.sendKey = savedSendKey;
+      }
+      // 历史 Server酱配置未显式记录 version 时，后端默认按 v1 发送
+      initialValues.version = paramString(params, 'version') || 'v1';
+    } else if (item.method === 2 || item.method === 4) {
+      const savedUrl = paramString(params, 'url') || paramString(params, 'webhook');
+      if (isMaskedSecretPlaceholder(savedUrl)) {
+        nextHints.url = savedUrl;
+        initialValues.url = '';
+      } else {
+        initialValues.url = savedUrl;
+      }
+    } else if (item.method === 3) {
+      initialValues.corpid = paramString(params, 'corpid') || paramString(params, 'corpId');
+      initialValues.agentid = paramString(params, 'agentid') || paramString(params, 'agentId');
+      initialValues.touser = paramString(params, 'touser') || paramString(params, 'toUser') || '@all';
+      const savedCorpSecret = paramString(params, 'corpsecret') || paramString(params, 'corpSecret');
+      if (isMaskedSecretPlaceholder(savedCorpSecret)) {
+        nextHints.corpsecret = savedCorpSecret;
+        initialValues.corpsecret = '';
+      } else {
+        initialValues.corpsecret = savedCorpSecret;
+      }
+    }
+
+    setSavedSecretHints(nextHints);
+    setPreservedWebhookParams(nextPreserved);
+    setPendingNotifyValues(initialValues);
     setMethod(item.method);
     setEnable(item.enable === 1);
     setModalVisible(true);
@@ -298,16 +502,21 @@ export default function Notify() {
     setMethod(nextMethod);
   };
 
-  const handleDelete = async () => {
-    if (!deleteTargetId) return;
+  const handleDelete = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (!deleteTargetId || deleting) return;
+    setDeleting(true);
+    setDeleteError('');
     try {
       await notifyDelete(deleteTargetId);
       toast.success('删除成功');
-      fetchList();
-    } catch (err) {
-      console.error('notify delete failed', err);
-    } finally {
       setDeleteTargetId(null);
+      fetchList();
+    } catch (err: unknown) {
+      console.error('notify delete failed', err);
+      setDeleteError((err as Error).message || '删除失败，请重试');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -328,7 +537,7 @@ export default function Notify() {
     try {
       const values = await form.validateFields();
       const notifyData = {
-        ...(editingItem ? { id: editingItem.id } : {}),
+        ...(editingItem && editingItem.method === values.method ? { id: editingItem.id } : {}),
         method: values.method,
         params: JSON.stringify(getNotifyParamsFromValues(values)),
       };
@@ -375,8 +584,8 @@ export default function Notify() {
       await notifyPostTest({ notify: { id: item.id, method: item.method, params: item.params } });
       toast.success('测试消息已发送');
     } catch (err) {
+      // Axios interceptor already displays the backend error toast.
       console.error('notify test send failed', err);
-      toast.error('发送失败');
     } finally {
       setTestingId(null);
     }
@@ -397,6 +606,11 @@ export default function Notify() {
       default: return '—';
     }
   };
+
+  const hasSavedWebhookUrl = editingSameMethod && Boolean(savedSecretHints.url);
+  const hasSavedSendKey = editingSameMethod && Boolean(savedSecretHints.sendKey);
+  const hasSavedCorpSecret = editingSameMethod && Boolean(savedSecretHints.corpsecret);
+  const hasSavedBody = editingSameMethod && Boolean(savedSecretHints.body);
 
   return (
     <TooltipProvider>
@@ -474,7 +688,10 @@ export default function Notify() {
                         <Button
                           variant="danger"
                           size="sm"
-                          onClick={() => setDeleteTargetId(item.id)}
+                          onClick={() => {
+                            setDeleteError('');
+                            setDeleteTargetId(item.id);
+                          }}
                         >
                           <Trash2 className={cn(icon.sm, 'mr-1')} />
                           删除
@@ -537,12 +754,20 @@ export default function Notify() {
               {/* 动态表单字段 */}
               {method === 0 && (
                 <div className={cn('space-y-3 pt-1 border-t', surface.divider)}>
-                  <Field label="Webhook URL" required>
+                  <Field
+                    label="Webhook URL"
+                    required={!hasSavedWebhookUrl}
+                    hint={hasSavedWebhookUrl ? `已保存：${savedSecretHints.url}，留空将保留原地址` : undefined}
+                  >
                     <Input
-                      placeholder="https://example.com/api/webhook"
+                      placeholder={
+                        hasSavedWebhookUrl
+                          ? '留空保持已保存的 Webhook URL'
+                          : 'https://example.com/api/webhook'
+                      }
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
-                      required
+                      required={!hasSavedWebhookUrl}
                     />
                   </Field>
 
@@ -557,22 +782,44 @@ export default function Notify() {
                     </NativeSelect>
                   </Field>
 
-                  <Field label="请求体模板 (JSON)">
+                  <Field
+                    label="请求体模板 (JSON)"
+                    hint={
+                      hasSavedBody
+                        ? '已保存自定义请求体模板；留空将保留原模板，输入新的 JSON 对象将覆盖'
+                        : undefined
+                    }
+                  >
                     <Textarea
                       name="body"
                       rows={4}
-                      placeholder={'{\n  "title": "{title}",\n  "content": "{content}"\n}'}
+                      placeholder={
+                        hasSavedBody
+                          ? '已保存自定义请求体模板，留空保持不变'
+                          : '{\n  "title": "{title}",\n  "content": "{content}"\n}'
+                      }
                       value={body}
                       onChange={(e) => setBody(e.target.value)}
                       className="font-mono text-xs"
                     />
                   </Field>
 
-                  <Field label="自定义请求头 (JSON)">
+                  <Field
+                    label="自定义请求头 (JSON)"
+                    hint={
+                      editingSameMethod
+                        ? '留空将保留已保存请求头；输入 {} 可清空，输入新 JSON 对象将覆盖'
+                        : undefined
+                    }
+                  >
                     <Textarea
                       name="headers"
                       rows={3}
-                      placeholder={'{\n  "Authorization": "Bearer token"\n}'}
+                      placeholder={
+                        editingSameMethod
+                          ? '留空保持已存请求头不变，输入 {} 可清空'
+                          : '{\n  "Authorization": "Bearer token"\n}'
+                      }
                       value={headers}
                       onChange={(e) => setHeaders(e.target.value)}
                       className="font-mono text-xs"
@@ -583,13 +830,17 @@ export default function Notify() {
 
               {method === 1 && (
                 <div className={cn('space-y-3 pt-1 border-t', surface.divider)}>
-                  <Field label="Server酱 SendKey" required>
+                  <Field
+                    label="Server酱 SendKey"
+                    required={!hasSavedSendKey}
+                    hint={hasSavedSendKey ? `已保存：${savedSecretHints.sendKey}，留空将保留原密钥` : undefined}
+                  >
                     <Input
                       type="password"
-                      placeholder="SCTxxxxxxxx"
+                      placeholder={hasSavedSendKey ? '留空保持已保存的 SendKey' : 'SCTxxxxxxxx'}
                       value={sendKey}
                       onChange={(e) => setSendKey(e.target.value)}
-                      required
+                      required={!hasSavedSendKey}
                     />
                   </Field>
                   <Field label="API 版本">
@@ -605,13 +856,18 @@ export default function Notify() {
                 <div className={cn('space-y-3 pt-1 border-t', surface.divider)}>
                   <Field
                     label={method === 2 ? '钉钉机器人 Webhook' : '飞书 / Lark 机器人 Webhook'}
-                    required
+                    required={!hasSavedWebhookUrl}
+                    hint={hasSavedWebhookUrl ? `已保存：${savedSecretHints.url}，留空将保留原地址` : undefined}
                   >
                     <Input
-                      placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."
+                      placeholder={
+                        hasSavedWebhookUrl
+                          ? '留空保持已保存的 Webhook 地址'
+                          : 'https://oapi.dingtalk.com/robot/send?access_token=...'
+                      }
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
-                      required
+                      required={!hasSavedWebhookUrl}
                     />
                   </Field>
                 </div>
@@ -627,13 +883,21 @@ export default function Notify() {
                       required
                     />
                   </Field>
-                  <Field label="应用Secret (CorpSecret)" required>
+                  <Field
+                    label="应用Secret (CorpSecret)"
+                    required={!hasSavedCorpSecret}
+                    hint={
+                      hasSavedCorpSecret
+                        ? `已保存：${savedSecretHints.corpsecret}，留空将保留原密钥`
+                        : undefined
+                    }
+                  >
                     <Input
                       type="password"
-                      placeholder="xxxxxxxx"
+                      placeholder={hasSavedCorpSecret ? '留空保持已保存的 CorpSecret' : 'xxxxxxxx'}
                       value={corpsecret}
                       onChange={(e) => setCorpsecret(e.target.value)}
-                      required
+                      required={!hasSavedCorpSecret}
                     />
                   </Field>
                   <Field label="应用 AgentId" required>
@@ -679,18 +943,27 @@ export default function Notify() {
         </Dialog>
 
         {/* 删除确认弹窗 */}
-        <AlertDialog open={deleteTargetId !== null} onOpenChange={(o) => !o && setDeleteTargetId(null)}>
+        <AlertDialog
+          open={deleteTargetId !== null}
+          onOpenChange={(o) => {
+            if (!o && !deleting) {
+              setDeleteTargetId(null);
+              setDeleteError('');
+            }
+          }}
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>确认删除此通知？</AlertDialogTitle>
               <AlertDialogDescription>
                 删除后该渠道将不再接收任务完成或失败的推送通知。
               </AlertDialogDescription>
+              {deleteError && <Alert>{deleteError}</Alert>}
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
-              <AlertDialogAction variant="destructive" onClick={handleDelete}>
-                确认删除
+              <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" disabled={deleting} onClick={handleDelete}>
+                {deleting ? '删除中...' : '确认删除'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

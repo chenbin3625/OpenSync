@@ -1,6 +1,8 @@
 package service
 
 import (
+	"log"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,4 +36,35 @@ func TestStartTaskRetentionSchedulerReturnsWorkingStopWhenAlreadyStarted(t *test
 	stopSecond := StartTaskRetentionScheduler()
 	stopFirst()
 	stopSecond()
+}
+
+func TestRunTaskRetentionCleanupSkipsOverlappingRun(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+
+	oldFn := runRetentionCleanupFn
+	runRetentionCleanupFn = func(*log.Logger, int, time.Time) {
+		calls.Add(1)
+		close(entered)
+		<-release
+	}
+	defer func() { runRetentionCleanupFn = oldFn }()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RunTaskRetentionCleanup()
+	}()
+
+	<-entered
+	// Concurrent second call must immediately skip via atomic re-entry guard.
+	RunTaskRetentionCleanup()
+
+	close(release)
+	<-done
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("overlapping cleanup calls = %d, want 1", got)
+	}
 }

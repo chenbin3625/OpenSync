@@ -102,3 +102,27 @@ func TestRetryMkdirWithBothPathsStillRuns(t *testing.T) {
 		t.Fatalf("mkdir calls = %d, results = %#v, want existing mkdir retry behavior", mkdirCalls.Load(), persisted)
 	}
 }
+
+func TestRetryTaskItemDoesNotRecordFailureAfterDeadline(t *testing.T) {
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	jt := &JobTask{Job: map[string]interface{}{}}
+	jt.BreakFlag.Store(true)
+	jt.retryTaskItem(map[string]interface{}{
+		"type": taskItemTypeCopy.Int(), "isPath": taskItemPath.Int(),
+		"srcPath": "/src/", "dstPath": "",
+	})
+	jt.retryTaskItem(map[string]interface{}{
+		"type": 99, "isPath": taskItemFile.Int(),
+		"srcPath": "/src/", "dstPath": "/dst/", "fileName": "file.txt",
+	})
+
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("persisted failures = %#v, want none after deadline", persisted)
+	}
+}

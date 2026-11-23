@@ -22,6 +22,7 @@ import {
   AlertDialogTitle,
 } from '../ui/alert-dialog';
 import { Button } from '../ui/button';
+import { Alert } from '../common/Alert';
 import { cn } from '../../lib/utils';
 import { icon } from '../../lib/styles';
 import { ThemeToggle } from '../common/ThemeToggle';
@@ -54,16 +55,26 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { setUserInfo, userInfo } = useStore();
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const currentSection = '/' + (location.pathname.split('/')[1] || 'home');
   const appVersion = import.meta.env.PACKAGE_VERSION || '0.0.0';
 
-  const handleLogout = async () => {
+  const handleLogout = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (logoutLoading) return;
+    setLogoutError('');
+    setLogoutLoading(true);
     try {
       await logout();
     } catch (err) {
       console.error('logout failed', err);
+      setLogoutError('退出请求失败，请检查网络后重试');
+      return;
+    } finally {
+      setLogoutLoading(false);
     }
     setUserInfo(null);
     setLogoutDialogOpen(false);
@@ -141,28 +152,31 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div>
             <Dropdown>
               <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="flex items-center gap-2 text-slate-600 hover:text-slate-900"
-                aria-label="用户菜单"
-              >
-                <span className="max-w-[120px] truncate text-xs font-medium">
-                  {userInfo?.userName || '用户'}
-                </span>
-                <ChevronDown className={cn(icon.sm, 'hidden sm:block opacity-50')} />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuItem
-                onClick={() => setLogoutDialogOpen(true)}
-                className="text-rose-600 focus:text-rose-700 focus:bg-rose-50 cursor-pointer"
-              >
-                <LogOut className={cn(icon.md, 'mr-2')} />
-                <span>退出登录</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </Dropdown>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="flex items-center gap-2 text-slate-600 hover:text-slate-900"
+                  aria-label="用户菜单"
+                >
+                  <span className="max-w-[120px] truncate text-xs font-medium">
+                    {userInfo?.userName || '用户'}
+                  </span>
+                  <ChevronDown className={cn(icon.sm, 'hidden sm:block opacity-50')} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuItem
+                  onClick={() => {
+                    setLogoutError('');
+                    setLogoutDialogOpen(true);
+                  }}
+                  className="text-rose-600 focus:text-rose-700 focus:bg-rose-50 cursor-pointer"
+                >
+                  <LogOut className={cn(icon.md, 'mr-2')} />
+                  <span>退出登录</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </Dropdown>
           </div>
 
           {/* 移动端汉堡折叠按钮 */}
@@ -209,18 +223,26 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </main>
 
       {/* 退出确认弹窗 */}
-      <AlertDialog open={logoutDialogOpen} onOpenChange={setLogoutDialogOpen}>
+      <AlertDialog
+        open={logoutDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && logoutLoading) return;
+          setLogoutDialogOpen(open);
+          if (!open) setLogoutError('');
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认退出</AlertDialogTitle>
             <AlertDialogDescription>
               确定要退出当前 OpenSync 登录状态吗？
             </AlertDialogDescription>
+            {logoutError && <Alert>{logoutError}</Alert>}
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={handleLogout}>
-              退出登录
+            <AlertDialogCancel disabled={logoutLoading}>取消</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={logoutLoading} onClick={handleLogout}>
+              {logoutLoading ? '退出中...' : '退出登录'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

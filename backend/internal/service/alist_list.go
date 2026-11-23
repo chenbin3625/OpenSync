@@ -46,12 +46,27 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 		Page:    1,
 		PerPage: fileListPageSize,
 	}
-	result := make(FileListResult, fileListPageSize)
+	// No capacity hint: Go maps with a hint allocate all buckets up front
+	// (~57KB for 500 entries), and full-sync retains one listing per directory,
+	// so small listings would otherwise waste hundreds of MB on large trees.
+	result := make(FileListResult)
 	n, total, err := c.fetchFileListPage(ctx, req, result)
 	if err != nil {
 		return nil, err
 	}
-	if n == 0 || total <= n {
+	if fileListLimitExceeded(len(result)) || fileListLimitExceeded(n) {
+		return nil, fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries)
+	}
+	if total < 0 {
+		return nil, fmt.Errorf("AList directory listing returned invalid total %d", total)
+	}
+	if n == 0 {
+		if total > 0 {
+			return nil, fmt.Errorf("AList directory listing is incomplete: first page returned no entries (total=%d)", total)
+		}
+		return result, nil
+	}
+	if total <= n {
 		return result, nil
 	}
 
@@ -60,12 +75,20 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 	// observed page size and the page count must be derived from it — deriving
 	// pages from the requested size would silently drop every later page.
 	listPageSize := fileListPageSize
-	if n < fileListPageSize {
+	if listPageSize <= 0 || n < listPageSize {
 		listPageSize = n
 	}
-	if fileListLimitExceeded(len(result)) {
+
+	// Overflow-safe ceiling division for positive total and listPageSize:
+	// (total + listPageSize - 1) / listPageSize would overflow for large total.
+	pages := (total-1)/listPageSize + 1
+	if pages > maxFileListPages {
+		return nil, fmt.Errorf("AList directory listing exceeded %d pages", maxFileListPages)
+	}
+	if fileListLimitExceeded(total) {
 		return nil, fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries)
 	}
+
 	// The first response reveals the total entry count. Reserve the final map
 	// capacity once for multi-page listings so merging pages does not repeatedly
 	// grow and rehash the result map.
@@ -81,9 +104,9 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 		result = resized
 	}
 
-	pages := (total + listPageSize - 1) / listPageSize
-	if pages > maxFileListPages {
-		return nil, fmt.Errorf("AList directory listing exceeded %d pages", maxFileListPages)
+	remainingPages := pages - 1
+	if remainingPages <= 0 {
+		return result, nil
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -91,6 +114,10 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 
 	var mu sync.Mutex
 	var fetchErr error
+	// fetchedTotal tracks raw entries decoded across all pages so dropping
+	// unsafe names or deduplicating identical filenames does not falsely trip
+	// completeness validation.
+	fetchedTotal := n
 	// emptyPage records the first page that came back with zero entries. With an
 	// accurate total that can only happen on the final page; an empty page
 	// earlier means the server's total does not match its content, and merging
@@ -106,10 +133,13 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 		mu.Unlock()
 	}
 
-	remainingPages := pages - 1
 	workerCount := fileListPageWorkers
 	if workerCount > remainingPages {
 		workerCount = remainingPages
+	}
+	pageResultCap := listPageSize
+	if pageResultCap > maxFileListEntries {
+		pageResultCap = maxFileListEntries
 	}
 	pageJobs := make(chan int)
 	wg.Add(workerCount)
@@ -128,9 +158,13 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 						return
 					}
 
+					// Only page 1 sends refresh: true; subsequent pages read the
+					// refreshed snapshot so concurrent fetches do not hammer
+					// AList's cache refresh or produce inconsistent pages.
 					pageReq := req
 					pageReq.Page = page
-					pageResult := make(FileListResult, fileListPageSize)
+					pageReq.Refresh = false
+					pageResult := make(FileListResult, pageResultCap)
 					fetched, _, err := c.fetchFileListPage(ctx, pageReq, pageResult)
 					if err != nil {
 						fail(err)
@@ -140,10 +174,11 @@ func (c *AlistClient) FileListApiContext(ctx context.Context, path string, useCa
 					for name, meta := range pageResult {
 						result[name] = meta
 					}
-					if fetched == 0 && page < pages && (emptyPage == 0 || page < emptyPage) {
+					fetchedTotal += fetched
+					if fetched == 0 && (emptyPage == 0 || page < emptyPage) {
 						emptyPage = page
 					}
-					overCap := fileListLimitExceeded(len(result))
+					overCap := fileListLimitExceeded(len(result)) || fileListLimitExceeded(fetchedTotal)
 					mu.Unlock()
 					if overCap {
 						fail(fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries))
@@ -176,6 +211,9 @@ sendPages:
 	if emptyPage > 0 {
 		return nil, fmt.Errorf("AList directory listing is incomplete: page %d of %d returned no entries (total=%d)", emptyPage, pages, total)
 	}
+	if fetchedTotal < total {
+		return nil, fmt.Errorf("AList directory listing is incomplete: received %d of %d entries", fetchedTotal, total)
+	}
 	return result, nil
 }
 
@@ -188,9 +226,14 @@ func (c *AlistClient) fetchFileListPage(ctx context.Context, req alistListReques
 	if err != nil {
 		return 0, 0, err
 	}
-	defer resp.Body.Close()
+	defer drainAndCloseBody(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return 0, 0, &alistStatusError{httpStatus: resp.StatusCode}
+		errLimit := maxResponseBytes
+		if errLimit > 64<<10 {
+			errLimit = 64 << 10
+		}
+		errBody, _ := readAllWithLimit(resp.Body, errLimit)
+		return 0, 0, c.parseNonOKResponse(resp.StatusCode, errBody)
 	}
 	n, total, code, message, err := decodeFileListResponse(resp.Body, maxResponseBytes, result)
 	if err != nil {
@@ -207,6 +250,7 @@ func decodeFileListResponse(r io.Reader, limit int64, result FileListResult) (n,
 	if err = consumeDelim(dec, '{'); err != nil {
 		return 0, 0, 0, "", err
 	}
+	var dataErr error
 	for dec.More() {
 		key, keyErr := decodeObjectKey(dec)
 		if keyErr != nil {
@@ -222,9 +266,13 @@ func decodeFileListResponse(r io.Reader, limit int64, result FileListResult) (n,
 				return 0, 0, 0, "", err
 			}
 		case "data":
-			n, total, err = decodeFileListData(dec, result)
+			var dErr error
+			n, total, dErr, err = decodeFileListData(dec, result)
 			if err != nil {
 				return 0, 0, 0, "", err
+			}
+			if dErr != nil && dataErr == nil {
+				dataErr = dErr
 			}
 		default:
 			if err = skipJSONValue(dec); err != nil {
@@ -235,67 +283,91 @@ func decodeFileListResponse(r io.Reader, limit int64, result FileListResult) (n,
 	if err = consumeDelim(dec, '}'); err != nil {
 		return 0, 0, 0, "", err
 	}
+	// If AList returned an API error code (e.g. 401/404/500) along with a
+	// non-object data field (e.g. string or array), let checkAlistCode report
+	// the API error instead of masking it with a shape error.
+	if dataErr != nil && (code == 0 || code == http.StatusOK) {
+		return 0, 0, code, message, dataErr
+	}
 	return n, total, code, message, nil
 }
 
-func decodeFileListData(dec *json.Decoder, result FileListResult) (n, total int, err error) {
+// decodeFileListData decodes the "data" field of /api/fs/list.
+// shapeErr records non-fatal shape mismatches (e.g. data is a string/array on
+// an error response) after skipping the full JSON value so the caller can keep
+// reading code/message and invoke checkAlistCode. fatalErr indicates a stream,
+// syntax, or limit error.
+func decodeFileListData(dec *json.Decoder, result FileListResult) (n, total int, shapeErr, fatalErr error) {
 	tok, err := dec.Token()
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	if tok == nil {
-		return 0, 0, nil
+		return 0, 0, nil, nil
 	}
 	delim, ok := tok.(json.Delim)
 	if !ok || delim != '{' {
-		return 0, 0, fmt.Errorf("AList list data is not an object")
+		if err := skipJSONValueAfterToken(dec, tok); err != nil {
+			return 0, 0, nil, err
+		}
+		return 0, 0, fmt.Errorf("AList list data is not an object"), nil
 	}
 	for dec.More() {
 		key, keyErr := decodeObjectKey(dec)
 		if keyErr != nil {
-			return 0, 0, keyErr
+			return 0, 0, nil, keyErr
 		}
 		switch key {
 		case "content":
-			n, err = decodeFileListContent(dec, result)
+			var cShapeErr error
+			n, cShapeErr, err = decodeFileListContent(dec, result)
 			if err != nil {
-				return 0, 0, err
+				return 0, 0, nil, err
+			}
+			if cShapeErr != nil && shapeErr == nil {
+				shapeErr = cShapeErr
 			}
 		case "total":
 			if err = dec.Decode(&total); err != nil {
-				return 0, 0, err
+				return 0, 0, nil, err
 			}
 		default:
 			if err = skipJSONValue(dec); err != nil {
-				return 0, 0, err
+				return 0, 0, nil, err
 			}
 		}
 	}
-	return n, total, consumeDelim(dec, '}')
+	return n, total, shapeErr, consumeDelim(dec, '}')
 }
 
-func decodeFileListContent(dec *json.Decoder, result FileListResult) (int, error) {
+func decodeFileListContent(dec *json.Decoder, result FileListResult) (int, error, error) {
 	tok, err := dec.Token()
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if tok == nil {
-		return 0, nil
+		return 0, nil, nil
 	}
 	delim, ok := tok.(json.Delim)
 	if !ok || delim != '[' {
-		return 0, fmt.Errorf("AList list content is not an array")
+		if err := skipJSONValueAfterToken(dec, tok); err != nil {
+			return 0, nil, err
+		}
+		return 0, fmt.Errorf("AList list content is not an array"), nil
 	}
 	n := 0
 	for dec.More() {
+		if n >= maxFileListEntries {
+			return n, nil, fmt.Errorf("AList directory contains more than %d entries", maxFileListEntries)
+		}
 		var entry FileListEntry
 		if err := dec.Decode(&entry); err != nil {
-			return n, err
+			return n, nil, err
 		}
 		addFileListEntry(result, entry)
 		n++
 	}
-	return n, consumeDelim(dec, ']')
+	return n, nil, consumeDelim(dec, ']')
 }
 
 func addFileListEntry(result FileListResult, item FileListEntry) {
@@ -350,6 +422,10 @@ func skipJSONValue(dec *json.Decoder) error {
 	if err != nil {
 		return err
 	}
+	return skipJSONValueAfterToken(dec, tok)
+}
+
+func skipJSONValueAfterToken(dec *json.Decoder, tok json.Token) error {
 	delim, ok := tok.(json.Delim)
 	if !ok {
 		return nil

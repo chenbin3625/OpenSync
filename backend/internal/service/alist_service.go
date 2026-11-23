@@ -14,9 +14,12 @@ import (
 )
 
 var (
-	alistClientList   = make(map[int64]*AlistClient)
-	alistClientListMu sync.RWMutex
-	alistClientLoads  = make(map[int64]*alistClientLoad)
+	alistClientList       = make(map[int64]*AlistClient)
+	alistClientListMu     sync.RWMutex
+	alistClientLoads      = make(map[int64]*alistClientLoad)
+	alistClientGeneration = make(map[int64]uint64)
+
+	alistClientLoadTimeout = alistValidationTimeout
 
 	getAlistByID          = mapper.GetAlistByID
 	newAlistClient        = NewAlistClient
@@ -24,10 +27,11 @@ var (
 )
 
 type alistClientLoad struct {
-	client   *AlistClient
-	baseline *AlistClient
-	err      error
-	done     chan struct{}
+	client     *AlistClient
+	baseline   *AlistClient
+	generation uint64
+	err        error
+	done       chan struct{}
 }
 
 // GetClientList returns all alist entries without token
@@ -57,39 +61,59 @@ func GetClientByIDContext(ctx context.Context, alistID int64) *AlistClient {
 	if ok {
 		return client
 	}
-
-	load, owner := beginAlistClientLoad(alistID)
-	if !owner {
-		select {
-		case <-load.done:
-		case <-ctx.Done():
-			panicAlistClientLoadError(ctx.Err())
-		}
-		if load.err != nil {
-			panicAlistClientLoadError(load.err)
-		}
-		return load.client
-	}
-
-	alist, err := getAlistByID(alistID)
-	if err != nil {
-		finishAlistClientLoad(alistID, load, nil, err)
+	if err := ctx.Err(); err != nil {
 		panicAlistClientLoadError(err)
 	}
 
-	newClient, err := newAlistClientContext(
-		ctx,
+	load, owner := beginAlistClientLoad(alistID)
+	if owner {
+		// Detach the shared load from the initiating caller's context so one
+		// caller canceling cannot poison other coalesced waiters.
+		go runAlistClientLoad(alistID, load)
+	}
+
+	select {
+	case <-load.done:
+	case <-ctx.Done():
+		panicAlistClientLoadError(ctx.Err())
+	}
+	if load.err != nil {
+		panicAlistClientLoadError(load.err)
+	}
+	return load.client
+}
+
+func runAlistClientLoad(alistID int64, load *alistClientLoad) {
+	var (
+		newClient *AlistClient
+		err       error
+	)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if newClient != nil {
+				newClient.Close()
+				newClient = nil
+			}
+			err = fmt.Errorf("alist client load panic: %v", recovered)
+		}
+		finishAlistClientLoad(alistID, load, newClient, err)
+	}()
+
+	loadCtx, cancel := context.WithTimeout(context.Background(), alistClientLoadTimeout)
+	defer cancel()
+
+	alist, getErr := getAlistByID(alistID)
+	if getErr != nil {
+		err = getErr
+		return
+	}
+
+	newClient, err = newAlistClientContext(
+		loadCtx,
 		fmt.Sprintf("%v", alist["url"]),
 		fmt.Sprintf("%v", alist["token"]),
 		alistID,
 	)
-	if err != nil {
-		finishAlistClientLoad(alistID, load, nil, err)
-		panicAlistClientLoadError(err)
-	}
-
-	finishAlistClientLoad(alistID, load, newClient, nil)
-	return load.client
 }
 
 func beginAlistClientLoad(alistID int64) (*alistClientLoad, bool) {
@@ -105,7 +129,11 @@ func beginAlistClientLoad(alistID int64) (*alistClientLoad, bool) {
 		return load, false
 	}
 
-	load := &alistClientLoad{baseline: alistClientList[alistID], done: make(chan struct{})}
+	load := &alistClientLoad{
+		baseline:   alistClientList[alistID],
+		generation: alistClientGeneration[alistID],
+		done:       make(chan struct{}),
+	}
 	alistClientLoads[alistID] = load
 	return load, true
 }
@@ -116,7 +144,14 @@ func finishAlistClientLoad(alistID int64, load *alistClientLoad, client *AlistCl
 	load.err = err
 	if err == nil && client != nil {
 		current := alistClientList[alistID]
-		if current != nil && current != load.baseline {
+		if alistClientGeneration[alistID] != load.generation {
+			if current != nil {
+				load.client = current
+			} else {
+				load.err = errors.New(msg.AlistNotFound)
+			}
+			stale = client
+		} else if current != nil && current != load.baseline {
 			// A newer client was stored (e.g. via UpdateClient) while we were
 			// loading; keep the fresh one and discard the stale client we built.
 			load.client = current
@@ -128,7 +163,9 @@ func finishAlistClientLoad(alistID int64, load *alistClientLoad, client *AlistCl
 	} else {
 		load.client = client
 	}
-	delete(alistClientLoads, alistID)
+	if alistClientLoads[alistID] == load {
+		delete(alistClientLoads, alistID)
+	}
 	alistClientListMu.Unlock()
 	close(load.done)
 	if stale != nil {
@@ -139,6 +176,7 @@ func finishAlistClientLoad(alistID int64, load *alistClientLoad, client *AlistCl
 func storeAlistClient(alistID int64, client *AlistClient) {
 	var previous *AlistClient
 	alistClientListMu.Lock()
+	alistClientGeneration[alistID]++
 	previous = alistClientList[alistID]
 	alistClientList[alistID] = client
 	alistClientListMu.Unlock()
@@ -150,11 +188,32 @@ func storeAlistClient(alistID int64, client *AlistClient) {
 func removeCachedAlistClient(alistID int64) {
 	var previous *AlistClient
 	alistClientListMu.Lock()
+	alistClientGeneration[alistID]++
 	previous = alistClientList[alistID]
 	delete(alistClientList, alistID)
 	alistClientListMu.Unlock()
 	if previous != nil {
 		previous.Close()
+	}
+}
+
+// evictCachedAlistClient removes alistID from the cache only if target is still
+// the active cached instance, preventing a stale client's 401 response from
+// deleting or closing a newer client stored by UpdateClient.
+func evictCachedAlistClient(alistID int64, target *AlistClient) {
+	if target == nil {
+		return
+	}
+	var evicted *AlistClient
+	alistClientListMu.Lock()
+	if current, ok := alistClientList[alistID]; ok && current == target {
+		alistClientGeneration[alistID]++
+		delete(alistClientList, alistID)
+		evicted = current
+	}
+	alistClientListMu.Unlock()
+	if evicted != nil {
+		evicted.Close()
 	}
 }
 
@@ -229,7 +288,7 @@ func UpdateClient(alist map[string]interface{}) {
 
 	token, hasToken := normalizeAlistToken(alist, false)
 
-	alistOld, err := mapper.GetAlistByID(alistID)
+	alistOld, err := getAlistByID(alistID)
 	if err != nil {
 		panicPublicIf(err, msg.AlistNotFound)
 	}
@@ -255,6 +314,25 @@ func UpdateClient(alist map[string]interface{}) {
 	remark, _ := alist["remark"]
 	if remark != nil {
 		remarkStr = fmt.Sprintf("%v", remark)
+	}
+
+	// Coordinate the DB update and cache store with RemoveClient so a
+	// concurrently deleted AList config cannot be resurrected in the cache.
+	alistRefMu.Lock()
+	defer alistRefMu.Unlock()
+
+	currentAlist, err := getAlistByID(alistID)
+	if err != nil {
+		if client != nil {
+			client.Close()
+		}
+		panicPublicIf(err, msg.AlistNotFound)
+	}
+	if fmt.Sprintf("%v", currentAlist["url"]) != urlStr && !hasToken {
+		if client != nil {
+			client.Close()
+		}
+		panicPublic(msg.WithoutToken)
 	}
 	if err := mapper.UpdateAlist(alistID, remarkStr, urlStr, tokenPtr); err != nil {
 		if client != nil {
@@ -285,6 +363,7 @@ func AddClient(alist map[string]interface{}) {
 
 	newID, err := mapper.AddAlist(remarkStr, urlStr, client.User, token)
 	if err != nil {
+		client.Close()
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			panicPublic(msg.AlistExists)
 		}
@@ -295,9 +374,9 @@ func AddClient(alist map[string]interface{}) {
 	storeAlistClient(newID, client)
 }
 
-// alistRefMu serializes (validate alist exists → insert job) against
-// (check job references → remove alist), closing the TOCTOU window where a job
-// could be created for an alist that RemoveClient is deleting.
+// alistRefMu serializes (validate alist exists → insert job / update alist)
+// against (check job references → remove alist), closing the TOCTOU windows
+// where a job could reference or UpdateClient could resurrect a deleted alist.
 var alistRefMu sync.Mutex
 
 // RemoveClient removes an AList client
@@ -312,10 +391,10 @@ func RemoveClient(alistID int64) {
 		panicPublic(msg.AlistInUse)
 	}
 
-	removeCachedAlistClient(alistID)
 	if err := mapper.RemoveAlist(alistID); err != nil {
 		panic(err.Error())
 	}
+	removeCachedAlistClient(alistID)
 }
 
 // GetChildPath gets child directory paths for path selector

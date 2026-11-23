@@ -23,7 +23,10 @@ func HasUsers() (bool, error) {
 
 // CreateUser inserts a local user and returns its ID.
 func CreateUser(userName string, passwd string, recoveryKey string) (int64, error) {
-	return ExecuteInsert("INSERT INTO user_list(userName, passwd, recoveryKey) VALUES (?, ?, ?)", userName, passwd, recoveryKey)
+	return ExecuteInsert(
+		"INSERT INTO user_list(userName, passwd, recoveryKey, sqlVersion) VALUES (?, ?, ?, ?)",
+		userName, passwd, recoveryKey, currentVersion,
+	)
 }
 
 // CreateInitialUser atomically creates the first local user. It returns
@@ -33,17 +36,22 @@ func CreateInitialUser(userName string, passwd string, recoveryKey string) (int6
 	defer createInitialUserMu.Unlock()
 
 	result, err := GetDB().Exec(
-		`INSERT INTO user_list(userName, passwd, recoveryKey)
-		 SELECT ?, ?, ?
+		`INSERT INTO user_list(userName, passwd, recoveryKey, sqlVersion)
+		 SELECT ?, ?, ?, ?
 		 WHERE NOT EXISTS (SELECT 1 FROM user_list LIMIT 1)`,
 		userName,
 		passwd,
 		recoveryKey,
+		currentVersion,
 	)
 	if err != nil {
 		return 0, err
 	}
-	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if affected == 0 {
 		return 0, ErrAlreadyInitialized
 	}
 	return result.LastInsertId()
@@ -81,4 +89,23 @@ func ResetPasswd(userID int64, passwd string) error {
 // ResetUserCredentials updates password and recovery key together.
 func ResetUserCredentials(userID int64, passwd string, recoveryKey string) error {
 	return ExecuteUpdate("UPDATE user_list SET passwd=?, recoveryKey=? WHERE id=?", passwd, recoveryKey, userID)
+}
+
+// BumpSessionVersion invalidates every existing authentication cookie for a user.
+func BumpSessionVersion(userID int64) error {
+	result, err := GetDB().Exec(
+		"UPDATE user_list SET sessionVersion=COALESCE(sessionVersion, 1)+1 WHERE id=?",
+		userID,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrUserNotFound
+	}
+	return nil
 }

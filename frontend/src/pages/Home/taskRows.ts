@@ -14,15 +14,22 @@ export type RealtimeTaskLoadKey = {
 };
 
 const runningHistoryStatuses = new Set([0, 1]);
-const runningTaskItemStatus = 1;
+const activeTaskItemStatuses = new Set([0, 1]);
 
 export const IDLE_POLL_INTERVAL_MS = 15000;
+
+function toFiniteNumber(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 export function historyHasActiveTask(rows: Array<{ status: number }>): boolean {
   return rows.some((row) => runningHistoryStatuses.has(row.status));
 }
-export function detailHasRunningItem(rows: Array<{ status: number }>): boolean {
-  return rows.some((row) => row.status === runningTaskItemStatus);
+// Waiting (0) rows are about to start, so they count as active work too.
+export function detailHasActiveItem(rows: Array<{ status: number }>): boolean {
+  return rows.some((row) => activeTaskItemStatuses.has(row.status));
 }
 
 export function pollIntervalForActiveWork(hasActive: boolean, activeMs: number, idleMs = IDLE_POLL_INTERVAL_MS): number {
@@ -35,7 +42,7 @@ function mergeByKey<T>(
   getKey: (item: T, index: number) => string,
   isSame: (a: T, b: T) => boolean,
 ): T[] {
-  if (previous.length === 0) return next;
+  if (previous.length === 0) return next.length === 0 ? previous : next;
 
   const previousByKey = new Map(previous.map((item, index) => [getKey(item, index), item]));
   let changed = previous.length !== next.length;
@@ -64,11 +71,13 @@ export function mergeTaskRecords(previous: TaskRecord[], next: TaskRecord[]): Ta
 }
 
 export function getTaskItemKey(task: TaskItem, fallback = 0): string {
-  return String(
-    task.id ??
-      task.alistTaskId ??
-      `${task.fileName || ''}|${task.srcPath || ''}|${task.dstPath || ''}|${fallback}`,
-  );
+  if (task.id !== undefined && task.id !== null && task.id !== '') {
+    return String(task.id);
+  }
+  if (typeof task.alistTaskId === 'string' && task.alistTaskId.trim() !== '') {
+    return task.alistTaskId;
+  }
+  return `${task.fileName || ''}|${task.srcPath || ''}|${task.dstPath || ''}|${fallback}`;
 }
 
 export function getRealtimeTaskIdentity(task: CurrentTaskIdentity): string {
@@ -98,10 +107,10 @@ export function mergeTaskItems(previous: TaskItem[], next: TaskItem[]): TaskItem
 export function applyDoingPatch(previous: TaskItem[], patch: TaskItem[]): TaskItem[] {
   if (previous.length === 0 || patch.length === 0) return previous;
 
-  const patchByKey = new Map(patch.map((item, index) => [getTaskItemKey(item, index), item]));
+  const patchByKey = new Map(patch.map((item) => [getTaskItemKey(item), item]));
   let changed = false;
-  const next = previous.map((item, index) => {
-    const delta = patchByKey.get(getTaskItemKey(item, index));
+  const next = previous.map((item) => {
+    const delta = patchByKey.get(getTaskItemKey(item));
     if (!delta) return item;
     const merged = { ...item, ...delta };
     if (sameTaskItem(item, merged)) return item;
@@ -115,16 +124,15 @@ export function mergeCurrentTaskData(
   data: CurrentTaskData,
   previous: CurrentTaskData | null,
 ): CurrentTaskData {
-  if (data.doingPatch && previous && getRealtimeTaskIdentity(data) === getRealtimeTaskIdentity(previous)) {
-    return {
-      ...data,
-      doingTask: applyDoingPatch(previous.doingTask || [], data.doingPatch),
-    };
+  const previousRows = previous && getRealtimeTaskIdentity(data) === getRealtimeTaskIdentity(previous)
+    ? previous.doingTask
+    : null;
+  if (data.doingTask) {
+    const sorted = sortTaskItemsByCreateTimeDesc(data.doingTask);
+    return { ...data, doingTask: previousRows ? mergeTaskItems(previousRows, sorted) : sorted };
   }
-  return {
-    ...data,
-    doingTask: data.doingTask || previous?.doingTask || [],
-  };
+  const rows = previousRows ?? [];
+  return { ...data, doingTask: data.doingPatch ? applyDoingPatch(rows, data.doingPatch) : rows };
 }
 
 export function normalizeTaskItemPage(
@@ -209,40 +217,44 @@ export function calcRealtimeProgress(cur: CurrentTaskData, previous: ProgressSna
   remainTime: number;
 } {
   const sizeMap = cur.size || {};
-  const serverDone = Number(cur.doneSize);
-  const serverRemain = Number(cur.remainSize);
+  const serverDone = toFiniteNumber(cur.doneSize);
+  const serverRemain = toFiniteNumber(cur.remainSize);
   let doneSize: number;
   let remainSize: number;
-  if (Number.isFinite(serverDone) && Number.isFinite(serverRemain)) {
-    doneSize = serverDone;
+  if (serverDone !== null && serverRemain !== null) {
+    doneSize = Math.max(0, serverDone);
     remainSize = Math.max(0, serverRemain);
   } else {
     const doingSize = (cur.doingTask || []).reduce((sum, item) => {
-      const progress = Number(item.progress || 0);
-      return sum + (item.fileSize || 0) * progress / 100.0;
+      const progress = Math.max(0, Math.min(100, toFiniteNumber(item.progress) ?? 0));
+      const fileSize = Math.max(0, toFiniteNumber(item.fileSize) ?? 0);
+      return sum + fileSize * progress / 100.0;
     }, 0);
     remainSize = Math.max(0, (sizeMap.running || 0) - doingSize + (sizeMap.wait || 0));
-    doneSize = (sizeMap.success || 0) + doingSize;
+    doneSize = Math.max(0, (sizeMap.success || 0) + doingSize);
   }
 
   let speed = 0;
-  if (typeof cur.speed === 'number' && Number.isFinite(cur.speed)) {
-    speed = cur.speed;
-  } else if (previous && typeof previous.duration === 'number' && cur.duration !== previous.duration) {
-    speed = (doneSize - (previous.doneSize || 0)) / (cur.duration - previous.duration);
+  const serverSpeed = toFiniteNumber(cur.speed);
+  if (serverSpeed !== null) {
+    speed = Math.max(0, serverSpeed);
+  } else if (previous && typeof previous.duration === 'number' && cur.duration > previous.duration) {
+    speed = Math.max(0, (doneSize - (previous.doneSize || 0)) / (cur.duration - previous.duration));
   }
 
   let speedAvg = 0;
-  if (typeof cur.speedAvg === 'number' && Number.isFinite(cur.speedAvg)) {
-    speedAvg = cur.speedAvg;
+  const serverSpeedAvg = toFiniteNumber(cur.speedAvg);
+  if (serverSpeedAvg !== null) {
+    speedAvg = Math.max(0, serverSpeedAvg);
   } else if (cur.firstSync && cur.duration > 0) {
     const syncDuration = cur.duration - (cur.firstSync - cur.createTime);
-    if (syncDuration > 0) speedAvg = doneSize / syncDuration;
+    if (syncDuration > 0) speedAvg = Math.max(0, doneSize / syncDuration);
   }
 
   let remainTime = 0;
-  if (typeof cur.remainTime === 'number' && Number.isFinite(cur.remainTime)) {
-    remainTime = cur.remainTime;
+  const serverRemainTime = toFiniteNumber(cur.remainTime);
+  if (serverRemainTime !== null) {
+    remainTime = Math.max(0, serverRemainTime);
   } else if (speedAvg > 0 && remainSize > 0) {
     remainTime = Math.ceil(remainSize / speedAvg);
   }

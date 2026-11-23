@@ -8,6 +8,7 @@ import (
 	"opensync/internal/msg"
 	"opensync/pkg/crypto"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,18 +16,20 @@ import (
 
 // ServerConfig holds server configuration
 type ServerConfig struct {
-	Bind            string
-	Port            int
-	Expires         int
-	LogLevel        int
-	ConsoleLevel    int
-	LogSave         int
-	TaskSave        int
-	Timeout         int
-	CopyConcurrency int
-	ScanConcurrency int
-	MaxRetries      int
-	PasswdStr       string
+	Bind              string
+	Port              int
+	Expires           int
+	LogLevel          int
+	ConsoleLevel      int
+	LogSave           int
+	TaskSave          int
+	Timeout           int
+	CopyConcurrency   int
+	ScanConcurrency   int
+	MaxRetries        int
+	PasswdStr         string
+	AllowInsecureHTTP bool
+	AllowRemoteInit   bool
 	// TrustedProxies lists CIDR ranges (or bare IPs) whose X-Forwarded-Proto
 	// header may be honored when deciding whether to mark the auth cookie
 	// Secure behind a TLS-terminating reverse proxy.
@@ -53,7 +56,7 @@ var (
 )
 
 const (
-	defaultBind         = "0.0.0.0"
+	defaultBind         = "127.0.0.1"
 	defaultPort         = 8023
 	defaultExpires      = 7
 	defaultLogLevel     = 1
@@ -98,11 +101,22 @@ type SystemSettings struct {
 // invalidate every stored cookie and encrypted token, so a write failure is
 // fatal at startup.
 func GetPasswordStr() string {
-	key, err := crypto.ReadOrSetFile("data/secret.key", crypto.GeneratePassword(256), false)
+	keyPath := DataPath("secret.key")
+	key, err := crypto.ReadOrSetFile(keyPath, crypto.GeneratePassword(256), false)
 	if err != nil {
-		log.Fatalf("Failed to persist data/secret.key: %v", err)
+		log.Fatalf("Failed to persist %s: %v", keyPath, err)
 	}
 	return key
+}
+
+// DataPath returns a path under the configured persistent data directory.
+func DataPath(parts ...string) string {
+	root := strings.TrimSpace(os.Getenv("OPENSYNC_DATA_DIR"))
+	if root == "" {
+		root = "data"
+	}
+	pathParts := append([]string{root}, parts...)
+	return filepath.Join(pathParts...)
 }
 
 // GetConfig returns the global config (singleton)
@@ -121,7 +135,7 @@ func GetConfig() *Config {
 	}
 
 	passwdStr := GetPasswordStr()
-	dbname := "data/openSync.db"
+	dbname := DataPath("openSync.db")
 
 	sCfg := ServerConfig{
 		Bind:            defaultBind,
@@ -138,9 +152,9 @@ func GetConfig() *Config {
 		PasswdStr:       passwdStr,
 	}
 
-	if _, err := os.Stat("data/config.ini"); err == nil {
+	if _, err := os.Stat(DataPath("config.ini")); err == nil {
 		// Read config.ini
-		iniMap := readINI("data/config.ini")
+		iniMap := readINI(DataPath("config.ini"))
 		if opensync, ok := iniMap["opensync"]; ok {
 			if v, ok := opensync["bind"]; ok {
 				sCfg.Bind = stringConfigValue(v, sCfg.Bind)
@@ -179,23 +193,26 @@ func GetConfig() *Config {
 				sCfg.TrustedProxies = parseTrustedProxies(v)
 			}
 		}
-	} else {
-		// Read from environment variables
-		sCfg.Bind = envStringConfigValue("OPENSYNC_BIND", sCfg.Bind)
-		sCfg.Port = envIntConfigValue("OPENSYNC_PORT", sCfg.Port)
-		sCfg.Expires = envIntConfigValue("OPENSYNC_EXPIRES", sCfg.Expires)
-		sCfg.LogLevel = envIntConfigValue("OPENSYNC_LOG_LEVEL", sCfg.LogLevel)
-		sCfg.ConsoleLevel = envIntConfigValue("OPENSYNC_CONSOLE_LEVEL", sCfg.ConsoleLevel)
-		sCfg.LogSave = envIntConfigValue("OPENSYNC_LOG_SAVE", sCfg.LogSave)
-		sCfg.TaskSave = envIntConfigValue("OPENSYNC_TASK_SAVE", sCfg.TaskSave)
-		sCfg.Timeout = envIntConfigValue("OPENSYNC_TASK_TIMEOUT", sCfg.Timeout)
-		sCfg.CopyConcurrency = envIntConfigValue("OPENSYNC_COPY_CONCURRENCY", sCfg.CopyConcurrency)
-		sCfg.ScanConcurrency = envIntConfigValue("OPENSYNC_SCAN_CONCURRENCY", sCfg.ScanConcurrency)
-		sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
-		sCfg.TrustedProxies = parseTrustedProxies(os.Getenv("OPENSYNC_TRUSTED_PROXIES"))
+	}
+	// Deployment environment variables override persisted config values.
+	sCfg.Bind = envStringConfigValue("OPENSYNC_BIND", sCfg.Bind)
+	sCfg.Port = envIntConfigValue("OPENSYNC_PORT", sCfg.Port)
+	sCfg.Expires = envIntConfigValue("OPENSYNC_EXPIRES", sCfg.Expires)
+	sCfg.LogLevel = envIntConfigValue("OPENSYNC_LOG_LEVEL", sCfg.LogLevel)
+	sCfg.ConsoleLevel = envIntConfigValue("OPENSYNC_CONSOLE_LEVEL", sCfg.ConsoleLevel)
+	sCfg.LogSave = envIntConfigValue("OPENSYNC_LOG_SAVE", sCfg.LogSave)
+	sCfg.TaskSave = envIntConfigValue("OPENSYNC_TASK_SAVE", sCfg.TaskSave)
+	sCfg.Timeout = envIntConfigValue("OPENSYNC_TASK_TIMEOUT", sCfg.Timeout)
+	sCfg.CopyConcurrency = envIntConfigValue("OPENSYNC_COPY_CONCURRENCY", sCfg.CopyConcurrency)
+	sCfg.ScanConcurrency = envIntConfigValue("OPENSYNC_SCAN_CONCURRENCY", sCfg.ScanConcurrency)
+	sCfg.MaxRetries = envIntConfigValue("OPENSYNC_MAX_RETRIES", sCfg.MaxRetries)
+	if value := strings.TrimSpace(os.Getenv("OPENSYNC_TRUSTED_PROXIES")); value != "" {
+		sCfg.TrustedProxies = parseTrustedProxies(value)
 	}
 	sCfg.TLSCertFile = envStringConfigValue("OPENSYNC_TLS_CERT", sCfg.TLSCertFile)
 	sCfg.TLSKeyFile = envStringConfigValue("OPENSYNC_TLS_KEY", sCfg.TLSKeyFile)
+	sCfg.AllowInsecureHTTP = envBoolConfigValue("OPENSYNC_ALLOW_INSECURE_HTTP", false)
+	sCfg.AllowRemoteInit = envBoolConfigValue("OPENSYNC_ALLOW_REMOTE_INIT", false)
 
 	sysConfig = &Config{
 		DB:     DBConfig{DBName: dbname},
@@ -223,6 +240,12 @@ func clampServerConfig(sCfg *ServerConfig) {
 
 func (s ServerConfig) TLSEnabled() bool {
 	return strings.TrimSpace(s.TLSCertFile) != "" && strings.TrimSpace(s.TLSKeyFile) != ""
+}
+
+func (s ServerConfig) TLSPartiallyConfigured() bool {
+	hasCert := strings.TrimSpace(s.TLSCertFile) != ""
+	hasKey := strings.TrimSpace(s.TLSKeyFile) != ""
+	return hasCert != hasKey
 }
 
 func clampInt(value, min, max, fallback int) int {
@@ -357,6 +380,17 @@ func envStringConfigValue(envName string, fallback string) string {
 	return stringConfigValue(os.Getenv(envName), fallback)
 }
 
+func envBoolConfigValue(envName string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(envName))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
 // configManagedKeys are the [opensync] keys the server writes itself. Any
 // other line in config.ini — comments, unknown keys, other sections — is
 // preserved verbatim when settings are updated at runtime.
@@ -385,8 +419,14 @@ func configManagedValues(sCfg ServerConfig) map[string]string {
 
 // writeConfigFile rewrites the [opensync] section of data/config.ini while
 // preserving comments, unknown keys, and any other sections the operator added.
+// If missing managed keys need to be inserted, they are added inside the
+// existing [opensync] section rather than creating a duplicate section; any
+// pre-existing duplicate [opensync] sections or duplicate managed keys are
+// merged cleanly so updated settings never revert on restart.
 func writeConfigFile(sCfg ServerConfig) error {
-	if err := os.MkdirAll("data", 0755); err != nil {
+	configPath := DataPath("config.ini")
+	dataDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return err
 	}
 	values := configManagedValues(sCfg)
@@ -395,56 +435,89 @@ func writeConfigFile(sCfg ServerConfig) error {
 		pending[k] = v
 	}
 
-	var out []string
+	var preOpensync []string
+	var opensyncBody []string
+	var postOpensync []string
+	seenOpensync := false
 	inOpensync := false
-	if existing, err := os.ReadFile("data/config.ini"); err == nil {
-		for _, line := range strings.Split(string(existing), "\n") {
+
+	if existing, err := os.ReadFile(configPath); err == nil {
+		raw := strings.ReplaceAll(string(existing), "\r\n", "\n")
+		raw = strings.TrimSuffix(raw, "\n")
+		var lines []string
+		if raw != "" {
+			lines = strings.Split(raw, "\n")
+		}
+		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-				// Append managed keys that were missing before leaving the
-				// [opensync] section.
-				if inOpensync && len(pending) > 0 {
-					for _, key := range configManagedKeys {
-						if v, ok := pending[key]; ok {
-							out = append(out, key+"="+v)
-							delete(pending, key)
-						}
-					}
+				if trimmed == "[opensync]" {
+					inOpensync = true
+					seenOpensync = true
+					continue
 				}
-				inOpensync = trimmed == "[opensync]"
-				out = append(out, line)
+				inOpensync = false
+				if seenOpensync {
+					postOpensync = append(postOpensync, line)
+				} else {
+					preOpensync = append(preOpensync, line)
+				}
 				continue
 			}
 			if inOpensync {
-				if key, _, isKV := strings.Cut(trimmed, "="); isKV {
-					key = strings.TrimSpace(key)
-					if _, managed := pending[key]; managed {
-						out = append(out, key+"="+pending[key])
-						delete(pending, key)
-						continue
+				if !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, ";") {
+					if key, _, isKV := strings.Cut(trimmed, "="); isKV {
+						key = strings.TrimSpace(key)
+						if _, isManaged := values[key]; isManaged {
+							if v, stillPending := pending[key]; stillPending {
+								opensyncBody = append(opensyncBody, key+"="+v)
+								delete(pending, key)
+							}
+							continue
+						}
 					}
 				}
+				opensyncBody = append(opensyncBody, line)
+				continue
 			}
-			out = append(out, line)
-		}
-	}
-	if len(pending) > 0 {
-		if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
-			out = append(out, "")
-		}
-		out = append(out, "[opensync]")
-		for _, key := range configManagedKeys {
-			if v, ok := pending[key]; ok {
-				out = append(out, key+"="+v)
+			if seenOpensync {
+				postOpensync = append(postOpensync, line)
+			} else {
+				preOpensync = append(preOpensync, line)
 			}
 		}
-	}
-	content := strings.Join(out, "\n")
-	if !strings.HasSuffix(content, "\n") {
-		content += "\n"
 	}
 
-	tmpFile, err := os.CreateTemp("data", "config.ini.*")
+	trailingBlankCount := 0
+	for len(opensyncBody)-trailingBlankCount > 0 && strings.TrimSpace(opensyncBody[len(opensyncBody)-1-trailingBlankCount]) == "" {
+		trailingBlankCount++
+	}
+	trailingBlanks := append([]string(nil), opensyncBody[len(opensyncBody)-trailingBlankCount:]...)
+	opensyncBody = opensyncBody[:len(opensyncBody)-trailingBlankCount]
+
+	for _, key := range configManagedKeys {
+		if v, ok := pending[key]; ok {
+			opensyncBody = append(opensyncBody, key+"="+v)
+			delete(pending, key)
+		}
+	}
+	opensyncBody = append(opensyncBody, trailingBlanks...)
+
+	var out []string
+	out = append(out, preOpensync...)
+	if !seenOpensync && len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
+		out = append(out, "")
+	}
+	out = append(out, "[opensync]")
+	out = append(out, opensyncBody...)
+	if len(postOpensync) > 0 && len(trailingBlanks) == 0 {
+		out = append(out, "")
+	}
+	out = append(out, postOpensync...)
+
+	content := strings.Join(out, "\n") + "\n"
+
+	tmpFile, err := os.CreateTemp(dataDir, "config.ini.*")
 	if err != nil {
 		return err
 	}
@@ -460,6 +533,10 @@ func writeConfigFile(sCfg ServerConfig) error {
 		_ = tmpFile.Close()
 		return err
 	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
 	if err := tmpFile.Chmod(0644); err != nil {
 		_ = tmpFile.Close()
 		return err
@@ -467,7 +544,7 @@ func writeConfigFile(sCfg ServerConfig) error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpName, "data/config.ini"); err != nil {
+	if err := os.Rename(tmpName, configPath); err != nil {
 		return err
 	}
 	cleanup = false

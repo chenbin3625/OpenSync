@@ -1,13 +1,80 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
+	"math"
 	"net/http"
 	"opensync/internal/model"
 	"opensync/internal/msg"
 	"opensync/internal/service"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+type flexibleID struct {
+	set   bool
+	valid bool
+	value int64
+}
+
+func (f *flexibleID) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		f.set = false
+		f.valid = false
+		f.value = 0
+		return nil
+	}
+	f.set = true
+	f.valid = false
+	f.value = 0
+
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return nil
+		}
+		id, err := parseRequiredID(strings.TrimSpace(s), "id")
+		if err != nil {
+			return nil
+		}
+		f.valid = true
+		f.value = id
+		return nil
+	}
+
+	id, err := parseRequiredID(string(trimmed), "id")
+	if err != nil {
+		return nil
+	}
+	f.valid = true
+	f.value = id
+	return nil
+}
+
+func hasPresentJobID(raw interface{}) bool {
+	if raw == nil {
+		return false
+	}
+	switch v := raw.(type) {
+	case string:
+		s := strings.TrimSpace(v)
+		return s != "" && s != "0"
+	case float64:
+		return !math.IsNaN(v) && !math.IsInf(v, 0) && v != 0
+	case int:
+		return v != 0
+	case int64:
+		return v != 0
+	case json.Number:
+		s := strings.TrimSpace(v.String())
+		return s != "" && s != "0"
+	default:
+		return true
+	}
+}
 
 // GetJob handles GET /svr/job
 func GetJob(c *gin.Context) {
@@ -53,9 +120,14 @@ func GetJob(c *gin.Context) {
 	}
 
 	if taskIDStr != "" {
+		taskID, err := parseRequiredID(taskIDStr, "taskId")
+		if err != nil {
+			c.JSON(http.StatusOK, model.Error(err.Error()))
+			return
+		}
 		// Task item list
 		req := map[string]interface{}{
-			"taskId":   taskIDStr,
+			"taskId":   taskID,
 			"pageSize": c.Query("pageSize"),
 			"pageNum":  c.Query("pageNum"),
 			"status":   c.Query("status"),
@@ -66,7 +138,11 @@ func GetJob(c *gin.Context) {
 		}
 		// Remove empty params
 		removeEmptyStringValues(req)
-		result := service.GetTaskItemList(req)
+		ctx := c.Request.Context()
+		result := service.GetTaskItemList(ctx, req)
+		if ctx.Err() != nil {
+			return
+		}
 		c.JSON(http.StatusOK, model.Success(result))
 		return
 	}
@@ -92,44 +168,56 @@ func removeEmptyStringValues(req map[string]interface{}) {
 // AddJob handles POST /svr/job
 func AddJob(c *gin.Context) {
 	var req map[string]interface{}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil || req == nil {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
-	// Check if it's an edit (has 'id') or add
-	if _, hasID := req["id"]; hasID {
+	// Check if it's an edit (has a non-empty, non-zero 'id') or add
+	if hasPresentJobID(req["id"]) {
 		service.EditJobClient(req)
 	} else {
+		delete(req, "id")
 		service.AddJobClient(req, false)
 	}
 	c.JSON(http.StatusOK, model.Success(nil))
 }
 
+type updateJobRequest struct {
+	ID     flexibleID `json:"id"`
+	TaskID flexibleID `json:"taskId"`
+	Action string     `json:"action"`
+	Pause  *bool      `json:"pause"`
+	Abort  *bool      `json:"abort"`
+}
+
 // UpdateJob handles PUT /svr/job
 func UpdateJob(c *gin.Context) {
-	var req struct {
-		ID     *string `json:"id"`
-		TaskID *string `json:"taskId"`
-		Action string  `json:"action"`
-		Pause  *bool   `json:"pause"`
-		Abort  *bool   `json:"abort"`
+	var raw json.RawMessage
+	if err := c.ShouldBindJSON(&raw); err != nil {
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		c.JSON(http.StatusOK, model.Error(msg.LostPart))
+		return
+	}
+	var req updateJobRequest
+	if err := json.Unmarshal(trimmed, &req); err != nil {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
 
-	if req.TaskID != nil {
-		taskID, err := parseRequiredID(*req.TaskID, "taskId")
-		if err != nil {
-			c.JSON(http.StatusOK, model.Error(err.Error()))
+	if req.TaskID.set {
+		if !req.TaskID.valid {
+			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return
 		}
 		switch req.Action {
 		case "stop":
-			service.StopTask(taskID)
+			service.StopTask(req.TaskID.value)
 		case "retry":
-			service.RetryFailedTask(taskID)
+			service.RetryFailedTask(req.TaskID.value)
 		default:
 			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return
@@ -140,44 +228,33 @@ func UpdateJob(c *gin.Context) {
 
 	if req.Pause == nil {
 		// Manual execution
-		if req.ID != nil {
-			id, err := parseRequiredID(*req.ID, "id")
-			if err != nil {
-				c.JSON(http.StatusOK, model.Error(err.Error()))
+		if req.ID.set {
+			if !req.ID.valid {
+				c.JSON(http.StatusOK, model.Error(msg.LostPart))
 				return
 			}
-			service.DoJobManual(id)
+			service.DoJobManual(req.ID.value)
 		} else {
 			service.DoAllJobManual()
 		}
 	} else if *req.Pause {
 		// Disable or abort
-		if req.ID == nil {
+		if !req.ID.set || !req.ID.valid {
 			c.JSON(http.StatusOK, model.Error(msg.LostPart))
-			return
-		}
-		id, err := parseRequiredID(*req.ID, "id")
-		if err != nil {
-			c.JSON(http.StatusOK, model.Error(err.Error()))
 			return
 		}
 		if req.Abort != nil && *req.Abort {
-			service.AbortJob(id)
+			service.AbortJob(req.ID.value)
 		} else {
-			service.PauseJob(id)
+			service.PauseJob(req.ID.value)
 		}
 	} else {
 		// Enable
-		if req.ID == nil {
+		if !req.ID.set || !req.ID.valid {
 			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return
 		}
-		id, err := parseRequiredID(*req.ID, "id")
-		if err != nil {
-			c.JSON(http.StatusOK, model.Error(err.Error()))
-			return
-		}
-		service.ContinueJob(id)
+		service.ContinueJob(req.ID.value)
 	}
 	c.JSON(http.StatusOK, model.Success(nil))
 }

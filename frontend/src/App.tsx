@@ -3,6 +3,7 @@ import AppRouter from './router';
 import { getUser } from './api/user';
 import { useStore } from './stores/useStore';
 import { Toaster } from './components/ui/toaster';
+import { TooltipProvider } from './components/ui/tooltip';
 import './index.css';
 
 // OpenSync 翡翠青核心品牌色与设计规范
@@ -33,12 +34,11 @@ function App() {
   }, [setAuthChecked, setUserInfo]);
 
   return (
-    <>
+    <TooltipProvider delayDuration={200}>
       <AppRouter />
       <Toaster />
-    </>
+    </TooltipProvider>
   );
 }
 
 export default App;
-

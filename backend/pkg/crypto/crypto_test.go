@@ -36,7 +36,8 @@ func TestCheckPasswordRejectsNonBcryptHashes(t *testing.T) {
 }
 
 func TestReadOrSetFileCreatesSecretWithOwnerOnlyPermissions(t *testing.T) {
-	secretPath := filepath.Join(t.TempDir(), "nested", "secret.key")
+	dir := filepath.Join(t.TempDir(), "nested")
+	secretPath := filepath.Join(dir, "secret.key")
 
 	got, err := ReadOrSetFile(secretPath, "secret-value", false)
 	if err != nil {
@@ -52,6 +53,14 @@ func TestReadOrSetFileCreatesSecretWithOwnerOnlyPermissions(t *testing.T) {
 	}
 	if mode := info.Mode().Perm(); mode != 0600 {
 		t.Fatalf("secret permissions = %o, want 0600", mode)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "secret.key" {
+		t.Fatalf("unexpected files left after atomic write: %v", entries)
 	}
 }
 
@@ -78,5 +87,47 @@ func TestReadOrSetFileReturnsExistingContent(t *testing.T) {
 	}
 	if got != "existing" {
 		t.Fatalf("ReadOrSetFile() = %q, want existing content", got)
+	}
+}
+
+func TestReadOrSetFileAllowsReadOnly0400SecretFile(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "secret.key")
+	if err := os.WriteFile(secretPath, []byte("mounted-secret"), 0o400); err != nil {
+		t.Fatalf("setup secret: %v", err)
+	}
+	got, err := ReadOrSetFile(secretPath, "replacement", false)
+	if err != nil {
+		t.Fatalf("ReadOrSetFile() error = %v, want nil for 0400 read-only secret", err)
+	}
+	if got != "mounted-secret" {
+		t.Fatalf("ReadOrSetFile() = %q, want mounted-secret", got)
+	}
+	info, err := os.Stat(secretPath)
+	if err != nil {
+		t.Fatalf("stat secret: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o400 {
+		t.Fatalf("0400 secret mode changed to %04o, want 0400 preserved without chmod", mode)
+	}
+}
+
+func TestReadOrSetFileTightensInsecurePermissions(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "secret.key")
+	if err := os.WriteFile(secretPath, []byte("loose-secret"), 0o644); err != nil {
+		t.Fatalf("setup secret: %v", err)
+	}
+	got, err := ReadOrSetFile(secretPath, "replacement", false)
+	if err != nil {
+		t.Fatalf("ReadOrSetFile() error = %v", err)
+	}
+	if got != "loose-secret" {
+		t.Fatalf("ReadOrSetFile() = %q, want loose-secret", got)
+	}
+	info, err := os.Stat(secretPath)
+	if err != nil {
+		t.Fatalf("stat secret: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("tightened mode = %04o, want 0600", mode)
 	}
 }

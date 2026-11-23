@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  calcRealtimeProgress,
   filterCurrentTaskFromHistory,
   filterRunningTaskRows,
   getRealtimeTaskIdentity,
@@ -81,6 +82,26 @@ test('mergeTaskItems keeps unchanged realtime file row references during refresh
   assert.equal(getTaskItemKey(refreshed[1], 1), 'copy-20');
 });
 
+test('getTaskItemKey avoids collisions when alistTaskId is empty or whitespace', () => {
+  const first: TaskItem = { alistTaskId: '', status: 1, fileName: 'a.mkv', srcPath: '/s/a.mkv', dstPath: '/d/a.mkv' };
+  const second: TaskItem = { alistTaskId: '   ', status: 1, fileName: 'b.mkv', srcPath: '/s/b.mkv', dstPath: '/d/b.mkv' };
+  const duplicatePath: TaskItem = { alistTaskId: '', status: 1, fileName: 'a.mkv', srcPath: '/s/a.mkv', dstPath: '/d/a.mkv' };
+
+  assert.equal(getTaskItemKey(first, 0), 'a.mkv|/s/a.mkv|/d/a.mkv|0');
+  assert.equal(getTaskItemKey(second, 1), 'b.mkv|/s/b.mkv|/d/b.mkv|1');
+  assert.notEqual(getTaskItemKey(first, 0), getTaskItemKey(second, 1));
+  assert.notEqual(getTaskItemKey(first, 0), getTaskItemKey(duplicatePath, 2));
+  assert.equal(getTaskItemKey({ id: 0, status: 1 }), '0');
+
+  const merged = mergeTaskItems(
+    [first, second],
+    [{ ...first, progress: 50 }, second],
+  );
+  assert.notEqual(merged[0], first);
+  assert.equal(merged[0].progress, 50);
+  assert.equal(merged[1], second);
+});
+
 test('mergeTaskItems reuses the previous array when refreshed rows are unchanged', () => {
   const existing: TaskItem[] = [
     { id: 10, status: 1, progress: 35, fileName: 'movie.mkv', fileSize: 1024 },
@@ -119,6 +140,115 @@ test('mergeCurrentTaskData clears rows on an empty full snapshot', () => {
   const merged = mergeCurrentTaskData(next, previous);
 
   assert.deepEqual(merged.doingTask, []);
+});
+
+test('stream patches preserve sorted rows and match items without IDs by path', () => {
+  const older = { fileName: 'older.mkv', srcPath: '/source/older.mkv', dstPath: '/backup/older.mkv',
+    status: 1, progress: 10, createTime: 10 };
+  const newer = { id: 12, status: 1, progress: 20, createTime: 20 };
+  const task: CurrentTaskData = {
+    taskId: 10, createTime: 80, scanFinish: true, duration: 20,
+    num: { wait: 0, running: 2, success: 0, fail: 0, other: 0 },
+    size: { wait: 0, running: 2, success: 0, fail: 0, other: 0 },
+    doingTask: [older, newer],
+  };
+  const snapshot = mergeCurrentTaskData(task, null);
+  assert.deepEqual(snapshot.doingTask, [newer, older]);
+  const { createTime: _createTime, ...patch } = { ...older, progress: 45 };
+  const patched = mergeCurrentTaskData({ ...task, doingTask: null, doingPatch: [patch] }, snapshot);
+  assert.equal(patched.doingTask?.[0], newer);
+  assert.equal(patched.doingTask?.[1].progress, 45);
+  assert.equal(mergeCurrentTaskData({ ...task, doingTask: null }, patched).doingTask, patched.doingTask);
+  assert.deepEqual(mergeCurrentTaskData({ ...task, taskId: 11, doingTask: null }, patched).doingTask, []);
+});
+
+test('calcRealtimeProgress treats null/empty server metrics as absent instead of 0', () => {
+  const cur = {
+    taskId: 10,
+    scanFinish: true,
+    createTime: 1000,
+    firstSync: 1010,
+    duration: 20,
+    num: { wait: 1, running: 1, success: 1, fail: 0, other: 0 },
+    size: { wait: 500, running: 1000, success: 2000, fail: 0, other: 0 },
+    doingTask: [
+      { id: 1, status: 1, fileSize: 1000, progress: 50 },
+    ],
+    // Simulate JSON payload with explicit nulls that Number(null) would wrongly coerce to 0
+    doneSize: null,
+    remainSize: null,
+    speed: null,
+    speedAvg: null,
+    remainTime: null,
+  } as unknown as CurrentTaskData;
+
+  const progress = calcRealtimeProgress(cur, { duration: 10, doneSize: 1500 });
+
+  assert.equal(progress.doneSize, 2500);
+  assert.equal(progress.remainSize, 1000);
+  assert.equal(progress.speed, 100);
+  assert.equal(progress.speedAvg, 250);
+  assert.equal(progress.remainTime, 4);
+
+  // Explicit server zero values are still honored
+  const explicitZeros = calcRealtimeProgress({
+    ...cur,
+    doneSize: 0,
+    remainSize: 0,
+    speed: 0,
+    speedAvg: 0,
+    remainTime: 0,
+  }, { duration: 10, doneSize: 1500 });
+  assert.deepEqual(explicitZeros, {
+    doneSize: 0,
+    remainSize: 0,
+    speed: 0,
+    speedAvg: 0,
+    remainTime: 0,
+  });
+});
+
+test('calcRealtimeProgress clamps negative server and client-derived speeds and sizes to 0', () => {
+  const negativeServer: CurrentTaskData = {
+    taskId: 10,
+    scanFinish: true,
+    createTime: 1000,
+    duration: 20,
+    num: { wait: 0, running: 1, success: 0, fail: 0, other: 0 },
+    size: { wait: 0, running: 0, success: 0, fail: 0, other: 0 },
+    doneSize: -100,
+    remainSize: -200,
+    speed: -50,
+    speedAvg: -25,
+    remainTime: -10,
+  };
+  assert.deepEqual(calcRealtimeProgress(negativeServer, null), {
+    doneSize: 0,
+    remainSize: 0,
+    speed: 0,
+    speedAvg: 0,
+    remainTime: 0,
+  });
+
+  // Client-side fallback: doneSize decreased vs previous snapshot and doingSize > size.running
+  const clientFallback: CurrentTaskData = {
+    taskId: 10,
+    scanFinish: true,
+    createTime: 1000,
+    duration: 20,
+    num: { wait: 0, running: 2, success: 0, fail: 0, other: 0 },
+    size: { wait: 0, running: 100, success: 0, fail: 0, other: 0 },
+    doingTask: [
+      { id: 1, status: 1, fileSize: 200, progress: 150 },
+      { id: 2, status: 1, fileSize: -50, progress: -20 },
+    ],
+  };
+  const fallbackResult = calcRealtimeProgress(clientFallback, { duration: 10, doneSize: 1000 });
+  assert.equal(fallbackResult.doneSize, 200);
+  assert.equal(fallbackResult.remainSize, 0);
+  assert.equal(fallbackResult.speed, 0);
+  assert.equal(fallbackResult.speedAvg, 0);
+  assert.equal(fallbackResult.remainTime, 0);
 });
 
 test('filterCurrentTaskFromHistory removes the active running task from history rows', () => {

@@ -13,20 +13,40 @@ import (
 )
 
 var (
-	errPwd        map[string][]int64
-	errPwdMu      sync.Mutex
-	getUserByID   = mapper.GetUserByID
-	getUserByName = mapper.GetUserByName
+	errPwd          map[string][]int64
+	errPwdByIP      map[string][]int64
+	inFlightPwd     map[string]int
+	inFlightPwdByIP map[string]int
+	errPwdMu        sync.Mutex
+	getUserByID     = mapper.GetUserByID
+	getUserByName   = mapper.GetUserByName
 )
 
 const (
 	pwdErrorWindowSeconds      = int64(300)
 	maxPwdErrorScopes          = 1024
+	pwdErrorLockThreshold      = 4
+	ipPwdErrorLockThreshold    = 10
 	cliGeneratedPasswordLength = 16
 	minPasswordLength          = 8
 	maxPasswordBytes           = 72
 	dummyPasswordHash          = "$2a$10$bxCodrDhN/EbuPfzKC5zmeZFtzgi1h1Yr.AOgTUKVCQEWuuLJUNaq"
 )
+
+func initPwdTrackingLocked() {
+	if errPwd == nil {
+		errPwd = make(map[string][]int64)
+	}
+	if errPwdByIP == nil {
+		errPwdByIP = make(map[string][]int64)
+	}
+	if inFlightPwd == nil {
+		inFlightPwd = make(map[string]int)
+	}
+	if inFlightPwdByIP == nil {
+		inFlightPwdByIP = make(map[string]int)
+	}
+}
 
 // CheckPwdTime checks if too many password errors in 5 minutes
 func CheckPwdTime() {
@@ -38,25 +58,10 @@ func CheckPwdTimeForScope(scope string) {
 	defer errPwdMu.Unlock()
 	now := time.Now().Unix()
 	scope = normalizePwdErrorScope(scope)
-	if errPwd == nil {
-		errPwd = make(map[string][]int64)
-	}
-	prunePwdErrorsLocked(now)
+	initPwdTrackingLocked()
+	prunePwdErrorMapLocked(errPwd, now)
 
-	// Remove entries older than 5 minutes
-	failures := errPwd[scope]
-	cleaned := failures[:0]
-	for _, t := range failures {
-		if t+pwdErrorWindowSeconds >= now {
-			cleaned = append(cleaned, t)
-		}
-	}
-	if len(cleaned) == 0 {
-		delete(errPwd, scope)
-	} else {
-		errPwd[scope] = cleaned
-	}
-	if len(cleaned) > 3 {
+	if len(errPwd[scope])+inFlightPwd[scope] >= pwdErrorLockThreshold {
 		panicPublic(msg.PasswdWrongMaxTime)
 	}
 }
@@ -70,13 +75,11 @@ func AddPwdErrorForScope(scope string) {
 	errPwdMu.Lock()
 	defer errPwdMu.Unlock()
 	scope = normalizePwdErrorScope(scope)
-	if errPwd == nil {
-		errPwd = make(map[string][]int64)
-	}
+	initPwdTrackingLocked()
 	now := time.Now().Unix()
-	prunePwdErrorsLocked(now)
+	prunePwdErrorMapLocked(errPwd, now)
 	errPwd[scope] = append(errPwd[scope], now)
-	enforcePwdErrorScopeLimitLocked()
+	enforcePwdErrorMapLimitLocked(errPwd, pwdErrorLockThreshold)
 }
 
 // ClearPwdErrorForScope clears any recorded failures for a scope upon successful auth
@@ -89,8 +92,80 @@ func ClearPwdErrorForScope(scope string) {
 	}
 }
 
-func prunePwdErrorsLocked(now int64) {
-	for scope, failures := range errPwd {
+func clientIPScope(clientScope string) string {
+	clientScope = strings.TrimSpace(clientScope)
+	if clientScope == "" {
+		return ""
+	}
+	return "ip:" + clientScope
+}
+
+// beginPwdAttempt atomically checks both per-account+IP and IP-level lockout
+// thresholds (including concurrent in-flight attempts) and reserves an in-flight
+// slot so concurrent burst requests cannot bypass the lockout threshold.
+func beginPwdAttempt(scope string, ipScope string) {
+	errPwdMu.Lock()
+	defer errPwdMu.Unlock()
+	scope = normalizePwdErrorScope(scope)
+	initPwdTrackingLocked()
+	now := time.Now().Unix()
+	prunePwdErrorMapLocked(errPwd, now)
+	if ipScope != "" {
+		prunePwdErrorMapLocked(errPwdByIP, now)
+	}
+	if len(errPwd[scope])+inFlightPwd[scope] >= pwdErrorLockThreshold {
+		panicPublic(msg.PasswdWrongMaxTime)
+	}
+	if ipScope != "" && len(errPwdByIP[ipScope])+inFlightPwdByIP[ipScope] >= ipPwdErrorLockThreshold {
+		panicPublic(msg.PasswdWrongMaxTime)
+	}
+	inFlightPwd[scope]++
+	if ipScope != "" {
+		inFlightPwdByIP[ipScope]++
+	}
+}
+
+// finishPwdAttempt releases the in-flight reservation and atomically records a
+// failure or clears prior failures under the same lock so there is no TOCTOU gap.
+func finishPwdAttempt(scope string, ipScope string, failed bool, succeeded bool) {
+	errPwdMu.Lock()
+	defer errPwdMu.Unlock()
+	scope = normalizePwdErrorScope(scope)
+	initPwdTrackingLocked()
+	now := time.Now().Unix()
+
+	if failed {
+		prunePwdErrorMapLocked(errPwd, now)
+		errPwd[scope] = append(errPwd[scope], now)
+		enforcePwdErrorMapLimitLocked(errPwd, pwdErrorLockThreshold)
+		if ipScope != "" {
+			prunePwdErrorMapLocked(errPwdByIP, now)
+			errPwdByIP[ipScope] = append(errPwdByIP[ipScope], now)
+			enforcePwdErrorMapLimitLocked(errPwdByIP, ipPwdErrorLockThreshold)
+		}
+	} else if succeeded {
+		delete(errPwd, scope)
+		if ipScope != "" {
+			delete(errPwdByIP, ipScope)
+		}
+	}
+
+	if inFlightPwd[scope] <= 1 {
+		delete(inFlightPwd, scope)
+	} else {
+		inFlightPwd[scope]--
+	}
+	if ipScope != "" {
+		if inFlightPwdByIP[ipScope] <= 1 {
+			delete(inFlightPwdByIP, ipScope)
+		} else {
+			inFlightPwdByIP[ipScope]--
+		}
+	}
+}
+
+func prunePwdErrorMapLocked(store map[string][]int64, now int64) {
+	for scope, failures := range store {
 		cleaned := failures[:0]
 		for _, t := range failures {
 			if t+pwdErrorWindowSeconds >= now {
@@ -98,21 +173,27 @@ func prunePwdErrorsLocked(now int64) {
 			}
 		}
 		if len(cleaned) == 0 {
-			delete(errPwd, scope)
+			delete(store, scope)
 			continue
 		}
-		errPwd[scope] = cleaned
+		store[scope] = cleaned
 	}
 }
 
-func enforcePwdErrorScopeLimitLocked() {
-	for len(errPwd) > maxPwdErrorScopes {
+// enforcePwdErrorMapLimitLocked evicts the oldest unlocked scopes when the map
+// exceeds maxPwdErrorScopes. Actively locked (unexpired) entries are never
+// evicted so flooding random usernames cannot clear an active lockout.
+func enforcePwdErrorMapLimitLocked(store map[string][]int64, lockThreshold int) {
+	for len(store) > maxPwdErrorScopes {
 		var oldestScope string
 		var oldestTime int64
 		first := true
-		for scope, failures := range errPwd {
+		for scope, failures := range store {
 			if len(failures) == 0 {
-				delete(errPwd, scope)
+				delete(store, scope)
+				continue
+			}
+			if len(failures) >= lockThreshold {
 				continue
 			}
 			lastFailure := failures[len(failures)-1]
@@ -125,7 +206,7 @@ func enforcePwdErrorScopeLimitLocked() {
 		if oldestScope == "" {
 			return
 		}
-		delete(errPwd, oldestScope)
+		delete(store, oldestScope)
 	}
 }
 
@@ -231,7 +312,14 @@ func CheckPwd(userID int64, passwd string, userName string) map[string]interface
 
 func CheckPwdScoped(userID int64, passwd string, userName string, clientScope string) map[string]interface{} {
 	scope := passwordErrorScope(userID, userName, clientScope)
-	CheckPwdTimeForScope(scope)
+	ipScope := clientIPScope(clientScope)
+	beginPwdAttempt(scope, ipScope)
+	failed := false
+	succeeded := false
+	defer func() {
+		finishPwdAttempt(scope, ipScope, failed, succeeded)
+	}()
+
 	var user map[string]interface{}
 	var err error
 	if userID > 0 {
@@ -242,17 +330,17 @@ func CheckPwdScoped(userID int64, passwd string, userName string, clientScope st
 	if err != nil {
 		if errors.Is(err, mapper.ErrUserNotFound) {
 			checkDummyPassword(passwd)
-			AddPwdErrorForScope(scope)
+			failed = true
 			panicPublic(msg.PasswdWrong)
 		}
 		panic(err.Error())
 	}
 	storedHash := fmt.Sprintf("%v", user["passwd"])
 	if !crypto.CheckPassword(passwd, storedHash) {
-		AddPwdErrorForScope(scope)
+		failed = true
 		panicPublic(msg.PasswdWrong)
 	}
-	ClearPwdErrorForScope(scope)
+	succeeded = true
 	return user
 }
 
@@ -281,22 +369,28 @@ func ResetPasswd(userName string, recoveryKey string, passwd string) string {
 	// scoped per username. The 24-char key is not practically brute-forceable,
 	// but this endpoint is unauthenticated, so defense in depth applies.
 	scope := passwordErrorScope(0, userName, "recovery")
-	CheckPwdTimeForScope(scope)
+	beginPwdAttempt(scope, "")
+	failed := false
+	succeeded := false
+	defer func() {
+		finishPwdAttempt(scope, "", failed, succeeded)
+	}()
+
 	user, err := getUserByName(userName)
 	if err != nil {
 		if errors.Is(err, mapper.ErrUserNotFound) {
 			checkDummyPassword(recoveryKey)
-			AddPwdErrorForScope(scope)
+			failed = true
 			panicPublic(msg.KeyWrong)
 		}
 		panic(err.Error())
 	}
 	storedRecoveryHash := fmt.Sprintf("%v", user["recoveryKey"])
 	if !crypto.CheckPassword(recoveryKey, storedRecoveryHash) {
-		AddPwdErrorForScope(scope)
+		failed = true
 		panicPublic(msg.KeyWrong)
 	}
-	ClearPwdErrorForScope(scope)
+	succeeded = true
 	validatePassword(passwd)
 	newRecoveryKey, newRecoveryHash := newRecoveryKeyHash()
 	hash, err := crypto.HashPassword(passwd)

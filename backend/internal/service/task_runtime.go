@@ -4,6 +4,7 @@ import (
 	"errors"
 	"opensync/internal/config"
 	"opensync/internal/mapper"
+	"sync"
 	"time"
 )
 
@@ -18,10 +19,30 @@ const (
 var errScanAborted = errors.New("scan aborted")
 
 var persistJobTaskItems = mapper.AddJobTaskItemMany
+var persistJobTaskItemsMu sync.RWMutex
 var forEachJobTaskItemsByStatuses = mapper.ForEachJobTaskItemsByStatuses
 var countJobTaskItemsByStatuses = mapper.CountJobTaskItemsByStatuses
 var copyRetryDelay = defaultCopyRetryDelay
 var scanListRetryDelay = defaultScanListRetryDelay
+
+func callPersistJobTaskItems(items []map[string]interface{}) error {
+	persistJobTaskItemsMu.RLock()
+	fn := persistJobTaskItems
+	persistJobTaskItemsMu.RUnlock()
+	return fn(items)
+}
+
+func replacePersistJobTaskItems(fn func([]map[string]interface{}) error) func() {
+	persistJobTaskItemsMu.Lock()
+	previous := persistJobTaskItems
+	persistJobTaskItems = fn
+	persistJobTaskItemsMu.Unlock()
+	return func() {
+		persistJobTaskItemsMu.Lock()
+		persistJobTaskItems = previous
+		persistJobTaskItemsMu.Unlock()
+	}
+}
 
 type taskRuntimeLimits struct {
 	CopyConcurrency int

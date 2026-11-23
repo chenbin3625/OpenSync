@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"opensync/internal/mapper"
@@ -18,19 +19,126 @@ type JobClient struct {
 	Scheduler      *Scheduler
 	JobDoing       bool
 	CurrentJobTask *JobTask
+	opMu           sync.Mutex
 	mu             sync.Mutex
+	removing       bool
+	removed        bool
 	stateCh        chan struct{}
+}
+
+func (jc *JobClient) isEnabledLocked() bool {
+	return jc.Job != nil && util.ToInt(jc.Job["enable"]) == 1
 }
 
 func (jc *JobClient) tryMarkDoing() bool {
 	jc.mu.Lock()
 	defer jc.mu.Unlock()
-	if jc.JobDoing {
+	if jc.JobDoing || jc.removing || jc.removed {
 		return false
 	}
 	jc.JobDoing = true
 	jc.signalStateChangeLocked()
 	return true
+}
+
+func (jc *JobClient) tryStartRun() bool {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	if jc.JobDoing || jc.CurrentJobTask != nil || jc.removing || jc.removed || !jc.isEnabledLocked() {
+		return false
+	}
+	jc.JobDoing = true
+	jc.signalStateChangeLocked()
+	return true
+}
+
+func (jc *JobClient) tryStartManualRun() error {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	if jc.removed || jc.removing {
+		return errors.New(msg.JobNotFound)
+	}
+	if !jc.isEnabledLocked() {
+		return errors.New(msg.DisabledJobCannotRun)
+	}
+	if jc.JobDoing || jc.CurrentJobTask != nil {
+		return errors.New(msg.JobRunning)
+	}
+	jc.JobDoing = true
+	jc.signalStateChangeLocked()
+	return nil
+}
+
+func (jc *JobClient) attachTaskIfActive(task *JobTask) bool {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	if jc.removed || jc.removing || !jc.isEnabledLocked() {
+		if jc.CurrentJobTask == nil {
+			jc.JobDoing = false
+			jc.signalStateChangeLocked()
+		}
+		return false
+	}
+	jc.CurrentJobTask = task
+	jc.signalStateChangeLocked()
+	return true
+}
+
+func (jc *JobClient) releaseTask(task *JobTask) {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	if task != nil {
+		if jc.CurrentJobTask != nil && jc.CurrentJobTask != task {
+			return
+		}
+		if jc.CurrentJobTask == task {
+			jc.CurrentJobTask = nil
+		}
+		jc.JobDoing = false
+		jc.signalStateChangeLocked()
+		return
+	}
+	if jc.CurrentJobTask != nil {
+		return
+	}
+	jc.JobDoing = false
+	jc.signalStateChangeLocked()
+}
+
+func (jc *JobClient) beginRemove() (*Scheduler, error) {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	if jc.removed {
+		return nil, errors.New(msg.JobNotFound)
+	}
+	if jc.JobDoing || jc.CurrentJobTask != nil {
+		return nil, errors.New(msg.JobRunningCannotDelete)
+	}
+	jc.removing = true
+	sched := jc.Scheduler
+	jc.signalStateChangeLocked()
+	return sched, nil
+}
+
+func (jc *JobClient) finishRemove() {
+	jc.mu.Lock()
+	jc.removed = true
+	jc.removing = false
+	jc.signalStateChangeLocked()
+	jc.mu.Unlock()
+}
+
+func (jc *JobClient) cancelRemove() {
+	jc.mu.Lock()
+	jc.removing = false
+	jc.signalStateChangeLocked()
+	jc.mu.Unlock()
+}
+
+func (jc *JobClient) isRemoved() bool {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return jc.removed || jc.removing
 }
 
 func (jc *JobClient) isDoing() bool {
@@ -47,6 +155,17 @@ func (jc *JobClient) isBusy() bool {
 
 func (jc *JobClient) markDone() {
 	jc.mu.Lock()
+	jc.JobDoing = false
+	jc.signalStateChangeLocked()
+	jc.mu.Unlock()
+}
+
+func (jc *JobClient) markDoneFor(task *JobTask) {
+	jc.mu.Lock()
+	if task != nil && jc.CurrentJobTask != nil && jc.CurrentJobTask != task {
+		jc.mu.Unlock()
+		return
+	}
 	jc.JobDoing = false
 	jc.signalStateChangeLocked()
 	jc.mu.Unlock()
@@ -149,7 +268,7 @@ func (jc *JobClient) setEnable(enable int) {
 func (jc *JobClient) enabled() bool {
 	jc.mu.Lock()
 	defer jc.mu.Unlock()
-	return jc.Job != nil && util.ToInt(jc.Job["enable"]) == 1
+	return jc.isEnabledLocked()
 }
 
 func (jc *JobClient) jobSnapshot() map[string]interface{} {
@@ -179,7 +298,9 @@ func (jc *JobClient) schedulerSnapshot() *Scheduler {
 func (jc *JobClient) replaceJobConfig(job map[string]interface{}, scheduler *Scheduler) *Scheduler {
 	jc.mu.Lock()
 	oldScheduler := jc.Scheduler
-	jc.JobID = util.ToInt64(job["id"])
+	if jc.JobID == 0 {
+		jc.JobID = util.ToInt64(job["id"])
+	}
 	jc.Job = cloneJobConfig(job)
 	jc.Scheduler = scheduler
 	jc.mu.Unlock()
@@ -231,7 +352,6 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 		Job: cloneJobConfig(job),
 	}
 
-	addJobID := int64(0)
 	if _, ok := job["enable"]; !ok {
 		job["enable"] = 1
 	}
@@ -239,12 +359,15 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 		job["method"] = 0
 	}
 
-	if _, ok := job["id"]; !ok {
+	_, hasID := job["id"]
+	if !hasID {
+		if err := validateJobSchedule(util.ToInt(job["isCron"]), job); err != nil {
+			panicPublic(err.Error())
+		}
 		id, err := mapper.AddJob(job)
 		if err != nil {
 			panic(err.Error())
 		}
-		addJobID = id
 		var err2 error
 		job, err2 = mapper.GetJobByID(id)
 		if err2 != nil {
@@ -258,24 +381,32 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 	sched := NewScheduler()
 	jc.Scheduler = sched
 
+	// Existing disabled DB jobs must load cleanly even if their stored schedule is
+	// invalid so users can still inspect, edit, or delete them.
+	if hasID && util.ToInt(job["enable"]) == 0 {
+		return jc
+	}
+
 	err := sched.AddJob(util.ToInt(job["isCron"]), job, func() {
 		jc.DoScheduled()
 	})
 	if err != nil {
-		sched.Stop()
-		if addJobID != 0 {
+		if !hasID {
+			sched.Stop()
 			// Log the identifier and the cause, not the whole config: the config
 			// carries source/destination paths and dumping it loses the error.
 			log.Printf("Error during job setup, deleting job %d: %v", jc.JobID, err)
 			mapper.DeleteJob(jc.JobID)
-		} else if isInit {
-			log.Printf("Error during job setup, disabling job %d: %v", jc.JobID, err)
-			if updateErr := mapper.UpdateJobEnable(jc.JobID, 0); updateErr != nil {
-				log.Printf("Failed to disable invalid job %d: %v", jc.JobID, updateErr)
-			}
-			jc.setEnable(0)
+			panicPublic(err.Error())
 		}
-		panicPublic(err.Error())
+		// Existing DB job with invalid schedule: auto-disable in place and keep an
+		// idle scheduler attached so it stays editable and deletable instead of
+		// bricking GetJobClientByID.
+		log.Printf("Error during job setup, disabling invalid job %d: %v", jc.JobID, err)
+		if updateErr := mapper.UpdateJobEnable(jc.JobID, 0); updateErr != nil {
+			log.Printf("Failed to disable invalid job %d: %v", jc.JobID, updateErr)
+		}
+		jc.setEnable(0)
 	}
 
 	return jc
@@ -290,10 +421,13 @@ func (jc *JobClient) runMarkedJob() {
 // fresh full scan.
 func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatus) {
 	taskID := int64(0)
+	var task *JobTask
 	defer func() {
 		if r := recover(); r != nil {
-			jc.markDone()
-			jc.clearCurrentTask(nil)
+			if task != nil {
+				task.cancelTaskContext()
+			}
+			jc.releaseTask(task)
 			errMsg := fmt.Sprintf("%v", r)
 			log.Printf("Job execution error: %s", errMsg)
 			if taskID > 0 && !jobTaskHasStatus(taskID, taskStatusStopped) {
@@ -304,40 +438,47 @@ func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatu
 		}
 	}()
 
-	if !jc.enabled() {
-		// tryMarkDoing already set JobDoing=true; the async task.Start() below
-		// is never reached on this path, so we must clear it here or the job is
-		// permanently stuck "doing" (cannot rerun/delete without a restart).
-		jc.markDone()
+	if !jc.enabled() || jc.isRemoved() {
+		// tryStartRun/tryMarkDoing already set JobDoing=true; the async task.Start()
+		// below is never reached on this path, so we must clear it here or the job
+		// is permanently stuck "doing" (cannot rerun/delete without a restart).
+		jc.releaseTask(nil)
 		return
 	}
 
+	jobID := jc.idSnapshot()
 	var err error
-	taskID, err = mapper.AddJobTask(jc.idSnapshot(), time.Now().Unix())
+	taskID, err = mapper.AddJobTask(jobID, time.Now().Unix())
 	if err != nil {
-		log.Printf("Failed to create task for job %d: %v", jc.JobID, err)
+		log.Printf("Failed to create task for job %d: %v", jobID, err)
 		panic(err.Error())
 	}
-	if !jc.enabled() {
+	if !jc.enabled() || jc.isRemoved() {
 		if err := UpdateJobTaskStatusSimple(taskID, taskStatusStopped, nil); err != nil {
 			log.Printf("Failed to mark disabled task %d as stopped: %v", taskID, err)
 		}
-		jc.markDone()
+		jc.releaseTask(nil)
 		return
 	}
-	task := newJobTask(taskID, jc)
+	task = newJobTask(taskID, jc)
 	if sourceTaskID > 0 {
 		task.RetrySourceTaskID = sourceTaskID
 		task.RetryStatuses = append([]taskStatus(nil), statuses...)
 	}
-	jc.setCurrentTask(task)
+	if !jc.attachTaskIfActive(task) {
+		task.cancelTaskContext()
+		if err := UpdateJobTaskStatusSimple(taskID, taskStatusStopped, nil); err != nil {
+			log.Printf("Failed to mark disabled task %d as stopped: %v", taskID, err)
+		}
+		return
+	}
 	task.Start()
 }
 
 // DoJob executes the job, waiting until any current run has finished.
 func (jc *JobClient) DoJob() {
-	for !jc.tryMarkDoing() {
-		if !jc.enabled() {
+	for !jc.tryStartRun() {
+		if !jc.enabled() || jc.isRemoved() {
 			return
 		}
 		jc.waitUntilIdle(10 * time.Second)
@@ -347,8 +488,10 @@ func (jc *JobClient) DoJob() {
 
 // DoScheduled executes a scheduled job once, skipping if the previous run is still active.
 func (jc *JobClient) DoScheduled() bool {
-	if !jc.tryMarkDoing() {
-		log.Printf("Skipping job %d because previous run is still active", jc.JobID)
+	if !jc.tryStartRun() {
+		if jc.isBusy() {
+			log.Printf("Skipping job %d because previous run is still active", jc.idSnapshot())
+		}
 		return false
 	}
 	jc.runMarkedJob()
@@ -357,8 +500,8 @@ func (jc *JobClient) DoScheduled() bool {
 
 // DoManual triggers manual execution
 func (jc *JobClient) DoManual() {
-	if !jc.tryMarkDoing() {
-		panicPublic(msg.JobRunning)
+	if err := jc.tryStartManualRun(); err != nil {
+		panicPublic(err.Error())
 	}
 	go jc.runMarkedJob()
 }
@@ -366,14 +509,17 @@ func (jc *JobClient) DoManual() {
 // DoRetryFailedTaskItems triggers a manual execution that replays the non-success
 // items of a historical task.
 func (jc *JobClient) DoRetryFailedTaskItems(sourceTaskID int64) {
-	if !jc.tryMarkDoing() {
-		panicPublic(msg.JobRunning)
+	if err := jc.tryStartManualRun(); err != nil {
+		panicPublic(err.Error())
 	}
 	go jc.runMarkedJobConfig(sourceTaskID, retryableTaskStatuses)
 }
 
 // ResumeJob enables and resumes the job
 func (jc *JobClient) ResumeJob() {
+	if jc.isRemoved() {
+		panicPublic(msg.JobNotFound)
+	}
 	jobID, job, scheduler := jc.configSnapshot()
 	isCron := util.ToInt(job["isCron"])
 	if isCron == 2 {
@@ -424,12 +570,16 @@ func (jc *JobClient) StopJob(remove bool) {
 		if err := mapper.UpdateJobEnable(jobID, 0); err != nil {
 			panic(err.Error())
 		}
-		if err := mapper.UpdateJobTaskStatusByStatusAndJobID(jobID); err != nil {
-			panic(err.Error())
-		}
 		jc.setEnable(0)
-		if task := jc.currentTask(); task != nil {
+		task := jc.currentTask()
+		if task != nil {
 			task.requestBreak()
+		} else {
+			// Only sweep orphaned running rows when no live task is stopping cleanly,
+			// so a still-running task is not overwritten in DB while active.
+			if err := mapper.UpdateJobTaskStatusByStatusAndJobID(jobID); err != nil {
+				panic(err.Error())
+			}
 		}
 		if scheduler != nil {
 			scheduler.Pause()

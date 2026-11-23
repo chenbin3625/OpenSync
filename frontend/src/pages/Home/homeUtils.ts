@@ -102,7 +102,7 @@ System Volume Information/
 # Linux / NAS
 lost+found/
 @eaDir/
-#recycle/
+\\#recycle/
 @Recycle/
 .Recycle/
 .Trash-*/
@@ -369,7 +369,8 @@ export function formatExcludePreview(value?: string | null): string {
   const rules = String(value ?? '')
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'));
+    .filter((line) => line && !line.startsWith('#'))
+    .map((line) => line.replace(/^\\(?=[#!])/, ''));
 
   if (rules.length === 0) return '仅注释';
   const preview = rules.slice(0, 3).join('、');

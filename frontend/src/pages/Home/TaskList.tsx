@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { POLL_INTERVAL_MS } from '../../api/request';
 import {
   Eye as EyeOutlined,
   RotateCcw as RedoOutlined,
@@ -14,6 +13,7 @@ import type { CurrentTaskView, TaskItem, TaskRecord } from '../../types';
 import {
   filterCurrentTaskFromHistory,
   filterRunningTaskRows,
+  IDLE_POLL_INTERVAL_MS,
   mergeTaskRecords,
   type TaskListView,
 } from './taskRows';
@@ -26,7 +26,8 @@ import TaskRealtimeRows from './components/TaskRealtimeRows';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Tooltip } from '../../components/ui/tooltip';
-import { EmptyState, ErrorState, PlaceholderCard } from '../../components/common/StatePlaceholder';
+import { Alert } from '../../components/common/Alert';
+import { EmptyState, ErrorState, LoadingState, PlaceholderCard } from '../../components/common/StatePlaceholder';
 import { Pagination } from '../../components/common/Pagination';
 import { SearchInput } from '../../components/common/SearchInput';
 import { StatusBadge } from '../../components/common/StatusBadge';
@@ -73,6 +74,8 @@ function RealtimeTaskCard({
   activeTab,
   currentTask,
   loading,
+  error,
+  onRetry,
   page,
   pageSize,
   rows,
@@ -85,6 +88,8 @@ function RealtimeTaskCard({
   activeTab: number;
   currentTask: CurrentTaskView;
   loading: boolean;
+  error: boolean;
+  onRetry: () => void;
   page: number;
   pageSize: number;
   rows: TaskItem[];
@@ -105,16 +110,17 @@ function RealtimeTaskCard({
     <div>
       <TaskRealtimeHero currentTask={currentTask} onStop={onStop}>
         <div className="space-y-3 pt-2">
-          <div className="flex border-b border-line gap-2 overflow-x-auto">
+          <div role="group" aria-label="文件状态" className="flex border-b border-line gap-2 overflow-x-auto">
             {statusTabs.map((tab) => {
               const isActive = tab.key === activeTab;
               return (
                 <button
                   key={tab.key}
                   type="button"
+                  aria-pressed={isActive}
                   onClick={() => onTabChange(tab.key)}
                   className={cn(
-                    'pb-2 px-3 text-xs font-medium border-b-2 transition-all flex items-center gap-1.5 shrink-0',
+                    'pb-2 px-3 text-xs font-medium border-b-2 transition-colors flex items-center gap-1.5 shrink-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
                     isActive
                       ? 'border-teal-700 text-teal-800 font-semibold'
                       : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -140,6 +146,8 @@ function RealtimeTaskCard({
             activeTab={activeTab}
             activeTabLabel={activeTabLabel}
             loading={loading}
+            error={error}
+            onRetry={onRetry}
             page={page}
             pageSize={pageSize}
             rows={rows}
@@ -193,6 +201,8 @@ export default function TaskList({
     tabTaskPage,
     setTabTaskPage,
     tabLoading,
+    tabError,
+    retryTabTasks,
   } = useRealtimeTaskItems({
     jobId,
     enabled: showRealtime,
@@ -200,8 +210,21 @@ export default function TaskList({
     pageSize: TAB_TASK_PAGE_SIZE,
   });
 
+  const dateRangeInvalid = Boolean(
+    historyTimeRange?.[0] &&
+    historyTimeRange?.[1] &&
+    historyTimeRange[0].isAfter(historyTimeRange[1], 'day'),
+  );
+
+  const historyList = useMemo(
+    () => showRealtime ? filterCurrentTaskFromHistory(list, currentTask) : filterRunningTaskRows(list),
+    [currentTask, list, showRealtime],
+  );
+  const hiddenCurrentTaskCount = list.length - historyList.length;
+  const historyTotal = Math.max(0, total - hiddenCurrentTaskCount);
+
   const fetchList = useCallback(async (showLoading = false) => {
-    if (!jobId) return;
+    if (!jobId || dateRangeInvalid) return;
     const paramsKey = JSON.stringify([
       jobId, pageSize, page, historyStatusFilter, historyKeywordFilter,
       historyTimeRange?.[0]?.valueOf(), historyTimeRange?.[1]?.valueOf(),
@@ -231,8 +254,15 @@ export default function TaskList({
 
       const res = await jobGetTask(params, { silent: !showLoading, signal: controller.signal });
       if (requestID === listRequestRef.current) {
-        setList((previous) => mergeTaskRecords(previous, res.data?.dataList || []));
-        setTotal(res.data?.count || 0);
+        const nextList = res.data?.dataList || [];
+        const nextTotal = res.data?.count || 0;
+        const maxPage = Math.max(1, Math.ceil(nextTotal / pageSize));
+        if (page > 1 && (nextList.length === 0 || page > maxPage)) {
+          setPage(Math.min(page - 1, maxPage));
+          return;
+        }
+        setList((previous) => mergeTaskRecords(previous, nextList));
+        setTotal(nextTotal);
         setHistoryError(false);
       }
     } catch (err) {
@@ -246,38 +276,56 @@ export default function TaskList({
         }
       }
     } finally {
-      listFetchingRef.current = false;
-      inFlightParamsRef.current = null;
+      if (listAbortRef.current === controller) {
+        listAbortRef.current = null;
+        listFetchingRef.current = false;
+        inFlightParamsRef.current = null;
+      }
       if (showLoading && loadingRequestID === listLoadingRequestRef.current) {
         setLoading(false);
       }
     }
-  }, [historyKeywordFilter, historyStatusFilter, historyTimeRange, jobId, page, pageSize]);
+  }, [dateRangeInvalid, historyKeywordFilter, historyStatusFilter, historyTimeRange, jobId, page, pageSize]);
 
   useEffect(() => () => { listAbortRef.current?.abort(); }, []);
 
   useEffect(() => {
-    if (showHistory) fetchList(true);
-  }, [fetchList, showHistory]);
+    if (!showHistory) return;
+    if (dateRangeInvalid) {
+      listAbortRef.current?.abort();
+      listAbortRef.current = null;
+      listFetchingRef.current = false;
+      inFlightParamsRef.current = null;
+      setLoading(false);
+      return;
+    }
+    fetchList(true);
+  }, [dateRangeInvalid, fetchList, showHistory]);
 
   useEffect(() => {
-    if (!showHistory) return undefined;
+    if (!showHistory || dateRangeInvalid) return undefined;
+    // History only lists finished tasks, so a slow refresh is enough to pick up
+    // newly completed runs; polling it at the realtime rate just burns queries.
     const pollID = setInterval(() => {
       if (canPollCurrentDocument()) fetchList(false);
-    }, POLL_INTERVAL_MS);
+    }, IDLE_POLL_INTERVAL_MS);
     return () => { clearInterval(pollID); };
-  }, [fetchList, showHistory]);
+  }, [dateRangeInvalid, fetchList, showHistory]);
 
   const handleDeleteTask = useCallback(async (taskId: number) => {
     try {
       await jobDeleteTask(taskId);
       toast.success('删除成功');
       setDeleteConfirmTaskId(null);
-      fetchList(false);
+      if (page > 1 && historyList.length <= 1) {
+        setPage((current) => Math.max(1, current - 1));
+      } else {
+        fetchList(false);
+      }
     } catch (err) {
       console.error('task delete failed', err);
     }
-  }, [fetchList]);
+  }, [fetchList, historyList.length, page]);
 
   const handleTaskAction = useCallback(async (
     taskId: number,
@@ -312,18 +360,13 @@ export default function TaskList({
     !!historyTimeRange?.[0] ||
     !!historyTimeRange?.[1];
 
-  const historyList = useMemo(
-    () => showRealtime ? filterCurrentTaskFromHistory(list, currentTask) : filterRunningTaskRows(list),
-    [currentTask, list, showRealtime],
-  );
-  const hiddenCurrentTaskCount = list.length - historyList.length;
-  const historyTotal = Math.max(0, total - hiddenCurrentTaskCount);
-
   const realtimeContent = currentTask ? (
     <RealtimeTaskCard
       activeTab={activeTab}
       currentTask={currentTask}
       loading={tabLoading}
+      error={tabError}
+      onRetry={retryTabTasks}
       page={tabTaskPage}
       pageSize={TAB_TASK_PAGE_SIZE}
       rows={tabTaskList}
@@ -347,10 +390,15 @@ export default function TaskList({
       loading={loading}
       retryLabel="重试"
     />
-  ) : historyList.length === 0 && !loading ? (
+  ) : loading && historyList.length === 0 ? (
+    <LoadingState className="min-h-40" title="正在加载历史任务" />
+  ) : historyList.length === 0 ? (
     <EmptyState icon={Inbox} title="暂无历史任务记录，执行完成后将在此显示" />
   ) : (
     <div className="space-y-3">
+      {loading && (
+        <LoadingState title="正在更新历史任务" className="py-2 text-xs" />
+      )}
       <div className={table.wrapper}>
         <table className={table.root}>
           <thead className={table.head}>
@@ -491,7 +539,8 @@ export default function TaskList({
             aria-label="开始日期"
             value={historyTimeRange?.[0] ? historyTimeRange[0].format('YYYY-MM-DD') : ''}
             onChange={(e) => {
-              const start = e.target.value ? dayjs(e.target.value) : null;
+              const parsed = e.target.value ? dayjs(e.target.value) : null;
+              const start = parsed && parsed.isValid() ? parsed : null;
               setHistoryTimeRange([start, historyTimeRange?.[1] || null]);
               setPage(1);
             }}
@@ -503,7 +552,8 @@ export default function TaskList({
             aria-label="结束日期"
             value={historyTimeRange?.[1] ? historyTimeRange[1].format('YYYY-MM-DD') : ''}
             onChange={(e) => {
-              const end = e.target.value ? dayjs(e.target.value) : null;
+              const parsed = e.target.value ? dayjs(e.target.value) : null;
+              const end = parsed && parsed.isValid() ? parsed : null;
               setHistoryTimeRange([historyTimeRange?.[0] || null, end]);
               setPage(1);
             }}
@@ -520,6 +570,10 @@ export default function TaskList({
           重置
         </Button>
       </div>
+
+      {dateRangeInvalid && (
+        <Alert variant="error">开始日期不能晚于结束日期</Alert>
+      )}
 
       {historyBody}
 

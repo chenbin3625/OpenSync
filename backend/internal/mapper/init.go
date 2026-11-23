@@ -1,43 +1,165 @@
 package mapper
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log"
+	"opensync/internal/config"
 	"strings"
 )
 
-const currentVersion = 260614
+const currentVersion = 260616
+
+const (
+	ftsCreateTableSQL = `CREATE VIRTUAL TABLE IF NOT EXISTS job_task_item_fts USING fts5(
+			fileName,
+			srcPath,
+			dstPath,
+			alistTaskId,
+			errMsg,
+			content='job_task_item',
+			content_rowid='id',
+			tokenize='trigram'
+		)`
+	ftsRebuildSQL       = "INSERT INTO job_task_item_fts(job_task_item_fts) VALUES('rebuild')"
+	ftsTriggerInsertSQL = `CREATE TRIGGER IF NOT EXISTS job_task_item_ai AFTER INSERT ON job_task_item BEGIN
+			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES (new.id, new.fileName, new.srcPath, new.dstPath, new.alistTaskId, new.errMsg);
+		END`
+	ftsTriggerDeleteSQL = `CREATE TRIGGER IF NOT EXISTS job_task_item_ad AFTER DELETE ON job_task_item BEGIN
+			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath, old.alistTaskId, old.errMsg);
+		END`
+	ftsTriggerUpdateSQL = `CREATE TRIGGER IF NOT EXISTS job_task_item_au AFTER UPDATE ON job_task_item BEGIN
+			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath, old.alistTaskId, old.errMsg);
+			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath, alistTaskId, errMsg)
+			VALUES (new.id, new.fileName, new.srcPath, new.dstPath, new.alistTaskId, new.errMsg);
+		END`
+)
+
+type sqlExecer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
+type sqlContextExecer interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+type sqlContextQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
 
 // InitSQL initializes the database schema and runs migrations
 func InitSQL() {
-	db := GetDB()
+	handle := GetDB()
+	if err := initSchema(handle); err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	tightenSQLiteFilePermissions(config.GetConfig().DB.DBName)
+}
 
-	// Check if user_list table exists
-	var name string
-	err := db.QueryRow("SELECT name FROM sqlite_master WHERE name='user_list'").Scan(&name)
+func initSchema(db *sql.DB) error {
+	return initSchemaWithStmts(db, firstRunSchemaStatements())
+}
 
+func initSchemaWithStmts(db *sql.DB, createStmts []string) error {
+	ctx := context.Background()
+
+	exists, err := tableExistsContext(ctx, db, "user_list")
 	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			// A transient failure (locked DB, I/O error) must not be mistaken
-			// for an empty database, or the "first run" branch would try to
-			// re-create the schema on top of existing data.
-			log.Fatalf("Failed to inspect database schema: %v", err)
+		// A transient failure (locked DB, I/O error) must not be mistaken
+		// for an empty database, or the "first run" branch would try to
+		// re-create the schema on top of existing data.
+		return fmt.Errorf("inspect database schema: %w", err)
+	}
+
+	if !exists {
+		initializedFresh := false
+		if err := runImmediateTx(ctx, db, func(ctx context.Context, conn *sql.Conn) error {
+			// Re-check inside the write transaction in case another process
+			// initialized the schema concurrently.
+			nowExists, err := tableExistsContext(ctx, conn, "user_list")
+			if err != nil {
+				return fmt.Errorf("re-check user_list table: %w", err)
+			}
+			if nowExists {
+				return nil
+			}
+			for _, stmt := range createStmts {
+				if _, err := conn.ExecContext(ctx, stmt); err != nil {
+					return fmt.Errorf("first-run DDL failed: %w\nSQL: %s", err, stmt)
+				}
+			}
+			if err := ensureIndexesExec(ctx, conn); err != nil {
+				return fmt.Errorf("first-run index creation failed: %w", err)
+			}
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", currentVersion)); err != nil {
+				return fmt.Errorf("set initial PRAGMA user_version: %w", err)
+			}
+			initializedFresh = true
+			return nil
+		}); err != nil {
+			return err
 		}
-		// First run - create all tables
-		stmts := []string{
-			fmt.Sprintf(`CREATE TABLE user_list(
+		if initializedFresh {
+			resetFTSAvailability()
+			log.Printf("Database initialized; waiting for web account setup")
+			return nil
+		}
+	}
+
+	// Existing database - check version and migrate if needed.
+	ver, err := schemaVersion(db)
+	if err != nil {
+		return fmt.Errorf("read database schema version: %w", err)
+	}
+
+	if ver < currentVersion {
+		if err := migrateDBTx(db, int64(ver)); err != nil {
+			return fmt.Errorf("migrate database from version %d to %d: %w", ver, currentVersion, err)
+		}
+		log.Printf("Database migrated from version %d to %d", ver, currentVersion)
+	} else {
+		// Ensure PRAGMA user_version is synced even on DBs that already had
+		// user_list.sqlVersion == currentVersion from an older binary.
+		var userVer int
+		if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&userVer); err != nil {
+			return fmt.Errorf("read PRAGMA user_version: %w", err)
+		}
+		if userVer < currentVersion {
+			if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", currentVersion)); err != nil {
+				return fmt.Errorf("sync PRAGMA user_version: %w", err)
+			}
+		}
+	}
+
+	if err := ensureIndexes(db); err != nil {
+		// Non-fatal on existing databases (the schema works without indexes),
+		// but loud: silent degradation would show up only as unexplained slowness.
+		log.Printf("WARNING: index creation failed, query performance may degrade: %v", err)
+	}
+	resetFTSAvailability()
+	return nil
+}
+
+func firstRunSchemaStatements() []string {
+	stmts := []string{
+		fmt.Sprintf(`CREATE TABLE user_list(
 				id integer primary key autoincrement,
 				userName text,
 				passwd text,
 				recoveryKey text,
+				sessionVersion integer NOT NULL DEFAULT 1,
 				sqlVersion integer DEFAULT %d,
 				createTime integer DEFAULT (strftime('%%s', 'now')),
 				UNIQUE (userName)
 			)`, currentVersion),
 
-			`CREATE TABLE alist_list(
+		`CREATE TABLE alist_list(
 				id integer primary key autoincrement,
 				remark text,
 				url text,
@@ -47,7 +169,7 @@ func InitSQL() {
 				UNIQUE (url, userName)
 			)`,
 
-			`CREATE TABLE job(
+		`CREATE TABLE job(
 				id integer primary key autoincrement,
 				enable integer DEFAULT 1,
 				remark text,
@@ -74,7 +196,7 @@ func InitSQL() {
 				UNIQUE (srcPath, dstPath, alistId)
 			)`,
 
-			`CREATE TABLE job_task(
+		`CREATE TABLE job_task(
 				id integer primary key autoincrement,
 				jobId integer,
 				status integer DEFAULT 1,
@@ -84,7 +206,7 @@ func InitSQL() {
 				createTime integer DEFAULT (strftime('%s', 'now'))
 			)`,
 
-			`CREATE TABLE job_task_item(
+		`CREATE TABLE job_task_item(
 				id integer primary key autoincrement,
 				taskId integer,
 				srcPath text,
@@ -99,91 +221,94 @@ func InitSQL() {
 				errMsg text,
 				createTime integer DEFAULT (strftime('%s', 'now'))
 			)`,
-		}
+	}
 
-		stmts = append(stmts, jobTaskItemFTSStatements(false)...)
-		stmts = append(stmts,
-
-			`CREATE TABLE notify(
+	stmts = append(stmts, jobTaskItemFTSStatements(false)...)
+	stmts = append(stmts,
+		`CREATE TABLE notify(
 				id integer primary key autoincrement,
 				enable integer DEFAULT 1,
 				method integer,
 				params text,
 				createTime integer DEFAULT (strftime('%s', 'now'))
 			)`,
-		)
-
-		for _, stmt := range stmts {
-			if _, err := db.Exec(stmt); err != nil {
-				log.Fatalf("Failed to initialize database: %v\nSQL: %s", err, stmt)
-			}
-		}
-		ensureIndexes(db)
-
-		log.Printf("Database initialized; waiting for web account setup")
-		return
-	}
-
-	// Existing database - check version and migrate if needed. A fresh schema
-	// can exist without any user rows when the server was stopped before web
-	// setup completed. schemaVersion() returns 0 in that case so the idempotent
-	// migrations run (a no-op on an already-current schema), which is important
-	// when the schema was created by an older binary missing newer columns.
-	sqlVersion := schemaVersion(db)
-
-	if sqlVersion < int64(currentVersion) {
-		if err := migrateDB(sqlVersion); err != nil {
-			log.Fatalf("Failed to migrate database from version %d to %d: %v", sqlVersion, currentVersion, err)
-		}
-	}
-	ensureIndexes(db)
+	)
+	return stmts
 }
 
-func schemaVersion(db *sql.DB) int64 {
-	if !tableHasColumnDB(db, "user_list", "sqlVersion") {
-		return 0
+func schemaVersion(db *sql.DB) (int, error) {
+	ctx := context.Background()
+
+	var userVer int
+	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&userVer); err != nil {
+		return 0, fmt.Errorf("read PRAGMA user_version: %w", err)
 	}
 
-	var sqlVersion int64
-	err := db.QueryRow("SELECT sqlVersion FROM user_list LIMIT 1").Scan(&sqlVersion)
-	if err == nil {
-		return sqlVersion
+	hasCol, err := tableHasColumnDB(db, "user_list", "sqlVersion")
+	if err != nil {
+		return 0, fmt.Errorf("check user_list.sqlVersion column: %w", err)
 	}
-	if err == sql.ErrNoRows {
-		// user_list exists with the sqlVersion column but has no rows. This can
-		// happen when an older binary created the table (with sqlVersion but
-		// missing newer columns) and web setup was never completed. Returning 0
-		// runs the idempotent migrations to bring the schema up to date before
-		// first-run setup; migrateDBTx(0) on an already-current schema is a
-		// no-op. Returning currentVersion here would skip migrations and leave
-		// the schema stale, breaking InitializeUser (e.g. missing recoveryKey).
-		return 0
+	if !hasCol {
+		return userVer, nil
 	}
-	return 0
+
+	var rowVer sql.NullInt64
+	err = db.QueryRowContext(ctx, "SELECT sqlVersion FROM user_list LIMIT 1").Scan(&rowVer)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// user_list is empty: PRAGMA user_version tracks the schema version
+			// on fresh/migrated databases, and is 0 on legacy pre-user_version
+			// databases so idempotent migrations run.
+			return userVer, nil
+		}
+		return 0, fmt.Errorf("read user_list.sqlVersion: %w", err)
+	}
+
+	if rowVer.Valid && int(rowVer.Int64) > userVer {
+		return int(rowVer.Int64), nil
+	}
+	return userVer, nil
 }
 
-func ensureIndexes(db *sql.DB) {
-	indexes := []string{
-		"CREATE INDEX IF NOT EXISTS idx_job_task_job_time ON job_task(jobId, createTime DESC)",
+func indexStatements() []string {
+	return []string{
+		"CREATE INDEX IF NOT EXISTS idx_job_task_job_time ON job_task(jobId, createTime DESC, id DESC)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_status_job ON job_task(status, jobId)",
 		"CREATE INDEX IF NOT EXISTS idx_job_task_effective_time ON job_task(COALESCE(NULLIF(runTime, 0), createTime), id)",
-		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_time ON job_task_item(taskId, createTime DESC)",
-		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status ON job_task_item(taskId, status)",
-		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status_time ON job_task_item(taskId, status, createTime DESC)",
-		// The time suffix lets type/object-filtered detail pages stream rows in
-		// create order without scanning every item for the task and sorting the
-		// matches. The composite type index supersedes the old type-only index.
-		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_type_time ON job_task_item(taskId, type, createTime DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_time ON job_task_item(taskId, createTime DESC, id DESC)",
+		// idx_job_task_item_task_status_time fully covers (taskId, status) queries,
+		// so drop the redundant prefix-only index.
+		"DROP INDEX IF EXISTS idx_job_task_item_task_status",
+		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_status_time ON job_task_item(taskId, status, createTime DESC, id DESC)",
+		// The time+id suffix lets type/object-filtered detail pages stream rows in
+		// deterministic order without a temp B-tree sort.
+		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_type_time ON job_task_item(taskId, type, createTime DESC, id DESC)",
 		"DROP INDEX IF EXISTS idx_job_task_item_task_type",
-		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_is_path_time ON job_task_item(taskId, isPath, createTime DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_job_task_item_task_is_path_time ON job_task_item(taskId, isPath, createTime DESC, id DESC)",
 	}
-	for _, stmt := range indexes {
-		if _, err := db.Exec(stmt); err != nil {
-			// Non-fatal (the schema works without indexes), but loud: silent
-			// degradation would show up only as unexplained slowness.
-			log.Printf("WARNING: index creation failed, query performance may degrade: %v\nSQL: %s", err, stmt)
+}
+
+func ensureIndexesExec(ctx context.Context, exec sqlContextExecer) error {
+	for _, stmt := range indexStatements() {
+		if _, err := exec.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("%w\nSQL: %s", err, stmt)
 		}
 	}
+	return nil
+}
+
+func ensureIndexes(db *sql.DB) error {
+	ctx := context.Background()
+	var firstErr error
+	for _, stmt := range indexStatements() {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			log.Printf("WARNING: index creation failed, query performance may degrade: %v\nSQL: %s", err, stmt)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%w\nSQL: %s", err, stmt)
+			}
+		}
+	}
+	return firstErr
 }
 
 func migrationStatements(fromVersion int64) []string {
@@ -249,9 +374,6 @@ func migrationStatements(fromVersion int64) []string {
 			"ALTER TABLE job DROP COLUMN end_date",
 		)
 	}
-	if fromVersion < 260611 {
-		stmts = append(stmts, jobTaskItemFTSStatements(true)...)
-	}
 	if fromVersion < 260612 {
 		stmts = append(stmts, "ALTER TABLE user_list ADD COLUMN recoveryKey text")
 	}
@@ -261,15 +383,34 @@ func migrationStatements(fromVersion int64) []string {
 		// second/minute/hour/day/month/day_of_week fields.
 		stmts = append(stmts, "ALTER TABLE job DROP COLUMN cron")
 	}
-	if fromVersion >= 260611 && fromVersion < 260614 {
-		stmts = append(stmts, rebuildJobTaskItemFTSStatements()...)
+	if fromVersion < 260615 {
+		stmts = append(stmts,
+			"ALTER TABLE user_list ADD COLUMN sessionVersion integer NOT NULL DEFAULT 1",
+			"UPDATE user_list SET sessionVersion=1 WHERE sessionVersion IS NULL OR sessionVersion <= 0",
+		)
 	}
-	stmts = append(stmts, fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion))
+	if fromVersion < 260616 {
+		// Rebuild FTS5 for all pre-260616 databases (including pre-260614 DBs
+		// with empty user_list where fromVersion==0) so job_task_item_fts
+		// indexes fileName, srcPath, dstPath, alistTaskId, and errMsg with
+		// the trigram tokenizer.
+		stmts = append(stmts, rebuildJobTaskItemFTSStatements()...)
+		// Drop legacy indexes that lacked the trailing id DESC tie-breaker so
+		// ensureIndexes recreates them with sort-free deterministic ordering.
+		stmts = append(stmts,
+			"DROP INDEX IF EXISTS idx_job_task_job_time",
+			"DROP INDEX IF EXISTS idx_job_task_item_task_time",
+			"DROP INDEX IF EXISTS idx_job_task_item_task_status",
+			"DROP INDEX IF EXISTS idx_job_task_item_task_status_time",
+			"DROP INDEX IF EXISTS idx_job_task_item_task_type_time",
+			"DROP INDEX IF EXISTS idx_job_task_item_task_is_path_time",
+		)
+	}
+	stmts = append(stmts,
+		fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion),
+		fmt.Sprintf("PRAGMA user_version=%d", currentVersion),
+	)
 	return stmts
-}
-
-type sqlExecer interface {
-	Exec(query string, args ...interface{}) (sql.Result, error)
 }
 
 func installJobTaskItemFTS(exec sqlExecer, rebuild bool) error {
@@ -278,6 +419,7 @@ func installJobTaskItemFTS(exec sqlExecer, rebuild bool) error {
 			return err
 		}
 	}
+	resetFTSAvailability()
 	return nil
 }
 
@@ -292,35 +434,11 @@ func rebuildJobTaskItemFTSStatements() []string {
 }
 
 func jobTaskItemFTSStatements(rebuild bool) []string {
-	stmts := []string{
-		`CREATE VIRTUAL TABLE IF NOT EXISTS job_task_item_fts USING fts5(
-			fileName,
-			srcPath,
-			dstPath,
-			content='job_task_item',
-			content_rowid='id',
-			tokenize='trigram'
-		)`,
-	}
+	stmts := []string{ftsCreateTableSQL}
 	if rebuild {
-		stmts = append(stmts, "INSERT INTO job_task_item_fts(job_task_item_fts) VALUES('rebuild')")
+		stmts = append(stmts, ftsRebuildSQL)
 	}
-	stmts = append(stmts,
-		`CREATE TRIGGER IF NOT EXISTS job_task_item_ai AFTER INSERT ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath)
-			VALUES (new.id, new.fileName, new.srcPath, new.dstPath);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS job_task_item_ad AFTER DELETE ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath)
-			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS job_task_item_au AFTER UPDATE ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath)
-			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath);
-			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath)
-			VALUES (new.id, new.fileName, new.srcPath, new.dstPath);
-		END`,
-	)
+	stmts = append(stmts, ftsTriggerInsertSQL, ftsTriggerDeleteSQL, ftsTriggerUpdateSQL)
 	return stmts
 }
 
@@ -334,80 +452,78 @@ func migrateDB(fromVersion int64) error {
 }
 
 func migrateDBTx(db *sql.DB, fromVersion int64) error {
-	tx, err := db.Begin()
+	ctx := context.Background()
+	err := runImmediateTx(ctx, db, func(ctx context.Context, conn *sql.Conn) error {
+		for _, stmt := range migrationStatements(fromVersion) {
+			skip, err := shouldSkipMigrationStatement(ctx, conn, stmt)
+			if err != nil {
+				return fmt.Errorf("migration metadata check failed: %w\nSQL: %s", err, stmt)
+			}
+			if skip {
+				continue
+			}
+			if _, err := conn.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("migration SQL failed: %w\nSQL: %s", err, stmt)
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	for _, stmt := range migrationStatements(fromVersion) {
-		if shouldSkipMigrationStatement(tx, stmt) {
-			continue
-		}
-		if _, err := tx.Exec(stmt); err != nil {
-			return fmt.Errorf("migration SQL failed: %w\nSQL: %s", err, stmt)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	committed = true
+	resetFTSAvailability()
 	return nil
 }
 
-func shouldSkipMigrationStatement(tx *sql.Tx, stmt string) bool {
+func shouldSkipMigrationStatement(ctx context.Context, q sqlContextQueryer, stmt string) (bool, error) {
 	if tableName, columnName, ok := parseAlterTableAddColumn(stmt); ok {
-		return txTableHasColumn(tx, tableName, columnName)
+		return tableHasColumnContext(ctx, q, tableName, columnName)
 	}
 
 	switch stmt {
 	case "ALTER TABLE job RENAME COLUMN speed TO useCacheT":
-		return !txTableHasColumn(tx, "job", "speed") && txTableHasColumn(tx, "job", "useCacheT")
+		hasSpeed, err := tableHasColumnContext(ctx, q, "job", "speed")
+		if err != nil {
+			return false, err
+		}
+		hasUseCacheT, err := tableHasColumnContext(ctx, q, "job", "useCacheT")
+		if err != nil {
+			return false, err
+		}
+		return !hasSpeed && hasUseCacheT, nil
 	case "ALTER TABLE job DROP COLUMN cron":
-		return !txTableHasColumn(tx, "job", "cron")
+		hasCol, err := tableHasColumnContext(ctx, q, "job", "cron")
+		return !hasCol, err
 	case "ALTER TABLE job DROP COLUMN year":
-		return !txTableHasColumn(tx, "job", "year")
+		hasCol, err := tableHasColumnContext(ctx, q, "job", "year")
+		return !hasCol, err
 	case "ALTER TABLE job DROP COLUMN week":
-		return !txTableHasColumn(tx, "job", "week")
+		hasCol, err := tableHasColumnContext(ctx, q, "job", "week")
+		return !hasCol, err
 	case "ALTER TABLE job DROP COLUMN start_date":
-		return !txTableHasColumn(tx, "job", "start_date")
+		hasCol, err := tableHasColumnContext(ctx, q, "job", "start_date")
+		return !hasCol, err
 	case "ALTER TABLE job DROP COLUMN end_date":
-		return !txTableHasColumn(tx, "job", "end_date")
-	case `CREATE VIRTUAL TABLE IF NOT EXISTS job_task_item_fts USING fts5(
-			fileName,
-			srcPath,
-			dstPath,
-			content='job_task_item',
-			content_rowid='id',
-			tokenize='trigram'
-		)`:
-		return !txTableExists(tx, "job_task_item")
-	case "INSERT INTO job_task_item_fts(job_task_item_fts) VALUES('rebuild')":
-		return !txTableExists(tx, "job_task_item_fts")
-	case `CREATE TRIGGER IF NOT EXISTS job_task_item_ai AFTER INSERT ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath)
-			VALUES (new.id, new.fileName, new.srcPath, new.dstPath);
-		END`:
-		return !txTableExists(tx, "job_task_item") || !txTableExists(tx, "job_task_item_fts")
-	case `CREATE TRIGGER IF NOT EXISTS job_task_item_ad AFTER DELETE ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath)
-			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath);
-		END`:
-		return !txTableExists(tx, "job_task_item") || !txTableExists(tx, "job_task_item_fts")
-	case `CREATE TRIGGER IF NOT EXISTS job_task_item_au AFTER UPDATE ON job_task_item BEGIN
-			INSERT INTO job_task_item_fts(job_task_item_fts, rowid, fileName, srcPath, dstPath)
-			VALUES ('delete', old.id, old.fileName, old.srcPath, old.dstPath);
-			INSERT INTO job_task_item_fts(rowid, fileName, srcPath, dstPath)
-			VALUES (new.id, new.fileName, new.srcPath, new.dstPath);
-		END`:
-		return !txTableExists(tx, "job_task_item") || !txTableExists(tx, "job_task_item_fts")
+		hasCol, err := tableHasColumnContext(ctx, q, "job", "end_date")
+		return !hasCol, err
+	case ftsCreateTableSQL:
+		exists, err := tableExistsContext(ctx, q, "job_task_item")
+		return !exists, err
+	case ftsRebuildSQL:
+		exists, err := tableExistsContext(ctx, q, "job_task_item_fts")
+		return !exists, err
+	case ftsTriggerInsertSQL, ftsTriggerDeleteSQL, ftsTriggerUpdateSQL:
+		hasItems, err := tableExistsContext(ctx, q, "job_task_item")
+		if err != nil {
+			return false, err
+		}
+		hasFTS, err := tableExistsContext(ctx, q, "job_task_item_fts")
+		if err != nil {
+			return false, err
+		}
+		return !hasItems || !hasFTS, nil
 	default:
-		return false
+		return false, nil
 	}
 }
 
@@ -430,19 +546,25 @@ func parseAlterTableAddColumn(stmt string) (string, string, bool) {
 	return tableName, columnName, true
 }
 
-func txTableExists(tx *sql.Tx, tableName string) bool {
+func tableExistsContext(ctx context.Context, q sqlContextQueryer, tableName string) (bool, error) {
 	var name string
-	err := tx.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", tableName).Scan(&name)
-	return err == nil && name == tableName
+	err := q.QueryRowContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", tableName).Scan(&name)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return name == tableName, nil
 }
 
-func txTableHasColumn(tx *sql.Tx, tableName, columnName string) bool {
+func tableHasColumnContext(ctx context.Context, q sqlContextQueryer, tableName, columnName string) (bool, error) {
 	if !isSafeSQLIdentifier(tableName) {
-		return false
+		return false, fmt.Errorf("unsafe SQL identifier: %q", tableName)
 	}
-	rows, err := tx.Query("PRAGMA table_info(" + tableName + ")")
+	rows, err := q.QueryContext(ctx, "PRAGMA table_info("+tableName+")")
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer rows.Close()
 
@@ -453,39 +575,20 @@ func txTableHasColumn(tx *sql.Tx, tableName, columnName string) bool {
 		var defaultValue interface{}
 		var pk int
 		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
-			return false
+			return false, err
 		}
 		if name == columnName {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
-func tableHasColumnDB(db *sql.DB, tableName, columnName string) bool {
-	if !isSafeSQLIdentifier(tableName) {
-		return false
-	}
-	rows, err := db.Query("PRAGMA table_info(" + tableName + ")")
-	if err != nil {
-		return false
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notNull int
-		var defaultValue interface{}
-		var pk int
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
-			return false
-		}
-		if name == columnName {
-			return true
-		}
-	}
-	return false
+func tableHasColumnDB(db *sql.DB, tableName, columnName string) (bool, error) {
+	return tableHasColumnContext(context.Background(), db, tableName, columnName)
 }
 
 // UpdateAbnormalTasks updates incomplete tasks to aborted status on startup

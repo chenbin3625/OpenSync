@@ -90,6 +90,10 @@ func CleanupExpiredTasks(logger *log.Logger, taskSaveDays int, now time.Time) {
 	if !ok {
 		return
 	}
+	cutoff, ok = clampRetentionCutoffForActiveTasks(logger, cutoff)
+	if !ok {
+		return
+	}
 	if err := mapper.DeleteJobTaskByRunTime(cutoff); err != nil {
 		logger.Printf("Failed to delete expired task history: %v", err)
 	}
@@ -99,7 +103,104 @@ func taskRetentionCutoff(now time.Time, taskSaveDays int) (int64, bool) {
 	if taskSaveDays <= 0 {
 		return 0, false
 	}
-	return now.Add(-time.Duration(taskSaveDays) * 24 * time.Hour).Unix(), true
+	const secondsPerDay int64 = 86400
+	days := int64(taskSaveDays)
+	if days > math.MaxInt64/secondsPerDay {
+		return 0, false
+	}
+	offset := days * secondsPerDay
+	nowUnix := now.Unix()
+	if offset >= nowUnix {
+		return 0, false
+	}
+	return nowUnix - offset, true
+}
+
+func collectActiveProtectedTaskIDs() (activeTasks []*JobTask, retrySourceIDs []int64) {
+	jobClientListMu.RLock()
+	clients := make([]*JobClient, 0, len(jobClientList))
+	for _, client := range jobClientList {
+		clients = append(clients, client)
+	}
+	jobClientListMu.RUnlock()
+
+	for _, client := range clients {
+		task := client.currentTask()
+		if task == nil {
+			continue
+		}
+		activeTasks = append(activeTasks, task)
+		if task.RetrySourceTaskID > 0 {
+			retrySourceIDs = append(retrySourceIDs, task.RetrySourceTaskID)
+		}
+	}
+	return activeTasks, retrySourceIDs
+}
+
+func isTaskIDProtected(taskID int64) bool {
+	if taskID <= 0 {
+		return false
+	}
+	activeTasks, retrySourceIDs := collectActiveProtectedTaskIDs()
+	for _, task := range activeTasks {
+		if task.TaskID == taskID {
+			return true
+		}
+	}
+	for _, id := range retrySourceIDs {
+		if id == taskID {
+			return true
+		}
+	}
+	return false
+}
+
+// clampRetentionCutoffForActiveTasks ensures retention cleanup never deletes a
+// currently running/stopping task or a historical task actively being replayed
+// as RetrySourceTaskID.
+func clampRetentionCutoffForActiveTasks(logger *log.Logger, cutoff int64) (int64, bool) {
+	activeTasks, retrySourceIDs := collectActiveProtectedTaskIDs()
+	lookupIDs := make([]int64, 0, len(activeTasks)+len(retrySourceIDs))
+	for _, task := range activeTasks {
+		if task.RunTime > 0 {
+			if task.RunTime <= cutoff {
+				cutoff = task.RunTime - 1
+			}
+		} else if task.TaskID > 0 {
+			lookupIDs = append(lookupIDs, task.TaskID)
+		}
+	}
+	lookupIDs = append(lookupIDs, retrySourceIDs...)
+
+	for _, id := range lookupIDs {
+		row, err := mapper.GetJobTaskByID(id)
+		if err != nil {
+			if err.Error() == msg.TaskNotFound {
+				continue
+			}
+			logger.Printf("Skipping task retention cleanup because protected task %d could not be queried: %v", id, err)
+			return 0, false
+		}
+		runTime := util.ToInt64(row["runTime"])
+		if runTime > 0 && runTime <= cutoff {
+			cutoff = runTime - 1
+		}
+	}
+	if cutoff <= 0 {
+		return 0, false
+	}
+	return cutoff, true
+}
+
+// getJobClientIfExists returns a cached job client without hitting the DB or panicking.
+func getJobClientIfExists(jobID int64) (*JobClient, bool) {
+	jobClientListMu.RLock()
+	client, ok := jobClientList[jobID]
+	jobClientListMu.RUnlock()
+	if !ok || client == nil || client.isRemoved() {
+		return nil, false
+	}
+	return client, true
 }
 
 // GetJobClientByID gets or creates a job client
@@ -139,6 +240,11 @@ func CleanJobInput(job map[string]interface{}) {
 		job["enable"] = 1
 	}
 	for key, value := range job {
+		// Preserve leading/trailing spaces on srcPath/dstPath components; they are
+		// sanitized separately by normalizePathListForStorage below.
+		if key == "srcPath" || key == "dstPath" {
+			continue
+		}
 		if s, ok := value.(string); ok {
 			trimmed := strings.TrimSpace(s)
 			if trimmed == "" {
@@ -162,8 +268,10 @@ func CleanJobInput(job map[string]interface{}) {
 }
 
 func ValidateJobInput(job map[string]interface{}) {
-	if len(parsePathList(job["srcPath"])) == 0 ||
-		len(parsePathList(job["dstPath"])) == 0 ||
+	rawSrcs := parseRawPathList(job["srcPath"])
+	rawDsts := parseRawPathList(job["dstPath"])
+	if len(rawSrcs) == 0 ||
+		len(rawDsts) == 0 ||
 		util.ToInt64(job["alistId"]) <= 0 {
 		panicPublic(msg.LostPart)
 	}
@@ -179,6 +287,9 @@ func ValidateJobInput(job map[string]interface{}) {
 	if method < 0 || method > 2 {
 		panicPublic(msg.LostPart)
 	}
+	if method == 2 && len(rawDsts) > 1 {
+		panicPublic("移动模式不支持多个目标路径")
+	}
 
 	isCron := util.ToInt(job["isCron"])
 	if isCron < 0 || isCron > 2 {
@@ -186,6 +297,54 @@ func ValidateJobInput(job map[string]interface{}) {
 	}
 	if isCron == 0 && util.ToInt(job["interval"]) <= 0 {
 		panicPublic(msg.IntervalLost)
+	}
+
+	validateJobPaths(rawSrcs, rawDsts)
+}
+
+func validateJobPaths(rawSrcs, rawDsts []string) {
+	canonSrcs := make([]string, len(rawSrcs))
+	for i, src := range rawSrcs {
+		canonSrcs[i] = canonicalJobPath(src)
+	}
+	for i := 0; i < len(canonSrcs); i++ {
+		for j := i + 1; j < len(canonSrcs); j++ {
+			if canonSrcs[i] == canonSrcs[j] {
+				panicPublic("源路径不能重复")
+			}
+			if pathsOverlap(canonSrcs[i], canonSrcs[j]) {
+				panicPublic("源路径不能包含父子目录重叠")
+			}
+		}
+	}
+
+	canonDsts := make([]string, len(rawDsts))
+	for i, dst := range rawDsts {
+		canonDsts[i] = canonicalJobPath(dst)
+	}
+	for i := 0; i < len(canonDsts); i++ {
+		for j := i + 1; j < len(canonDsts); j++ {
+			if canonDsts[i] == canonDsts[j] {
+				panicPublic("目标路径不能重复")
+			}
+			if pathsOverlap(canonDsts[i], canonDsts[j]) {
+				panicPublic("目标路径不能包含父子目录重叠")
+			}
+		}
+	}
+
+	for _, src := range canonSrcs {
+		for _, dst := range canonDsts {
+			if pathsOverlap(src, dst) {
+				panicPublic("源路径与目标路径不能相同或互相包含")
+			}
+			mappedDst := canonicalJobPath(dstPathForSrcSelection(dst, src, canonSrcs))
+			for _, otherSrc := range canonSrcs {
+				if pathsOverlap(otherSrc, mappedDst) {
+					panicPublic("源路径与目标路径不能相同或互相包含")
+				}
+			}
+		}
 	}
 }
 
@@ -247,8 +406,8 @@ func nonNegativeFileSize(value interface{}) (int64, error) {
 // AddJobClient creates a new job client
 func AddJobClient(job map[string]interface{}, isInit bool) {
 	CleanJobInput(job)
-	ValidateJobInput(job)
 	if !isInit {
+		ValidateJobInput(job)
 		// Interactive add: validate that the engine exists and hold the
 		// reference lock until the job row is inserted, so a concurrent
 		// RemoveClient cannot delete the engine in between and leave a job
@@ -261,7 +420,7 @@ func AddJobClient(job map[string]interface{}, isInit bool) {
 	}
 	client := NewJobClient(job, isInit)
 	jobClientListMu.Lock()
-	jobClientList[client.JobID] = client
+	jobClientList[client.idSnapshot()] = client
 	jobClientListMu.Unlock()
 }
 
@@ -270,33 +429,64 @@ func EditJobClient(job map[string]interface{}) {
 	jobID := util.ToInt64(job["id"])
 	CleanJobInput(job)
 	ValidateJobInput(job)
+	if err := validateJobSchedule(util.ToInt(job["isCron"]), job); err != nil {
+		panicPublic(err.Error())
+	}
+
 	client := GetJobClientByID(jobID)
-	oldJob := client.jobSnapshot()
-	nextScheduler := NewScheduler()
-	dbUpdated := false
-	defer func() {
-		if r := recover(); r != nil {
+	var oldScheduler *Scheduler
+	func() {
+		client.opMu.Lock()
+		defer client.opMu.Unlock()
+
+		if client.isRemoved() {
+			panicPublic(msg.JobNotFound)
+		}
+		oldJob := client.jobSnapshot()
+
+		alistRefMu.Lock()
+		if _, err := getAlistByID(util.ToInt64(job["alistId"])); err != nil {
+			alistRefMu.Unlock()
+			panicPublicIf(err, msg.AlistNotFound)
+		}
+		if err := mapper.UpdateJob(job); err != nil {
+			alistRefMu.Unlock()
+			panicPublicIf(err, msg.JobNotFound)
+		}
+		alistRefMu.Unlock()
+
+		nextScheduler := NewScheduler()
+		swapped := false
+		defer func() {
+			if r := recover(); r != nil {
+				if !swapped {
+					nextScheduler.Stop()
+					if oldJob != nil {
+						if err := mapper.UpdateJob(oldJob); err != nil {
+							log.Printf("failed to roll back job %d after edit panic: %v", jobID, err)
+						}
+					}
+				}
+				panic(r)
+			}
+		}()
+
+		if err := nextScheduler.AddJob(util.ToInt(job["isCron"]), job, func() {
+			client.DoScheduled()
+		}); err != nil {
 			nextScheduler.Stop()
-			if dbUpdated && oldJob != nil {
-				if err := mapper.UpdateJob(oldJob); err != nil {
-					log.Printf("failed to roll back job %d after edit panic: %v", jobID, err)
+			if oldJob != nil {
+				if rbErr := mapper.UpdateJob(oldJob); rbErr != nil {
+					log.Printf("failed to roll back job %d after schedule error: %v", jobID, rbErr)
 				}
 			}
-			panic(r)
+			panicPublic(err.Error())
 		}
+
+		oldScheduler = client.replaceJobConfig(job, nextScheduler)
+		swapped = true
 	}()
-	if err := nextScheduler.AddJob(util.ToInt(job["isCron"]), job, func() {
-		client.DoScheduled()
-	}); err != nil {
-		nextScheduler.Stop()
-		panic(err.Error())
-	}
-	if err := mapper.UpdateJob(job); err != nil {
-		nextScheduler.Stop()
-		panic(err.Error())
-	}
-	dbUpdated = true
-	oldScheduler := client.replaceJobConfig(job, nextScheduler)
+
 	if oldScheduler != nil {
 		oldScheduler.Stop()
 	}
@@ -311,50 +501,109 @@ func DoAllJobManual() {
 	if len(jobList) == 0 {
 		panicPublic(msg.NoJobForRun)
 	}
+	started := 0
+	busy := 0
 	for _, jobItem := range jobList {
-		client := GetJobClientByID(util.ToInt64(jobItem["id"]))
-		if client.enabled() {
-			client.DoManual()
+		jobID := util.ToInt64(jobItem["id"])
+		var client *JobClient
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Skipping job %d in DoAllJobManual: %v", jobID, r)
+				}
+			}()
+			client = GetJobClientByID(jobID)
+		}()
+		if client == nil {
+			continue
 		}
+		if err := client.tryStartManualRun(); err != nil {
+			if err.Error() == msg.JobRunning {
+				busy++
+			}
+			continue
+		}
+		started++
+		go client.runMarkedJob()
+	}
+	if started == 0 {
+		if busy > 0 {
+			panicPublic(msg.JobRunning)
+		}
+		panicPublic(msg.NoJobForRun)
 	}
 }
 
 // DoJobManual executes a specific job manually
 func DoJobManual(jobID int64) {
 	client := GetJobClientByID(jobID)
-	if !client.enabled() {
-		panicPublic(msg.DisabledJobCannotRun)
-	}
 	client.DoManual()
 }
 
 // RemoveJobClient deletes a job
 func RemoveJobClient(jobID int64) {
 	client := GetJobClientByID(jobID)
-	if client.isBusy() {
-		panicPublic(msg.JobRunningCannotDelete)
+	var schedToStop *Scheduler
+	func() {
+		client.opMu.Lock()
+		defer client.opMu.Unlock()
+
+		sched, err := client.beginRemove()
+		if err != nil {
+			panicPublic(err.Error())
+		}
+		if sched != nil {
+			sched.Pause()
+		}
+		resumeOnCancel := func() {
+			client.cancelRemove()
+			if sched != nil && client.enabled() {
+				job := client.jobSnapshot()
+				_ = sched.Resume(util.ToInt(job["isCron"]), job, func() {
+					client.DoScheduled()
+				})
+			}
+		}
+		if !client.waitUntilIdle(2 * time.Minute) {
+			resumeOnCancel()
+			panicPublic(msg.JobDeleteWaitTimeout)
+		}
+		if err := mapper.DeleteJob(jobID); err != nil {
+			resumeOnCancel()
+			panicPublicIf(err, msg.JobNotFound)
+		}
+		client.finishRemove()
+		jobClientListMu.Lock()
+		if current, ok := jobClientList[jobID]; ok && current == client {
+			delete(jobClientList, jobID)
+		}
+		jobClientListMu.Unlock()
+		schedToStop = sched
+	}()
+	if schedToStop != nil {
+		schedToStop.Stop()
 	}
-	client.StopJob(true)
-	if !client.waitUntilIdle(2 * time.Minute) {
-		panicPublic(msg.JobDeleteWaitTimeout)
-	}
-	if err := mapper.DeleteJob(jobID); err != nil {
-		panic(err.Error())
-	}
-	jobClientListMu.Lock()
-	delete(jobClientList, jobID)
-	jobClientListMu.Unlock()
 }
 
 // ContinueJob enables a job
 func ContinueJob(jobID int64) {
 	client := GetJobClientByID(jobID)
+	client.opMu.Lock()
+	defer client.opMu.Unlock()
+	if client.isRemoved() {
+		panicPublic(msg.JobNotFound)
+	}
 	client.ResumeJob()
 }
 
 // PauseJob disables a job
 func PauseJob(jobID int64) {
 	client := GetJobClientByID(jobID)
+	client.opMu.Lock()
+	defer client.opMu.Unlock()
+	if client.isRemoved() {
+		panicPublic(msg.JobNotFound)
+	}
 	if util.ToInt(client.jobSnapshot()["isCron"]) == 2 {
 		panicPublic(msg.CannotDisableManualJob)
 	}
@@ -364,6 +613,11 @@ func PauseJob(jobID int64) {
 // AbortJob aborts a running job
 func AbortJob(jobID int64) {
 	client := GetJobClientByID(jobID)
+	client.opMu.Lock()
+	defer client.opMu.Unlock()
+	if client.isRemoved() {
+		panicPublic(msg.JobNotFound)
+	}
 	client.AbortJob()
 }
 
@@ -388,6 +642,12 @@ func RetryFailedTask(taskID int64) {
 		panicPublicIf(err, msg.JobNotFound)
 	}
 	client := GetJobClientByID(util.ToInt64(job["id"]))
+	client.opMu.Lock()
+	defer client.opMu.Unlock()
+
+	if client.isRemoved() {
+		panicPublic(msg.JobNotFound)
+	}
 	if !client.enabled() {
 		panicPublic(msg.DisabledJobCannotRun)
 	}
@@ -417,7 +677,7 @@ func GetJobList(params map[string]interface{}) map[string]interface{} {
 func GetJobCurrent(jobID int64, params map[string]interface{}) interface{} {
 	client := GetJobClientByID(jobID)
 	taskClient := client.currentTask()
-	if taskClient != nil {
+	if taskClient != nil && !taskClient.finished.Load() {
 		status, hasStatus := params["status"]
 		if !hasStatus || fmt.Sprintf("%v", status) == "" {
 			return taskClient.getCurrentPayload()
@@ -471,7 +731,11 @@ func GetTaskList(req map[string]interface{}) map[string]interface{} {
 	}
 
 	if len(missingTaskItems) > 0 {
-		taskNumByID := mapper.GetJobTaskCountsByTaskIDs(missingTaskIDs)
+		taskNumByID, err := mapper.GetJobTaskCountsByTaskIDsWithError(missingTaskIDs)
+		if err != nil {
+			log.Printf("Failed to backfill task counts: %v", err)
+			return jobTaskList
+		}
 		for _, item := range missingTaskItems {
 			taskID := util.ToInt64(item["id"])
 			taskNum := taskNumByID[taskID]
@@ -542,9 +806,12 @@ func scheduleTaskNumUpdate(taskNums []map[string]interface{}) {
 	}
 }
 
-func GetTaskItemList(req map[string]interface{}) map[string]interface{} {
-	result, err := mapper.GetJobTaskItemList(req)
+func GetTaskItemList(ctx context.Context, req map[string]interface{}) map[string]interface{} {
+	result, err := mapper.GetJobTaskItemListContext(ctx, req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		panic(err.Error())
 	}
 	return result
@@ -552,7 +819,10 @@ func GetTaskItemList(req map[string]interface{}) map[string]interface{} {
 
 // RemoveTask deletes a task
 func RemoveTask(taskID int64) {
+	if isTaskIDProtected(taskID) {
+		panicPublic(msg.JobRunningCannotDelete)
+	}
 	if err := mapper.DeleteJobTaskByTaskID(taskID); err != nil {
-		panic(err.Error())
+		panicPublicIf(err, msg.TaskNotFound, msg.JobRunningCannotDelete)
 	}
 }

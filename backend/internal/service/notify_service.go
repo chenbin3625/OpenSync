@@ -2,11 +2,13 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"opensync/internal/mapper"
@@ -19,15 +21,118 @@ import (
 
 const maxNotifyResponseBytes = 1 << 20 // 1MB
 
-var notifyHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: &http.Transport{
-		// Webhook destinations may be self-hosted on a LAN or loopback address;
-		// do not reject them after DNS resolution.
-		MaxIdleConns:        50,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-	},
+var (
+	awsIPv6IMDS     = net.ParseIP("fd00:ec2::254")
+	alibabaIMDSIP   = net.ParseIP("100.100.100.200")
+	notifyHTTPClient = &http.Client{
+		Timeout:       30 * time.Second,
+		CheckRedirect: checkNotifyRedirect,
+		Transport: &http.Transport{
+			// Webhook destinations may be self-hosted on a LAN or loopback address;
+			// only block cloud metadata / link-local endpoints after DNS resolution.
+			DialContext:         notifyDialContext,
+			MaxIdleConns:        50,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+)
+
+func isBlockedMetadataIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		return true
+	}
+	if awsIPv6IMDS != nil && ip.Equal(awsIPv6IMDS) {
+		return true
+	}
+	if alibabaIMDSIP != nil && ip.Equal(alibabaIMDSIP) {
+		return true
+	}
+	return false
+}
+
+func isBlockedMetadataHost(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	h = strings.Trim(h, "[]")
+	if h == "" {
+		return false
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return isBlockedMetadataIP(ip)
+	}
+	switch h {
+	case "metadata.google.internal", "metadata.goog", "metadata.tencentyun.com",
+		"instance-data", "instance-data.ec2.internal":
+		return true
+	}
+	return false
+}
+
+func notifyDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	if isBlockedMetadataHost(host) {
+		return nil, fmt.Errorf("blocked metadata host: %s", host)
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	for _, ipAddr := range ips {
+		if isBlockedMetadataIP(ipAddr.IP) {
+			return nil, fmt.Errorf("blocked metadata IP: %s", ipAddr.IP.String())
+		}
+	}
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	var lastErr error
+	for _, ipAddr := range ips {
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ipAddr.IP.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("no addresses resolved for %s", host)
+}
+
+func checkNotifyRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("stopped after 5 redirects")
+	}
+	if req == nil || req.URL == nil {
+		return errors.New("invalid redirect URL")
+	}
+	scheme := strings.ToLower(req.URL.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("refusing redirect to scheme %q", req.URL.Scheme)
+	}
+	if isBlockedMetadataHost(req.URL.Hostname()) {
+		return fmt.Errorf("refusing redirect to blocked host %q", req.URL.Hostname())
+	}
+	if len(via) > 0 && via[len(via)-1] != nil && via[len(via)-1].URL != nil {
+		prev := via[len(via)-1].URL
+		if strings.EqualFold(prev.Scheme, "https") && scheme != "https" {
+			return errors.New("refusing HTTPS to HTTP redirect")
+		}
+		if !strings.EqualFold(prev.Host, req.URL.Host) {
+			return errors.New("refusing cross-host redirect")
+		}
+	}
+	return nil
 }
 
 // GetNotifyList returns notify list with secret fields redacted so tokens
@@ -49,11 +154,11 @@ func GetNotifyList() []map[string]interface{} {
 // body is included because request-body templates commonly embed tokens; the
 // stored value is restored for editing via resolveNotifyParams.
 var notifySecretKeys = map[int][]string{
-	0: {"url", "headers", "body"},   // custom webhook: URL may embed token, headers/body carry auth
-	1: {"sendKey"},                  // Server酱
-	2: {"url", "webhook"},           // 钉钉 (access_token in URL query)
-	3: {"corpsecret", "corpSecret"}, // 企业微信应用密钥
-	4: {"url", "webhook"},           // 飞书 (token in URL path)
+	0: {"url", "webhook", "headers", "body"}, // custom webhook: URL may embed token, headers/body carry auth
+	1: {"sendKey"},                           // Server酱
+	2: {"url", "webhook"},                    // 钉钉 (access_token in URL query)
+	3: {"corpsecret", "corpSecret"},          // 企业微信应用密钥
+	4: {"url", "webhook"},                    // 飞书 (token in URL path)
 }
 
 const notifyRedactionMarker = "****"
@@ -70,78 +175,192 @@ func maskSecretValue(value string) string {
 	return notifyRedactionMarker + value[len(value)-4:]
 }
 
+func looksLikeTokenSegment(seg string, isLast bool) bool {
+	if seg == "" {
+		return false
+	}
+	lower := strings.ToLower(seg)
+	// Telegram bot tokens: /bot123456:AAH.../sendMessage
+	if strings.HasPrefix(lower, "bot") && strings.Contains(seg, ":") {
+		return true
+	}
+	if isLast {
+		// Lark/Slack/Discord-style webhooks put the token in the final path segment.
+		return len(seg) >= 12
+	}
+	if len(seg) < 12 {
+		return false
+	}
+	if len(seg) >= 24 {
+		return true
+	}
+	var hasDigit, hasUpper, hasLower, hasColon bool
+	allHex := true
+	for i := 0; i < len(seg); i++ {
+		ch := seg[i]
+		switch {
+		case ch >= '0' && ch <= '9':
+			hasDigit = true
+		case ch >= 'A' && ch <= 'Z':
+			hasUpper = true
+			if ch > 'F' {
+				allHex = false
+			}
+		case ch >= 'a' && ch <= 'z':
+			hasLower = true
+			if ch > 'f' {
+				allHex = false
+			}
+		case ch == ':':
+			hasColon = true
+			allHex = false
+		default:
+			allHex = false
+		}
+	}
+	return hasColon || hasDigit || (hasUpper && hasLower) || (allHex && len(seg) >= 16)
+}
+
 // maskNotifyURL redacts token-like segments in a webhook URL while keeping
 // the host visible so the card summary stays identifiable. DingTalk embeds
-// the token in a query param (access_token); Lark embeds it in the path.
+// the token in a query param (access_token); Lark/Telegram/Discord/Bark embed
+// tokens in path segments.
 func maskNotifyURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
 		return maskSecretValue(rawURL)
 	}
-	masked := false
+	maskedQuery := false
 	if u.User != nil {
 		u.User = url.User(notifyRedactionMarker)
-		masked = true
 	}
 	q := u.Query()
 	for k, vals := range q {
 		lk := strings.ToLower(k)
-		if strings.Contains(lk, "token") || strings.Contains(lk, "key") || strings.Contains(lk, "secret") {
+		if strings.Contains(lk, "token") || strings.Contains(lk, "key") ||
+			strings.Contains(lk, "secret") || strings.Contains(lk, "auth") ||
+			strings.Contains(lk, "pass") || strings.Contains(lk, "pwd") ||
+			strings.Contains(lk, "sign") || strings.Contains(lk, "sig") {
 			for i := range vals {
 				vals[i] = maskSecretValue(vals[i])
 			}
 			q[k] = vals
-			masked = true
+			maskedQuery = true
 		}
 	}
-	if masked {
+	if maskedQuery {
 		u.RawQuery = q.Encode()
 	}
-	segs := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(segs) > 0 && segs[len(segs)-1] != "" {
-		last := segs[len(segs)-1]
-		// Lark-style webhooks put the token in the final path segment. The old
-		// 16-char threshold let short tokens through; 12 still keeps short
-		// human-readable paths visible while masking credential-sized segments.
-		if len(last) >= 12 {
-			segs[len(segs)-1] = maskSecretValue(last)
+	trimmedPath := strings.Trim(u.Path, "/")
+	if trimmedPath != "" {
+		segs := strings.Split(trimmedPath, "/")
+		pathChanged := false
+		for i, seg := range segs {
+			if looksLikeTokenSegment(seg, i == len(segs)-1) {
+				segs[i] = maskSecretValue(seg)
+				pathChanged = true
+			}
+		}
+		if pathChanged {
 			u.Path = "/" + strings.Join(segs, "/")
+			u.RawPath = ""
 		}
 	}
 	return u.String()
 }
 
+func notifyURLOrigin(rawURL string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return "", false
+	}
+	port := u.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	return scheme + "://" + net.JoinHostPort(host, port), true
+}
+
 // redactNotifyParams returns paramsStr with secret fields masked for display.
+// On decode/encode failure it fails closed ("{}") instead of returning raw input.
 func redactNotifyParams(method int, paramsStr string) string {
 	params, err := parseNotifyParams(paramsStr)
 	if err != nil {
-		return paramsStr
+		return "{}"
 	}
 	for _, key := range notifySecretKeys[method] {
 		v, ok := params[key]
 		if !ok || v == nil {
 			continue
 		}
-		s, _ := v.(string)
-		if s == "" {
-			continue
-		}
 		switch key {
 		case "headers":
-			params[key] = ""
+			switch h := v.(type) {
+			case map[string]interface{}:
+				if len(h) == 0 {
+					continue
+				}
+				params[key] = ""
+			case string:
+				if strings.TrimSpace(h) == "" {
+					continue
+				}
+				params[key] = ""
+			default:
+				params[key] = ""
+			}
 		case "body":
-			// Unlike sendKey-style masks, no suffix is kept: a body template
-			// may embed a token at any position.
-			params[key] = notifyBodyRedacted
+			switch b := v.(type) {
+			case string:
+				if strings.TrimSpace(b) == "" {
+					continue
+				}
+				// Unlike sendKey-style masks, no suffix is kept: a body template
+				// may embed a token at any position.
+				params[key] = notifyBodyRedacted
+			case map[string]interface{}:
+				if len(b) == 0 {
+					continue
+				}
+				params[key] = notifyBodyRedacted
+			default:
+				params[key] = notifyBodyRedacted
+			}
 		case "url", "webhook":
-			params[key] = maskNotifyURL(s)
+			if s, ok := v.(string); ok {
+				if s == "" {
+					continue
+				}
+				params[key] = maskNotifyURL(s)
+			} else {
+				params[key] = notifyRedactionMarker
+			}
 		default:
-			params[key] = maskSecretValue(s)
+			if s, ok := v.(string); ok {
+				if s == "" {
+					continue
+				}
+				params[key] = maskSecretValue(s)
+			} else {
+				params[key] = notifyRedactionMarker
+			}
 		}
 	}
 	out, err := json.Marshal(params)
 	if err != nil {
-		return paramsStr
+		return "{}"
 	}
 	return string(out)
 }
@@ -156,50 +375,180 @@ func isMaskedSecretValue(value string) bool {
 	return err == nil && strings.Contains(decoded, notifyRedactionMarker)
 }
 
+func cloneParamsMap(src map[string]interface{}) map[string]interface{} {
+	dst := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func cleanupClearedOptionalParams(params map[string]interface{}) {
+	if v, ok := params["body"]; ok {
+		if s, isStr := v.(string); isStr && strings.TrimSpace(s) == "" {
+			delete(params, "body")
+		} else if bMap, isMap := v.(map[string]interface{}); isMap && len(bMap) == 0 {
+			delete(params, "body")
+		}
+	}
+	if v, ok := params["headers"]; ok {
+		if s, isStr := v.(string); isStr && strings.TrimSpace(s) == "" {
+			delete(params, "headers")
+		} else if hMap, isMap := v.(map[string]interface{}); isMap && len(hMap) == 0 {
+			delete(params, "headers")
+		}
+	}
+}
+
+func hasMaskedSecretForMethod(method int, params map[string]interface{}) bool {
+	for _, key := range notifySecretKeys[method] {
+		v, ok := params[key]
+		if !ok || v == nil {
+			continue
+		}
+		if s, isStr := v.(string); isStr && isMaskedSecretValue(s) {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveNotifyParams merges incoming params with stored secrets for fields
 // that were redacted (masked) or left empty. For new configs (no id) the
-// incoming params are returned unchanged. The returned map contains real
-// secret values, suitable for sending a test or persisting. An explicitly
-// empty headers object ({}) clears the stored headers instead of restoring
-// them.
+// incoming params are returned unchanged. Stored credentials are ONLY
+// inherited when the method matches the stored record AND (for URL-based
+// methods) the target URL origin (scheme + host + port) has not changed,
+// preventing credential exfiltration by pointing an existing webhook ID at a
+// different host. An explicitly empty headers object ({}) clears stored
+// headers, and an explicitly empty body string ("") or object ({}) clears
+// stored body.
 func resolveNotifyParams(notify map[string]interface{}) (map[string]interface{}, error) {
 	method := util.ToInt(notify["method"])
-	incoming, err := notifyParamsValue(notify["params"])
+	incomingRaw, err := notifyParamsValue(notify["params"])
 	if err != nil {
 		return nil, err
 	}
+	incoming := cloneParamsMap(incomingRaw)
+
 	notifyID := util.ToInt64(notify["id"])
 	if notifyID <= 0 {
+		cleanupClearedOptionalParams(incoming)
 		return incoming, nil
 	}
 	existing, err := mapper.GetNotifyByID(notifyID)
 	if err != nil || existing == nil {
+		cleanupClearedOptionalParams(incoming)
 		return incoming, nil
 	}
-	existingParams, _ := parseNotifyParams(fmt.Sprintf("%v", existing["params"]))
-	for _, key := range notifySecretKeys[method] {
-		v, ok := incoming[key]
-		if !ok || v == nil {
-			if ev, ok2 := existingParams[key]; ok2 && ev != nil {
-				incoming[key] = ev
-			}
-			continue
+
+	existingMethod := util.ToInt(existing["method"])
+	if method != existingMethod {
+		if hasMaskedSecretForMethod(method, incoming) {
+			return nil, model.PublicError(msg.NotifyParamInvalid)
 		}
-		s, isStr := v.(string)
-		if isStr {
-			if s == "" || isMaskedSecretValue(s) {
+		cleanupClearedOptionalParams(incoming)
+		return incoming, nil
+	}
+
+	existingParams, err := parseNotifyParams(fmt.Sprintf("%v", existing["params"]))
+	if err != nil {
+		cleanupClearedOptionalParams(incoming)
+		return incoming, nil
+	}
+
+	if method == 0 || method == 2 || method == 4 {
+		incomingURL := paramString(incoming, "url", "webhook")
+		existingURL := paramString(existingParams, "url", "webhook")
+		if incomingURL != "" {
+			inOrigin, inOK := notifyURLOrigin(incomingURL)
+			exOrigin, exOK := notifyURLOrigin(existingURL)
+			if !inOK || !exOK || inOrigin != exOrigin {
+				// Target URL origin changed: refuse to inherit stored secrets,
+				// headers, or body so credentials cannot be exfiltrated.
+				if hasMaskedSecretForMethod(method, incoming) {
+					return nil, model.PublicError(msg.NotifyParamInvalid)
+				}
+				cleanupClearedOptionalParams(incoming)
+				return incoming, nil
+			}
+		}
+
+		// Same origin (or URL omitted): restore URL if omitted or masked.
+		if incomingURL == "" || isMaskedSecretValue(incomingURL) {
+			if existingURL != "" {
+				if _, hasWebhook := incoming["webhook"]; hasWebhook && paramString(incoming, "url") == "" {
+					incoming["webhook"] = existingURL
+				} else {
+					incoming["url"] = existingURL
+				}
+			}
+		}
+	}
+
+	for _, key := range notifySecretKeys[method] {
+		switch key {
+		case "url", "webhook":
+			// Handled above with origin verification.
+			continue
+		case "body":
+			v, ok := incoming[key]
+			if !ok || v == nil {
 				if ev, ok2 := existingParams[key]; ok2 && ev != nil {
 					incoming[key] = ev
 				}
+				continue
 			}
-			continue
-		}
-		// Non-string values (e.g. the parsed headers object) are real input
-		// and replace the stored value. An explicitly-empty headers object
-		// means the user cleared headers, so drop the stored value.
-		if key == "headers" {
-			if hMap, ok := v.(map[string]interface{}); ok && len(hMap) == 0 {
+			if s, isStr := v.(string); isStr {
+				if strings.TrimSpace(s) == "" {
+					// Explicit empty string clears the stored body template.
+					delete(incoming, key)
+					continue
+				}
+				if isMaskedSecretValue(s) {
+					if ev, ok2 := existingParams[key]; ok2 && ev != nil {
+						incoming[key] = ev
+					}
+				}
+				continue
+			}
+			if bMap, isMap := v.(map[string]interface{}); isMap && len(bMap) == 0 {
 				delete(incoming, key)
+			}
+		case "headers":
+			v, ok := incoming[key]
+			if !ok || v == nil {
+				if ev, ok2 := existingParams[key]; ok2 && ev != nil {
+					incoming[key] = ev
+				}
+				continue
+			}
+			if s, isStr := v.(string); isStr {
+				if strings.TrimSpace(s) == "" || isMaskedSecretValue(s) {
+					if ev, ok2 := existingParams[key]; ok2 && ev != nil {
+						incoming[key] = ev
+					} else {
+						delete(incoming, key)
+					}
+				}
+				continue
+			}
+			if hMap, isMap := v.(map[string]interface{}); isMap && len(hMap) == 0 {
+				delete(incoming, key)
+			}
+		default:
+			v, ok := incoming[key]
+			if !ok || v == nil {
+				if ev, ok2 := existingParams[key]; ok2 && ev != nil {
+					incoming[key] = ev
+				}
+				continue
+			}
+			if s, isStr := v.(string); isStr {
+				if s == "" || isMaskedSecretValue(s) {
+					if ev, ok2 := existingParams[key]; ok2 && ev != nil {
+						incoming[key] = ev
+					}
+				}
 			}
 		}
 	}
@@ -253,6 +602,9 @@ func validateNotifyWebhookURL(rawURL string) error {
 	if scheme != "http" && scheme != "https" {
 		return errors.New(msg.NotifyURLInvalid)
 	}
+	if isBlockedMetadataHost(u.Hostname()) {
+		return errors.New(msg.NotifyURLInvalid)
+	}
 	return nil
 }
 
@@ -262,6 +614,9 @@ func validateNotifyHTTPSURL(rawURL string) error {
 		return errors.New(msg.NotifyURLInvalid)
 	}
 	if strings.ToLower(u.Scheme) != "https" {
+		return errors.New(msg.NotifyURLInvalid)
+	}
+	if isBlockedMetadataHost(u.Hostname()) {
 		return errors.New(msg.NotifyURLInvalid)
 	}
 	return nil
@@ -281,12 +636,21 @@ func notifyParamsValue(value interface{}) (map[string]interface{}, error) {
 	}
 }
 
+func panicNotifyResolveError(err error) {
+	var pubErr model.PublicError
+	if errors.As(err, &pubErr) {
+		panicPublic(pubErr.Error())
+	}
+	panic(err.Error())
+}
+
 // AddNewNotify adds a new notify config
 func AddNewNotify(notify map[string]interface{}) {
 	params, err := notifyParamsValue(notify["params"])
 	if err != nil {
 		panic(err.Error())
 	}
+	cleanupClearedOptionalParams(params)
 	method := util.ToInt(notify["method"])
 	notify["method"] = method
 	notify["enable"] = util.ToInt(notify["enable"])
@@ -309,7 +673,7 @@ func AddNewNotify(notify map[string]interface{}) {
 func EditNotify(notify map[string]interface{}) {
 	resolved, err := resolveNotifyParams(notify)
 	if err != nil {
-		panic(err.Error())
+		panicNotifyResolveError(err)
 	}
 	if err := validateNotifyParams(util.ToInt(notify["method"]), resolved); err != nil {
 		panicPublic(err.Error())
@@ -351,7 +715,7 @@ func TestNotify(notify map[string]interface{}) {
 	}()
 	resolved, err := resolveNotifyParams(notify)
 	if err != nil {
-		panic(err.Error())
+		panicNotifyResolveError(err)
 	}
 	if err := validateNotifyParams(util.ToInt(notify["method"]), resolved); err != nil {
 		panicPublic(err.Error())
@@ -582,6 +946,35 @@ func notifyNetworkError(err error) string {
 	return fmt.Sprintf("%T", err)
 }
 
+func marshalCustomBodyTemplate(customBody interface{}) (string, bool, error) {
+	switch v := customBody.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return "", false, nil
+		}
+		return v, true, nil
+	case map[string]interface{}:
+		if len(v) == 0 {
+			return "", false, nil
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			return "", false, err
+		}
+		return string(b), true, nil
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return "", false, err
+		}
+		s := strings.TrimSpace(string(b))
+		if s == "" || s == "null" {
+			return "", false, nil
+		}
+		return s, true, nil
+	}
+}
+
 func sendWebhook(client *http.Client, params map[string]interface{}, title, content string) {
 	urlStr := paramString(params, "url", "webhook")
 	method := "POST"
@@ -612,12 +1005,23 @@ func sendWebhook(client *http.Client, params map[string]interface{}, title, cont
 		body[contentName] = content
 	}
 	if customBody, ok := params["body"]; ok && customBody != nil {
-		bodyStr := fmt.Sprintf("%v", customBody)
-		bodyStr = strings.ReplaceAll(bodyStr, "{title}", jsonStringContent(title))
-		bodyStr = strings.ReplaceAll(bodyStr, "{content}", jsonStringContent(content))
-		body = nil
-		if err := json.Unmarshal([]byte(bodyStr), &body); err != nil {
+		bodyStr, hasCustomBody, err := marshalCustomBodyTemplate(customBody)
+		if err != nil {
 			panic(err.Error())
+		}
+		if hasCustomBody {
+			replacer := strings.NewReplacer(
+				"{title}", jsonStringContent(title),
+				"{content}", jsonStringContent(content),
+			)
+			bodyStr = replacer.Replace(bodyStr)
+			var customMap map[string]interface{}
+			if err := json.Unmarshal([]byte(bodyStr), &customMap); err != nil {
+				panic(err.Error())
+			}
+			if customMap != nil {
+				body = customMap
+			}
 		}
 	}
 

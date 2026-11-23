@@ -218,9 +218,9 @@ func TestCopyItemRetriesFailedCopyBeforeSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// DoIt verifies the destination when the copy response carries no task
-		// id; report the file as present so that path treats it as success.
+		// id; report the file as present with matching size so that path treats it as success.
 		if r.URL.Path == "/api/fs/get" {
-			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"name":"file.txt","size":11,"is_dir":false}}`))
 			return
 		}
 		if r.URL.Path != "/api/fs/copy" {
@@ -466,10 +466,11 @@ func TestCopyHookPersistsFinishedItemsImmediately(t *testing.T) {
 func TestCopyHookRecordsPersistenceError(t *testing.T) {
 	writeErr := errors.New("write failed")
 	restorePersist := stubPersistJobTaskItems(t, nil, nil)
-	persistJobTaskItems = func([]map[string]interface{}) error {
+	restoreWrite := replacePersistJobTaskItems(func([]map[string]interface{}) error {
 		return writeErr
-	}
+	})
 	defer restorePersist()
+	defer restoreWrite()
 
 	jt := &JobTask{
 		TaskID: 42,
@@ -560,6 +561,10 @@ func (panicCopyItemClient) DeleteFileContext(context.Context, string, []string, 
 
 func (panicCopyItemClient) FileExistsContext(context.Context, string, string) (bool, error) {
 	return false, nil
+}
+
+func (panicCopyItemClient) GetFileInfoContext(context.Context, string, string) (*FileListEntry, bool, error) {
+	return nil, false, nil
 }
 
 func TestCopyWorkerPanicPersistsFailedItemAndClearsDoing(t *testing.T) {
@@ -678,12 +683,171 @@ func TestJobTaskStartRecoversPanickingSyncWorker(t *testing.T) {
 	}
 }
 
+// Issue 3: taskSubmit must wait for scanDone before finalizing and releasing JobClient.
+func TestTaskSubmitWaitsForScanDoneBeforeFinalizing(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+
+	client := &JobClient{JobID: 1, Job: map[string]interface{}{"id": int64(1), "enable": 1, "isCron": 2}}
+	client.tryMarkDoing()
+
+	scanDone := make(chan struct{})
+	jt := &JobTask{
+		TaskID:     10,
+		JobClient:  client,
+		CreateTime: float64(time.Now().Unix()),
+		Waiting:    newCopyQueue(),
+		scanDone:   scanDone,
+	}
+	jt.initRuntime()
+	client.setCurrentTask(jt)
+
+	// Request break while scan goroutine is still active (scanDone still open).
+	jt.requestBreak()
+
+	submitDone := make(chan struct{})
+	go func() {
+		defer close(submitDone)
+		jt.taskSubmit()
+	}()
+
+	select {
+	case <-submitDone:
+		t.Fatal("taskSubmit finished before scanDone closed")
+	case <-time.After(60 * time.Millisecond):
+	}
+	if !client.isDoing() {
+		t.Fatal("JobClient was released before scanDone closed")
+	}
+
+	close(scanDone)
+	select {
+	case <-submitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("taskSubmit did not finish after scanDone closed")
+	}
+
+	if client.isDoing() {
+		t.Fatal("JobClient remained busy after taskSubmit finished")
+	}
+	status, _ := readServiceTaskStatus(t, testDB, 10)
+	if status != taskStatusStopped.Int() {
+		t.Fatalf("task status = %d, want stopped (%d)", status, taskStatusStopped.Int())
+	}
+}
+
+// Issue 3: handleWorkerPanic("submit") must wait for scanDone, abort waiting items, flush buffered items, and fail task.
+func TestHandleWorkerPanicSubmitCleansUpAndFlushesBufferedItems(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	client := &JobClient{JobID: 1, Job: map[string]interface{}{"id": int64(1), "enable": 1, "isCron": 2}}
+	client.tryMarkDoing()
+
+	scanDone := make(chan struct{})
+	jt := &JobTask{
+		TaskID:     10,
+		JobClient:  client,
+		CreateTime: float64(time.Now().Unix()),
+		Waiting:    newCopyQueue(),
+		scanDone:   scanDone,
+	}
+	jt.initRuntime()
+	client.setCurrentTask(jt)
+
+	// Seed one waiting item and one buffered finished item.
+	jt.Waiting.pushWait(context.Background(), newCopyItem(jt, nil, "/src/", "/dst/", "queued.txt", int64(10), taskItemTypeCopy))
+	jt.CopyHook("/src/", "/dst/", "buffered.txt", int64(20), "", taskStatusSuccess, nil, taskItemFile, taskItemTypeCopy, 100)
+
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		close(scanDone)
+	}()
+
+	jt.handleWorkerPanic("submit", "boom")
+
+	if client.isDoing() {
+		t.Fatal("JobClient remained busy after submit panic cleanup")
+	}
+	if jt.Waiting.len() != 0 {
+		t.Fatalf("waiting queue len = %d, want 0 after submit panic cleanup", jt.Waiting.len())
+	}
+	if len(persisted) != 2 {
+		t.Fatalf("persisted items = %d, want 2 (buffered + aborted waiting)", len(persisted))
+	}
+	status, errMsg := readServiceTaskStatus(t, testDB, 10)
+	if status != taskStatusSystemFailed.Int() {
+		t.Fatalf("task status = %d, want system failed (%d)", status, taskStatusSystemFailed.Int())
+	}
+	if !strings.Contains(errMsg, "boom") {
+		t.Fatalf("errMsg = %q, want boom", errMsg)
+	}
+}
+
+// Issue 4: finishFailedTask cancels task context and publishes terminal null SSE event before releasing JobClient.
+func TestFinishFailedTaskCancelsContextAndPublishesTerminalBeforeRelease(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+	resetJobClientsForTest()
+	defer resetJobClientsForTest()
+
+	client := &JobClient{JobID: 44, Job: map[string]interface{}{"id": int64(44), "enable": 1, "isCron": 2}}
+	client.tryMarkDoing()
+	jobClientListMu.Lock()
+	jobClientList[44] = client
+	jobClientListMu.Unlock()
+
+	jt := &JobTask{
+		TaskID:     10,
+		JobClient:  client,
+		CreateTime: float64(time.Now().Unix()),
+		Waiting:    newCopyQueue(),
+	}
+	jt.initRuntime()
+	client.setCurrentTask(jt)
+
+	sub := SubscribeJobProgress(44)
+	if sub == nil {
+		t.Fatal("SubscribeJobProgress(44) returned nil")
+	}
+	defer UnsubscribeJobProgress(44, sub)
+
+	jt.finishFailedTask("fatal sync error")
+
+	if jt.context().Err() == nil {
+		t.Fatal("task context was not canceled by finishFailedTask")
+	}
+	if client.isDoing() || client.currentTask() != nil {
+		t.Fatal("JobClient was not released by finishFailedTask")
+	}
+	select {
+	case msg := <-sub:
+		if !strings.Contains(string(msg), `"data":null`) {
+			t.Fatalf("terminal SSE payload = %s, want null", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subscriber did not receive terminal SSE payload on finishFailedTask")
+	}
+	status, errMsg := readServiceTaskStatus(t, testDB, 10)
+	if status != taskStatusSystemFailed.Int() || !strings.Contains(errMsg, "fatal sync error") {
+		t.Fatalf("status/errMsg = %d/%q, want system failed with fatal sync error", status, errMsg)
+	}
+}
+
 func newServiceTaskStatusTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	testDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open() error: %v", err)
 	}
+	testDB.SetMaxOpenConns(1)
 	t.Cleanup(func() {
 		_ = testDB.Close()
 	})
@@ -728,8 +892,7 @@ func mapperDBForServiceTest(testDB *sql.DB) func() {
 
 func stubPersistJobTaskItems(t *testing.T, persisted *[]map[string]interface{}, after func([]map[string]interface{})) func() {
 	t.Helper()
-	oldPersist := persistJobTaskItems
-	persistJobTaskItems = func(items []map[string]interface{}) error {
+	return replacePersistJobTaskItems(func(items []map[string]interface{}) error {
 		if persisted != nil {
 			*persisted = append(*persisted, items...)
 		}
@@ -737,10 +900,7 @@ func stubPersistJobTaskItems(t *testing.T, persisted *[]map[string]interface{}, 
 			after(items)
 		}
 		return nil
-	}
-	return func() {
-		persistJobTaskItems = oldPersist
-	}
+	})
 }
 
 func readServiceTaskStatus(t *testing.T, testDB *sql.DB, taskID int64) (int, string) {
@@ -789,6 +949,20 @@ func TestFinalTaskStatusUsesTimeoutWhenContextDeadlineExceeded(t *testing.T) {
 func TestFinalTaskStatusKeepsManualBreakAsStopped(t *testing.T) {
 	if status := finalTaskStatus(true, context.DeadlineExceeded, 0, 0); status != taskStatusStopped {
 		t.Fatalf("finalTaskStatus() = %d, want stopped status 4", status)
+	}
+}
+
+func TestTaskDeadlineIsTreatedAsBreakWithoutChangingFinalStatus(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	<-ctx.Done()
+
+	jt := &JobTask{ctx: ctx, cancel: cancel}
+	if !jt.isBreak() {
+		t.Fatal("isBreak() = false after task deadline, want true")
+	}
+	if status := finalTaskStatus(jt.BreakFlag.Load(), ctx.Err(), 0, 0); status != taskStatusTimeout {
+		t.Fatalf("finalTaskStatus() = %d, want timeout status 5", status)
 	}
 }
 

@@ -3,12 +3,14 @@ package service
 import (
 	"database/sql"
 	"fmt"
+	"opensync/internal/mapper"
+	"opensync/internal/model"
+	"opensync/internal/msg"
+	"opensync/pkg/crypto"
 	"sync"
 	"sync/atomic"
 	"testing"
-
-	"opensync/internal/mapper"
-	"opensync/pkg/crypto"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -35,6 +37,15 @@ func requirePublicPanic(t *testing.T, fn func()) {
 		}
 	}()
 	fn()
+}
+
+func resetPwdTrackingForTest() {
+	errPwdMu.Lock()
+	errPwd = nil
+	errPwdByIP = nil
+	inFlightPwd = nil
+	inFlightPwdByIP = nil
+	errPwdMu.Unlock()
 }
 
 func TestInitializeUserCreatesCustomFirstUser(t *testing.T) {
@@ -155,6 +166,7 @@ func TestInitializeUserAllowsOnlyOneConcurrentFirstUser(t *testing.T) {
 }
 
 func TestResetPasswdWithRecoveryKeyRotatesRecoveryKey(t *testing.T) {
+	resetPwdTrackingForTest()
 	testDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open() error: %v", err)
@@ -208,6 +220,7 @@ func TestResetPasswdWithRecoveryKeyRotatesRecoveryKey(t *testing.T) {
 }
 
 func TestResetPasswdRejectsWrongRecoveryKey(t *testing.T) {
+	resetPwdTrackingForTest()
 	testDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open() error: %v", err)
@@ -301,9 +314,7 @@ func TestResetPasswdForCLIGeneratesNewPasswordAndRecoveryKey(t *testing.T) {
 }
 
 func TestPasswordErrorScopesAreBounded(t *testing.T) {
-	errPwdMu.Lock()
-	errPwd = nil
-	errPwdMu.Unlock()
+	resetPwdTrackingForTest()
 
 	for i := 0; i < maxPwdErrorScopes+50; i++ {
 		AddPwdErrorForScope(fmt.Sprintf("scope-%d", i))
@@ -315,5 +326,118 @@ func TestPasswordErrorScopesAreBounded(t *testing.T) {
 
 	if got > maxPwdErrorScopes {
 		t.Fatalf("tracked password error scopes = %d, want <= %d", got, maxPwdErrorScopes)
+	}
+}
+
+func TestLockedScopeNotEvictedByFloodAndIPLockoutTriggers(t *testing.T) {
+	resetPwdTrackingForTest()
+	t.Cleanup(resetPwdTrackingForTest)
+
+	lockedScope := passwordErrorScope(0, "admin", "198.51.100.1")
+	for i := 0; i < pwdErrorLockThreshold; i++ {
+		AddPwdErrorForScope(lockedScope)
+	}
+
+	// Flood more than maxPwdErrorScopes unlocked scopes; lockedScope must NEVER be evicted.
+	for i := 0; i < maxPwdErrorScopes+100; i++ {
+		AddPwdErrorForScope(fmt.Sprintf("random-%d|203.0.113.%d", i, i%250))
+	}
+
+	var panicVal interface{}
+	func() {
+		defer func() { panicVal = recover() }()
+		CheckPwdTimeForScope(lockedScope)
+	}()
+	if pub, ok := panicVal.(model.PublicError); !ok || string(pub) != msg.PasswdWrongMaxTime {
+		t.Fatalf("lockedScope after flood panic = %#v, want PublicError(%q)", panicVal, msg.PasswdWrongMaxTime)
+	}
+
+	// Flooding nonexistent usernames from a single IP must lock out that IP after ipPwdErrorLockThreshold failures.
+	origGetByName := getUserByName
+	getUserByName = func(name string) (map[string]interface{}, error) {
+		return nil, mapper.ErrUserNotFound
+	}
+	t.Cleanup(func() { getUserByName = origGetByName })
+
+	floodIP := "198.51.100.99"
+	for i := 0; i < ipPwdErrorLockThreshold; i++ {
+		var p interface{}
+		func() {
+			defer func() { p = recover() }()
+			CheckPwdScoped(0, "wrong-pass", fmt.Sprintf("nouser-%d", i), floodIP)
+		}()
+		if pub, ok := p.(model.PublicError); !ok || string(pub) != msg.PasswdWrong {
+			t.Fatalf("attempt %d panic = %#v, want PasswdWrong", i+1, p)
+		}
+	}
+
+	var lockedPanic interface{}
+	func() {
+		defer func() { lockedPanic = recover() }()
+		CheckPwdScoped(0, "wrong-pass", "brand-new-user", floodIP)
+	}()
+	if pub, ok := lockedPanic.(model.PublicError); !ok || string(pub) != msg.PasswdWrongMaxTime {
+		t.Fatalf("IP lockout panic = %#v, want PasswdWrongMaxTime", lockedPanic)
+	}
+}
+
+func TestCheckPwdScopedPreventsConcurrentTOCTOUBurst(t *testing.T) {
+	resetPwdTrackingForTest()
+	t.Cleanup(resetPwdTrackingForTest)
+
+	hash, err := crypto.HashPassword("real-password")
+	if err != nil {
+		t.Fatalf("HashPassword() error: %v", err)
+	}
+
+	var lookups atomic.Int64
+	origGetByName := getUserByName
+	getUserByName = func(name string) (map[string]interface{}, error) {
+		lookups.Add(1)
+		time.Sleep(30 * time.Millisecond)
+		return map[string]interface{}{
+			"id":       int64(1),
+			"userName": name,
+			"passwd":   hash,
+		}, nil
+	}
+	t.Cleanup(func() { getUserByName = origGetByName })
+
+	const workers = 20
+	start := make(chan struct{})
+	var lockedCount atomic.Int64
+	var wrongCount atomic.Int64
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			defer func() {
+				if r := recover(); r != nil {
+					if pub, ok := r.(model.PublicError); ok {
+						switch string(pub) {
+						case msg.PasswdWrongMaxTime:
+							lockedCount.Add(1)
+						case msg.PasswdWrong:
+							wrongCount.Add(1)
+						}
+					}
+				}
+			}()
+			CheckPwdScoped(0, "bad-password", "admin", "198.51.100.77")
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := lookups.Load(); got != pwdErrorLockThreshold {
+		t.Fatalf("concurrent bcrypt lookups = %d, want at most %d", got, pwdErrorLockThreshold)
+	}
+	if got := wrongCount.Load(); got != pwdErrorLockThreshold {
+		t.Fatalf("wrong password responses = %d, want %d", got, pwdErrorLockThreshold)
+	}
+	if got := lockedCount.Load(); got != workers-pwdErrorLockThreshold {
+		t.Fatalf("locked responses = %d, want %d", got, workers-pwdErrorLockThreshold)
 	}
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import { createServer } from 'vite';
 
 let server;
@@ -38,13 +38,14 @@ async function openFixture(t, directoryResponse, viewport = { width: 1280, heigh
     body: '<html><meta name="viewport" content="width=device-width, initial-scale=1"><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh"; RefreshRuntime.injectIntoGlobalHook(window); window.$RefreshReg$ = () => {}; window.$RefreshSig$ = () => (type) => type; window.__vite_plugin_react_preamble_installed__ = true;</script><script type="module" src="/tests/pathTreeSelect.fixture.tsx"></script></html>',
   }));
   await page.goto(`${baseURL}__path_tree_test__`);
-  await page.getByRole('button').filter({ hasText: '/media/movies/2026' }).click();
+  await page.getByRole('button', { name: '请选择目录', exact: true }).click();
   return { page, requests };
 }
 
 async function expand(page, title) {
-  const row = page.getByText(title, { exact: true }).locator('..');
-  await row.locator('button').first().click();
+  const expand = page.getByRole('button', { name: `展开 ${title}`, exact: true });
+  const collapse = page.getByRole('button', { name: `折叠 ${title}`, exact: true });
+  await expand.or(collapse).click();
 }
 
 test('editing a selected path loads its siblings and keeps the selection', async (t) => {
@@ -74,9 +75,11 @@ test('a failed expansion can be retried', async (t) => {
   });
   await expand(page, '/');
   await expand(page, 'media');
-  await expand(page, 'media');
+  await expect(page.getByRole('alert')).toContainText('目录加载失败');
+  await expect(page.getByRole('button', { name: '展开 media', exact: true })).toHaveAttribute('aria-expanded', 'false');
   await expand(page, 'media');
   await page.getByText('music', { exact: true }).waitFor({ timeout: 3000 });
+  await expect(page.getByRole('alert')).toHaveCount(0);
   assert.equal(attempts, 2);
 });
 
@@ -95,7 +98,7 @@ test('switching engines does not reuse an in-flight directory request', async (t
   await page.getByRole('button', { name: 'Switch engine' }).click({ force: true });
   await nextRoot;
   releaseFirst([{ name: 'engine-one' }]);
-  await page.getByRole('button').filter({ hasText: '/media/movies/2026' }).click();
+  await page.getByRole('button', { name: '请选择目录', exact: true }).click();
   await expand(page, '/');
   await page.getByText('engine-two', { exact: true }).waitFor({ timeout: 3000 });
   assert.equal(await page.getByText('engine-one', { exact: true }).count(), 0);
@@ -105,17 +108,24 @@ test('switching engines does not reuse an in-flight directory request', async (t
 test('refresh reloads directories without clearing selected paths on mobile', async (t) => {
   let refreshed = false;
   const longName = 'a-very-long-directory-name-that-must-stay-readable-at-deep-levels';
+  const nested = Array.from({ length: 12 }, (_, index) => `level-${index + 1}`);
   const { page } = await openFixture(t, (path) => {
     if (path === '/') return [{ name: 'media' }];
     if (path === '/media') return [{ name: refreshed ? 'new-folder' : 'movies' }];
-    return [{ name: longName }];
-  }, { width: 375, height: 812 });
+    const level = nested.indexOf(path.split('/').at(-1));
+    return [{ name: nested[level + 1] ?? longName }];
+  }, { width: 320, height: 812 });
   await expand(page, '/');
   await expand(page, 'media');
   await expand(page, 'movies');
+  for (const title of nested) await expand(page, title);
   const label = page.getByText(longName, { exact: true });
   await label.waitFor({ timeout: 3000 });
-  assert.equal(await label.evaluate((el) => el.scrollWidth <= el.clientWidth), true);
+  assert.equal(await label.evaluate((el) => {
+    const list = el.closest('[role="group"]');
+    const width = el.getBoundingClientRect().width;
+    return width >= 40 && el.scrollWidth <= el.clientWidth + 1 && list.scrollWidth <= list.clientWidth + 1;
+  }), true);
   if (process.env.OPENSYNC_SCREENSHOT_DIR) {
     await page.screenshot({ path: `${process.env.OPENSYNC_SCREENSHOT_DIR}/path-tree-mobile.png`, fullPage: true });
   }
@@ -126,4 +136,25 @@ test('refresh reloads directories without clearing selected paths on mobile', as
   await page.getByText('new-folder', { exact: true }).waitFor({ timeout: 3000 });
   assert.equal(await page.locator('output').textContent(), '["/media/movies/2026"]');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+});
+
+test('keyboard users can open, expand, select and remove directory paths', async (t) => {
+  const { page } = await openFixture(t, (path) => path === '/' ? [{ name: 'media' }] : [{ name: 'music' }]);
+  const trigger = page.getByRole('button', { name: '请选择目录', exact: true });
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press('Space');
+  const picker = page.getByRole('dialog', { name: '目录选择' });
+  await expect(picker.getByRole('textbox', { name: '搜索路径' })).toBeFocused();
+  await picker.getByRole('button', { name: '展开 /', exact: true }).press('Enter');
+  await picker.getByRole('button', { name: '展开 media', exact: true }).press('Enter');
+  const music = picker.getByRole('button', { name: 'music', exact: true });
+  await music.press('Space');
+  await expect(music).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('output')).toHaveText('["/media/movies/2026","/media/music"]');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '移除 /media/music', exact: true }).press('Enter');
+  await expect(page.locator('output')).toHaveText('["/media/movies/2026"]');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await expect(trigger).toBeFocused();
 });

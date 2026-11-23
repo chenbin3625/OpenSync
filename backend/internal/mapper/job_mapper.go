@@ -1,34 +1,40 @@
 package mapper
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"opensync/internal/msg"
 	"opensync/pkg/util"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
-
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const (
 	jobTaskItemListColumns     = "id, taskId, srcPath, dstPath, isPath, fileName, fileSize, type, alistTaskId, status, progress, errMsg, createTime"
 	jobTaskItemRuntimeColumns  = "id, taskId, srcPath, dstPath, isPath, fileName, fileSize, type, alistTaskId, status, errMsg, createTime"
 	expiredTaskDeleteBatchSize = 500
+	sqlInClauseChunkSize       = 500
+	maxStatusListLen           = 64
 )
+
+// taskItemDeleteChunkSize bounds job_task_item rows deleted per write transaction
+// so removing a large task does not hold SQLite's write lock indefinitely.
+var taskItemDeleteChunkSize = 5000
 
 // GetJobList gets paginated job list
 func GetJobList(params map[string]interface{}) (map[string]interface{}, error) {
-	return FetchAllToPage("SELECT * FROM job ORDER BY createTime DESC", params)
+	return FetchAllToPage("SELECT * FROM job ORDER BY createTime DESC, id DESC", params)
 }
 
 // GetJobListAll gets all jobs
 func GetJobListAll() ([]map[string]interface{}, error) {
-	return FetchAllToTable("SELECT * FROM job ORDER BY createTime DESC")
+	return FetchAllToTable("SELECT * FROM job ORDER BY createTime DESC, id DESC")
 }
 
 // GetEnableJobList gets all enabled jobs
@@ -83,7 +89,8 @@ func AddJob(job map[string]interface{}) (int64, error) {
 
 // UpdateJob updates a job
 func UpdateJob(job map[string]interface{}) error {
-	return ExecuteUpdate(
+	return executeUpdateAffected(
+		errors.New(msg.JobNotFound),
 		`UPDATE job SET enable=?, remark=?, srcPath=?, dstPath=?, alistId=?, useCacheT=?, scanIntervalT=?,
 		 useCacheS=?, scanIntervalS=?, method=?, interval=?, isCron=?, month=?, day=?,
 		 day_of_week=?, hour=?, minute=?, second=?, exclude=?, minFileSize=?, maxFileSize=? WHERE id=?`,
@@ -104,18 +111,62 @@ func UpdateJobEnable(jobID int64, enable int) error {
 
 // DeleteJob deletes a job and its tasks
 func DeleteJob(jobID int64) error {
-	return withTx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec("DELETE FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE jobId=?)", jobID); err != nil {
+	chunkSize := effectiveItemDeleteChunkSize()
+	var taskIDs []int64
+	var deletedItems int64
+
+	err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
+		taskIDs = nil
+		deletedItems = 0
+
+		rows, err := conn.QueryContext(ctx, "SELECT id FROM job_task WHERE jobId=?", jobID)
+		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec("DELETE FROM job_task WHERE jobId=?", jobID); err != nil {
+		for rows.Next() {
+			var taskID int64
+			if err := rows.Scan(&taskID); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			taskIDs = append(taskIDs, taskID)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
 			return err
 		}
-		if _, err := tx.Exec("DELETE FROM job WHERE id=?", jobID); err != nil {
+		if err := rows.Close(); err != nil {
+			return err
+		}
+
+		res, err := conn.ExecContext(
+			ctx,
+			"DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE jobId=?) LIMIT ?)",
+			jobID, chunkSize,
+		)
+		if err != nil {
+			return err
+		}
+		if affected, err := res.RowsAffected(); err == nil {
+			deletedItems = affected
+		}
+
+		if _, err := conn.ExecContext(ctx, "DELETE FROM job_task WHERE jobId=?", jobID); err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, "DELETE FROM job WHERE id=?", jobID); err != nil {
 			return err
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	if deletedItems >= int64(chunkSize) && len(taskIDs) > 0 {
+		return deleteRemainingTaskItemsByTaskIDs(taskIDs, chunkSize)
+	}
+	return nil
 }
 
 // --- Job Task ---
@@ -126,7 +177,7 @@ func GetJobTaskList(params map[string]interface{}) (map[string]interface{}, erro
 	where := "WHERE jobId=?"
 	args := []interface{}{jobID}
 
-	if status, ok := params["status"]; ok {
+	if status, ok := params["status"]; ok && status != nil {
 		where += " AND status=?"
 		args = append(args, util.ToInt(status))
 	} else if statuses := parseStatusList(params["statusIn"]); len(statuses) > 0 {
@@ -134,65 +185,135 @@ func GetJobTaskList(params map[string]interface{}) (map[string]interface{}, erro
 		where += fmt.Sprintf(" AND status IN (%s)", clause)
 		args = append(args, statusArgs...)
 	}
-	if startTime, ok := params["startTime"]; ok {
-		start := util.ToInt(startTime)
+	if startTime, ok := params["startTime"]; ok && startTime != nil {
+		start := util.ToInt64(startTime)
 		if start > 0 {
 			where += " AND COALESCE(NULLIF(runTime, 0), createTime) >= ?"
 			args = append(args, start)
 		}
 	}
-	if endTime, ok := params["endTime"]; ok {
-		end := util.ToInt(endTime)
+	if endTime, ok := params["endTime"]; ok && endTime != nil {
+		end := util.ToInt64(endTime)
 		if end > 0 {
 			where += " AND COALESCE(NULLIF(runTime, 0), createTime) <= ?"
 			args = append(args, end)
 		}
 	}
-	if keyword, ok := params["keyword"]; ok {
-		kw := strings.TrimSpace(fmt.Sprintf("%v", keyword))
+	if keyword, ok := params["keyword"]; ok && keyword != nil {
+		kw := strings.TrimSpace(util.StringValue(keyword))
 		if kw != "" {
 			where += " AND CAST(id AS TEXT) LIKE ? ESCAPE '\\'"
 			args = append(args, "%"+escapeLike(kw)+"%")
 		}
 	}
 
-	baseSQL := fmt.Sprintf("SELECT * FROM job_task %s ORDER BY createTime DESC", where)
+	baseSQL := fmt.Sprintf("SELECT * FROM job_task %s ORDER BY createTime DESC, id DESC", where)
 	return FetchAllToPage(baseSQL, params, args...)
 }
 
+func parseStatusInt(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		if v < math.MinInt || v > math.MaxInt {
+			return 0, false
+		}
+		return int(v), true
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v {
+			return 0, false
+		}
+		if v < float64(math.MinInt) || v >= maxFloat64BeforeInt64Overflow {
+			return 0, false
+		}
+		n := int64(v)
+		if n < int64(math.MinInt) || n > int64(math.MaxInt) {
+			return 0, false
+		}
+		return int(n), true
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return 0, false
+		}
+		n, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	default:
+		return 0, false
+	}
+}
+
+func dedupeStatuses(raw []int) []int {
+	if len(raw) == 0 {
+		return nil
+	}
+	statuses := make([]int, 0, len(raw))
+	seen := make(map[int]struct{}, len(raw))
+	for _, s := range raw {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		statuses = append(statuses, s)
+		if len(statuses) >= maxStatusListLen {
+			break
+		}
+	}
+	return statuses
+}
+
 func parseStatusList(value interface{}) []int {
+	appendIfValid := func(statuses []int, seen map[int]struct{}, item interface{}) []int {
+		if len(statuses) >= maxStatusListLen {
+			return statuses
+		}
+		parsed, ok := parseStatusInt(item)
+		if !ok {
+			return statuses
+		}
+		if _, exists := seen[parsed]; exists {
+			return statuses
+		}
+		seen[parsed] = struct{}{}
+		return append(statuses, parsed)
+	}
+
 	switch v := value.(type) {
 	case nil:
 		return nil
 	case []int:
-		return v
+		return dedupeStatuses(v)
 	case []string:
 		statuses := make([]int, 0, len(v))
+		seen := make(map[int]struct{}, len(v))
 		for _, item := range v {
-			if strings.TrimSpace(item) == "" {
-				continue
-			}
-			statuses = append(statuses, util.ToInt(item))
+			statuses = appendIfValid(statuses, seen, item)
 		}
 		return statuses
 	case []interface{}:
 		statuses := make([]int, 0, len(v))
+		seen := make(map[int]struct{}, len(v))
 		for _, item := range v {
-			statuses = append(statuses, util.ToInt(item))
+			statuses = appendIfValid(statuses, seen, item)
 		}
 		return statuses
 	case string:
 		parts := strings.Split(v, ",")
 		statuses := make([]int, 0, len(parts))
+		seen := make(map[int]struct{}, len(parts))
 		for _, item := range parts {
-			if strings.TrimSpace(item) == "" {
-				continue
-			}
-			statuses = append(statuses, util.ToInt(item))
+			statuses = appendIfValid(statuses, seen, item)
 		}
 		return statuses
 	default:
-		return []int{util.ToInt(v)}
+		if parsed, ok := parseStatusInt(v); ok {
+			return []int{parsed}
+		}
+		return nil
 	}
 }
 
@@ -228,17 +349,63 @@ func UpdateJobTaskStatusByStatusAndJobID(jobID int64) error {
 	return ExecuteUpdate("UPDATE job_task SET status=4 WHERE status IN (0, 1) AND jobId=?", jobID)
 }
 
+func effectiveItemDeleteChunkSize() int {
+	if taskItemDeleteChunkSize <= 0 {
+		return 5000
+	}
+	return taskItemDeleteChunkSize
+}
+
 // DeleteJobTaskByTaskID deletes a task and its items
 func DeleteJobTaskByTaskID(taskID int64) error {
-	return withTx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec("DELETE FROM job_task_item WHERE taskId=?", taskID); err != nil {
+	chunkSize := effectiveItemDeleteChunkSize()
+	var deletedItems int64
+
+	err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
+		deletedItems = 0
+
+		var status int
+		if err := conn.QueryRowContext(ctx, "SELECT status FROM job_task WHERE id=?", taskID).Scan(&status); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errors.New(msg.TaskNotFound)
+			}
 			return err
 		}
-		if _, err := tx.Exec("DELETE FROM job_task WHERE id=?", taskID); err != nil {
+		if status == 0 || status == 1 {
+			return errors.New(msg.JobRunningCannotDelete)
+		}
+
+		result, err := conn.ExecContext(ctx, "DELETE FROM job_task WHERE id=? AND status NOT IN (0,1)", taskID)
+		if err != nil {
 			return err
+		}
+		if affected, err := result.RowsAffected(); err != nil {
+			return err
+		} else if affected == 0 {
+			return errors.New(msg.TaskNotFound)
+		}
+
+		itemRes, err := conn.ExecContext(
+			ctx,
+			"DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId=? LIMIT ?)",
+			taskID, chunkSize,
+		)
+		if err != nil {
+			return err
+		}
+		if affected, err := itemRes.RowsAffected(); err == nil {
+			deletedItems = affected
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	if deletedItems >= int64(chunkSize) {
+		return deleteRemainingTaskItemsByTaskIDs([]int64{taskID}, chunkSize)
+	}
+	return nil
 }
 
 // DeleteJobTaskByRunTime deletes old tasks
@@ -249,14 +416,29 @@ func DeleteJobTaskByRunTime(runTime int64) error {
 			return err
 		}
 		if len(taskIDs) == 0 {
-			_, _ = GetDB().Exec("PRAGMA wal_checkpoint(PASSIVE)")
-			_, _ = GetDB().Exec("PRAGMA optimize")
-			_, _ = GetDB().Exec("PRAGMA incremental_vacuum")
+			runRetentionMaintenance()
 			return nil
 		}
-		if err := deleteJobTasksByIDs(taskIDs); err != nil {
+		deletedCount, err := deleteJobTasksByIDs(taskIDs)
+		if err != nil {
 			return err
 		}
+		if deletedCount == 0 {
+			runRetentionMaintenance()
+			return nil
+		}
+	}
+}
+
+func runRetentionMaintenance() {
+	handle := GetDB()
+	_, _ = handle.Exec("PRAGMA wal_checkpoint(PASSIVE)")
+	_, _ = handle.Exec("PRAGMA optimize")
+	var autoVacuum int
+	// PRAGMA incremental_vacuum is a no-op when auto_vacuum is NONE (0) on
+	// pre-existing DBs; only invoke it when INCREMENTAL (2) mode is active.
+	if err := handle.QueryRow("PRAGMA auto_vacuum").Scan(&autoVacuum); err == nil && autoVacuum == 2 {
+		_, _ = handle.Exec("PRAGMA incremental_vacuum(200)")
 	}
 }
 
@@ -292,52 +474,127 @@ func expiredJobTaskIDs(cutoff int64, limit int) ([]int64, error) {
 	return taskIDs, nil
 }
 
-func deleteJobTasksByIDs(taskIDs []int64) error {
+func deleteJobTasksByIDs(taskIDs []int64) (int, error) {
+	if len(taskIDs) == 0 {
+		return 0, nil
+	}
+	chunkSize := effectiveItemDeleteChunkSize()
+	totalDeleted := 0
+
+	for start := 0; start < len(taskIDs); start += sqlInClauseChunkSize {
+		end := start + sqlInClauseChunkSize
+		if end > len(taskIDs) {
+			end = len(taskIDs)
+		}
+		idBatch := taskIDs[start:end]
+		clause, args := int64InClause(idBatch)
+
+		var deletedTaskIDs []int64
+		var deletedItems int64
+
+		err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
+			deletedTaskIDs = nil
+			deletedItems = 0
+
+			// Re-verify status NOT IN (0, 1) atomically under BEGIN IMMEDIATE so
+			// tasks that became active are never deleted.
+			rows, err := conn.QueryContext(
+				ctx,
+				"DELETE FROM job_task WHERE id IN ("+clause+") AND status NOT IN (0, 1) RETURNING id",
+				args...,
+			)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				deletedTaskIDs = append(deletedTaskIDs, id)
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+
+			if len(deletedTaskIDs) == 0 {
+				return nil
+			}
+
+			delClause, delArgs := int64InClause(deletedTaskIDs)
+			itemArgs := appendSQLArgs(delArgs, chunkSize)
+			res, err := conn.ExecContext(
+				ctx,
+				"DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId IN ("+delClause+") LIMIT ?)",
+				itemArgs...,
+			)
+			if err != nil {
+				return err
+			}
+			if affected, err := res.RowsAffected(); err == nil {
+				deletedItems = affected
+			}
+			return nil
+		})
+		if err != nil {
+			return totalDeleted, err
+		}
+
+		totalDeleted += len(deletedTaskIDs)
+		if deletedItems >= int64(chunkSize) && len(deletedTaskIDs) > 0 {
+			if err := deleteRemainingTaskItemsByTaskIDs(deletedTaskIDs, chunkSize); err != nil {
+				return totalDeleted, err
+			}
+		}
+	}
+
+	return totalDeleted, nil
+}
+
+func deleteRemainingTaskItemsByTaskIDs(taskIDs []int64, chunkSize int) error {
 	if len(taskIDs) == 0 {
 		return nil
 	}
-	clause, args := int64InClause(taskIDs)
-	// Share the batch writer lock so retention does not compete with sync batches.
-	batchWriteMu.Lock()
-	defer batchWriteMu.Unlock()
-	for attempt := 0; ; attempt++ {
-		err := withTx(func(tx *sql.Tx) error {
-			if _, err := tx.Exec("DELETE FROM job_task_item WHERE taskId IN ("+clause+")", args...); err != nil {
+	if chunkSize <= 0 {
+		chunkSize = effectiveItemDeleteChunkSize()
+	}
+
+	for start := 0; start < len(taskIDs); start += sqlInClauseChunkSize {
+		end := start + sqlInClauseChunkSize
+		if end > len(taskIDs) {
+			end = len(taskIDs)
+		}
+		clause, idArgs := int64InClause(taskIDs[start:end])
+		query := "DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId IN (" + clause + ") LIMIT ?)"
+		args := appendSQLArgs(idArgs, chunkSize)
+
+		for {
+			var deleted int64
+			err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
+				res, err := conn.ExecContext(ctx, query, args...)
+				if err != nil {
+					return err
+				}
+				affected, err := res.RowsAffected()
+				if err != nil {
+					return err
+				}
+				deleted = affected
+				return nil
+			})
+			if err != nil {
 				return err
 			}
-			_, err := tx.Exec("DELETE FROM job_task WHERE id IN ("+clause+")", args...)
-			return err
-		})
-		if err == nil {
-			return nil
+			if deleted < int64(chunkSize) {
+				break
+			}
 		}
-		var sqliteErr *sqlite.Error
-		if attempt >= 3 || !errors.As(err, &sqliteErr) ||
-			(sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY && sqliteErr.Code()&0xff != sqlite3.SQLITE_LOCKED) {
-			return err
-		}
-		time.Sleep(time.Duration(1<<attempt) * 100 * time.Millisecond)
 	}
-}
-
-func withTx(fn func(*sql.Tx) error) error {
-	tx, err := GetDB().Begin()
-	if err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-	if err := fn(tx); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	committed = true
 	return nil
 }
 
@@ -386,11 +643,15 @@ func AddJobTaskItemMany(items []map[string]interface{}) error {
 
 // GetJobTaskItemList gets paginated task item list
 func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, error) {
+	return GetJobTaskItemListContext(context.Background(), params)
+}
+
+func GetJobTaskItemListContext(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
 	taskID := params["taskId"]
 	where := "WHERE taskId=?"
 	args := []interface{}{taskID}
 
-	if status, ok := params["status"]; ok {
+	if status, ok := params["status"]; ok && status != nil {
 		if util.ToInt(status) == -1 {
 			where += " AND status NOT IN (0,1,2,7)"
 		} else {
@@ -398,36 +659,42 @@ func GetJobTaskItemList(params map[string]interface{}) (map[string]interface{}, 
 			args = append(args, status)
 		}
 	}
-	if typ, ok := params["type"]; ok {
+	if typ, ok := params["type"]; ok && typ != nil {
 		where += " AND type=?"
 		args = append(args, typ)
 	}
-	if isPath, ok := params["isPath"]; ok {
+	if isPath, ok := params["isPath"]; ok && isPath != nil {
 		where += " AND isPath=?"
 		args = append(args, isPath)
 	}
-	if hasError, ok := params["hasError"]; ok {
+	if hasError, ok := params["hasError"]; ok && hasError != nil {
 		if util.ToInt(hasError) == 1 {
 			where += " AND errMsg IS NOT NULL AND errMsg<>''"
 		} else {
 			where += " AND (errMsg IS NULL OR errMsg='')"
 		}
 	}
-	if keyword, ok := params["keyword"]; ok {
-		kw := strings.TrimSpace(fmt.Sprintf("%v", keyword))
+	if keyword, ok := params["keyword"]; ok && keyword != nil {
+		kw := strings.TrimSpace(util.StringValue(keyword))
 		if kw != "" {
-			filterSQL, filterArgs := taskItemKeywordFilter(kw)
+			filterSQL, filterArgs, pureFTS := taskItemKeywordFilter(ctx, kw)
+			if pureFTS {
+				// Drive selective FTS5 searches from job_task_item_fts -> PRIMARY KEY
+				// rather than scanning every row for taskId via idx_job_task_item_task_time.
+				where = strings.Replace(where, "WHERE taskId=?", "WHERE +taskId=?", 1)
+			}
 			where += filterSQL
 			args = append(args, filterArgs...)
 		}
 	}
 
-	baseSQL := fmt.Sprintf("SELECT %s FROM job_task_item %s ORDER BY createTime DESC", jobTaskItemListColumns, where)
-	return FetchAllToPage(baseSQL, params, args...)
+	baseSQL := fmt.Sprintf("SELECT %s FROM job_task_item %s ORDER BY createTime DESC, id DESC", jobTaskItemListColumns, where)
+	return fetchAllToPageContext(ctx, baseSQL, params, args...)
 }
 
 // CountJobTaskItemsByStatuses counts task items matching any of the given statuses.
 func CountJobTaskItemsByStatuses(taskID int64, statuses []int) (int64, error) {
+	statuses = dedupeStatuses(statuses)
 	if len(statuses) == 0 {
 		return 0, nil
 	}
@@ -445,6 +712,7 @@ func CountJobTaskItemsByStatuses(taskID int64, statuses []int) (int64, error) {
 
 // ForEachJobTaskItemsByStatuses reads task items in bounded batches.
 func ForEachJobTaskItemsByStatuses(taskID int64, statuses []int, batchSize int, fn func([]map[string]interface{}) error) error {
+	statuses = dedupeStatuses(statuses)
 	if len(statuses) == 0 {
 		return nil
 	}
@@ -452,21 +720,54 @@ func ForEachJobTaskItemsByStatuses(taskID int64, statuses []int, batchSize int, 
 		batchSize = 500
 	}
 	clause, statusArgs := statusInClause(statuses)
-	lastCreateTime := int64(-1)
-	lastID := int64(0)
+	hasCursor := false
+	lastCreateTimeNull := false
+	var lastCreateTime int64
+	var lastID int64
 
 	for {
-		query := fmt.Sprintf(
-			`SELECT %s FROM job_task_item
-			 WHERE taskId=? AND status IN (%s)
-			   AND (createTime > ? OR (createTime = ? AND id > ?))
-			 ORDER BY createTime ASC, id ASC
-			 LIMIT ?`,
-			jobTaskItemRuntimeColumns,
-			clause,
-		)
-		args := append([]interface{}{taskID}, statusArgs...)
-		args = append(args, lastCreateTime, lastCreateTime, lastID, batchSize)
+		var query string
+		args := make([]interface{}, 0, len(statusArgs)+4)
+		args = append(args, taskID)
+		args = append(args, statusArgs...)
+
+		switch {
+		case !hasCursor:
+			// Omit the cursor predicate on the first page so rows with
+			// createTime IS NULL (which sort first in ASC order) are included.
+			query = fmt.Sprintf(
+				`SELECT %s FROM job_task_item
+				 WHERE taskId=? AND +status IN (%s)
+				 ORDER BY createTime ASC, id ASC
+				 LIMIT ?`,
+				jobTaskItemRuntimeColumns,
+				clause,
+			)
+			args = append(args, batchSize)
+		case lastCreateTimeNull:
+			query = fmt.Sprintf(
+				`SELECT %s FROM job_task_item
+				 WHERE taskId=? AND +status IN (%s)
+				   AND ((createTime IS NULL AND id > ?) OR createTime IS NOT NULL)
+				 ORDER BY createTime ASC, id ASC
+				 LIMIT ?`,
+				jobTaskItemRuntimeColumns,
+				clause,
+			)
+			args = append(args, lastID, batchSize)
+		default:
+			query = fmt.Sprintf(
+				`SELECT %s FROM job_task_item
+				 WHERE taskId=? AND +status IN (%s)
+				   AND (createTime, id) > (?, ?)
+				 ORDER BY createTime ASC, id ASC
+				 LIMIT ?`,
+				jobTaskItemRuntimeColumns,
+				clause,
+			)
+			args = append(args, lastCreateTime, lastID, batchSize)
+		}
+
 		items, err := FetchAllToTable(query, args...)
 		if err != nil {
 			return err
@@ -477,8 +778,18 @@ func ForEachJobTaskItemsByStatuses(taskID int64, statuses []int, batchSize int, 
 		if err := fn(items); err != nil {
 			return err
 		}
+		if len(items) < batchSize {
+			return nil
+		}
 		last := items[len(items)-1]
-		lastCreateTime = util.ToInt64(last["createTime"])
+		hasCursor = true
+		if last["createTime"] == nil {
+			lastCreateTimeNull = true
+			lastCreateTime = 0
+		} else {
+			lastCreateTimeNull = false
+			lastCreateTime = util.ToInt64(last["createTime"])
+		}
 		lastID = util.ToInt64(last["id"])
 	}
 }
@@ -517,7 +828,7 @@ func int64InClause(values []int64) (string, []interface{}) {
 }
 
 // GetJobTaskCounts returns all task item status counters in one query.
-func GetJobTaskCounts(taskID int64) map[string]interface{} {
+func GetJobTaskCounts(taskID int64) (map[string]interface{}, error) {
 	var counts jobTaskCounts
 	if err := GetDB().QueryRow(
 		fmt.Sprintf(`SELECT%s FROM job_task_item WHERE taskId=?`, jobTaskCountSelect),
@@ -531,13 +842,18 @@ func GetJobTaskCounts(taskID int64) map[string]interface{} {
 		&counts.otherNum,
 		&counts.sumSize,
 	); err != nil {
-		return EmptyJobTaskCounts()
+		return nil, err
 	}
-	return counts.toMap()
+	return counts.toMap(), nil
 }
 
 // GetJobTaskCountsByTaskIDs returns task item counters for many tasks in one query.
 func GetJobTaskCountsByTaskIDs(taskIDs []int64) map[int64]map[string]interface{} {
+	results, _ := GetJobTaskCountsByTaskIDsWithError(taskIDs)
+	return results
+}
+
+func GetJobTaskCountsByTaskIDsWithError(taskIDs []int64) (map[int64]map[string]interface{}, error) {
 	results := make(map[int64]map[string]interface{}, len(taskIDs))
 	uniqueIDs := make([]int64, 0, len(taskIDs))
 	seen := make(map[int64]struct{}, len(taskIDs))
@@ -553,43 +869,61 @@ func GetJobTaskCountsByTaskIDs(taskIDs []int64) map[int64]map[string]interface{}
 		results[taskID] = EmptyJobTaskCounts()
 	}
 	if len(uniqueIDs) == 0 {
-		return results
+		return results, nil
 	}
 
-	clause, args := int64InClause(uniqueIDs)
-	rows, err := GetDB().Query(
-		fmt.Sprintf(`SELECT
+	ctx := context.Background()
+	tx, err := GetDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return results, err
+	}
+	defer tx.Rollback()
+
+	for start := 0; start < len(uniqueIDs); start += sqlInClauseChunkSize {
+		end := start + sqlInClauseChunkSize
+		if end > len(uniqueIDs) {
+			end = len(uniqueIDs)
+		}
+		clause, args := int64InClause(uniqueIDs[start:end])
+		rows, err := tx.QueryContext(
+			ctx,
+			fmt.Sprintf(`SELECT
 					taskId,%s
 				FROM job_task_item
 				WHERE taskId IN (%s)
 				GROUP BY taskId`, jobTaskCountSelect, clause),
-		args...,
-	)
-	if err != nil {
-		return results
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var taskID int64
-		var counts jobTaskCounts
-		if err := rows.Scan(
-			&taskID,
-			&counts.allNum,
-			&counts.waitNum,
-			&counts.runningNum,
-			&counts.successNum,
-			&counts.failNum,
-			&counts.otherNum,
-			&counts.sumSize,
-		); err != nil {
-			return results
+			args...,
+		)
+		if err != nil {
+			return results, err
 		}
-		results[taskID] = counts.toMap()
+		for rows.Next() {
+			var taskID int64
+			var counts jobTaskCounts
+			if err := rows.Scan(
+				&taskID,
+				&counts.allNum,
+				&counts.waitNum,
+				&counts.runningNum,
+				&counts.successNum,
+				&counts.failNum,
+				&counts.otherNum,
+				&counts.sumSize,
+			); err != nil {
+				_ = rows.Close()
+				return results, err
+			}
+			results[taskID] = counts.toMap()
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return results, err
+		}
+		if err := rows.Close(); err != nil {
+			return results, err
+		}
 	}
-	if err := rows.Err(); err != nil {
-		return results
-	}
-	return results
+	return results, nil
 }
 
 type jobTaskCounts struct {
@@ -626,44 +960,105 @@ func EmptyJobTaskCounts() map[string]interface{} {
 	}
 }
 
-func taskItemKeywordFilter(keyword string) (string, []interface{}) {
+func taskItemKeywordFilter(ctx context.Context, keyword string) (string, []interface{}, bool) {
 	like := "%" + escapeLike(keyword) + "%"
-	if taskItemFTSAvailable() && utf8.RuneCountInString(keyword) >= 3 {
-		return ` AND (
+	sanitized := sanitizeFTS5Term(keyword)
+	if sanitized == keyword && utf8.RuneCountInString(sanitized) >= 3 {
+		available, coversAll := taskItemFTSCapabilities(ctx)
+		if available {
+			if coversAll {
+				// All searchable columns (fileName, srcPath, dstPath, alistTaskId,
+				// errMsg) are indexed in job_task_item_fts, avoiding an OR LIKE
+				// fallback that would force SQLite to scan every task item.
+				return ` AND id IN (SELECT rowid FROM job_task_item_fts WHERE job_task_item_fts MATCH ?)`,
+					[]interface{}{fts5Phrase(sanitized)}, true
+			}
+			return ` AND (
 			id IN (SELECT rowid FROM job_task_item_fts WHERE job_task_item_fts MATCH ?)
 			OR alistTaskId LIKE ? ESCAPE '\'
 			OR errMsg LIKE ? ESCAPE '\'
-		)`, []interface{}{fts5Phrase(keyword), like, like}
+		)`, []interface{}{fts5Phrase(sanitized), like, like}, false
+		}
 	}
 	return " AND (fileName LIKE ? ESCAPE '\\' OR srcPath LIKE ? ESCAPE '\\' OR dstPath LIKE ? ESCAPE '\\' OR alistTaskId LIKE ? ESCAPE '\\' OR errMsg LIKE ? ESCAPE '\\')",
-		[]interface{}{like, like, like, like, like}
+		[]interface{}{like, like, like, like, like}, false
 }
 
-func taskItemFTSAvailable() bool {
-	handle := GetDB()
-	ftsAvailability.mu.Lock()
-	defer ftsAvailability.mu.Unlock()
-	if ftsAvailability.known && ftsAvailability.db == handle {
-		return ftsAvailability.ok
-	}
-	var name string
-	err := handle.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='job_task_item_fts'").Scan(&name)
-	ok := err == nil && name == "job_task_item_fts"
-	ftsAvailability.db = handle
-	ftsAvailability.known = true
-	ftsAvailability.ok = ok
+func taskItemFTSAvailable(ctx context.Context) bool {
+	ok, _ := taskItemFTSCapabilities(ctx)
 	return ok
 }
 
+func taskItemFTSCapabilities(ctx context.Context) (available bool, coversAll bool) {
+	handle := GetDB()
+	ftsAvailability.mu.Lock()
+	if ftsAvailability.known && ftsAvailability.db == handle {
+		ok := ftsAvailability.ok
+		all := ftsAvailability.coversAll
+		ftsAvailability.mu.Unlock()
+		return ok, all
+	}
+	ftsAvailability.mu.Unlock()
+
+	var name string
+	err := handle.QueryRowContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name='job_task_item_fts'").Scan(&name)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, false
+	}
+	ok := err == nil && name == "job_task_item_fts"
+	all := false
+	if ok {
+		hasAlistTaskID, errA := tableHasColumnContext(ctx, handle, "job_task_item_fts", "alistTaskId")
+		hasErrMsg, errE := tableHasColumnContext(ctx, handle, "job_task_item_fts", "errMsg")
+		if errA != nil || errE != nil {
+			return false, false
+		}
+		all = hasAlistTaskID && hasErrMsg
+	}
+
+	ftsAvailability.mu.Lock()
+	if GetDB() == handle {
+		ftsAvailability.db = handle
+		ftsAvailability.known = true
+		ftsAvailability.ok = ok
+		ftsAvailability.coversAll = all
+	}
+	ftsAvailability.mu.Unlock()
+	return ok, all
+}
+
+func resetFTSAvailability() {
+	ftsAvailability.mu.Lock()
+	ftsAvailability.db = nil
+	ftsAvailability.known = false
+	ftsAvailability.ok = false
+	ftsAvailability.coversAll = false
+	ftsAvailability.mu.Unlock()
+}
+
 var ftsAvailability struct {
-	mu    sync.Mutex
-	db    *sql.DB
-	known bool
-	ok    bool
+	mu        sync.Mutex
+	db        *sql.DB
+	known     bool
+	ok        bool
+	coversAll bool
+}
+
+func sanitizeFTS5Term(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == 0 || r < 0x20 || r == 0x7f || r == utf8.RuneError {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func fts5Phrase(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	clean := sanitizeFTS5Term(s)
+	return `"` + strings.ReplaceAll(clean, `"`, `""`) + `"`
 }
 
 func escapeLike(s string) string {

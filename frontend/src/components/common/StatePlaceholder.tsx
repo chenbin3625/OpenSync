@@ -1,8 +1,17 @@
 import type { LucideIcon } from 'lucide-react';
-import { RefreshCw } from 'lucide-react';
+import { LoaderCircle, RefreshCw } from 'lucide-react';
 import { Button } from '../ui/button';
 import { cn } from '../../lib/utils';
 import { icon, surface, text } from '../../lib/styles';
+
+export function LoadingState({ title, className }: { title: string; className?: string }) {
+  return (
+    <div role="status" className={cn('flex items-center justify-center gap-2 py-8 text-sm text-slate-500', className)}>
+      <LoaderCircle className={cn(icon.md, 'text-brand motion-safe:animate-spin')} aria-hidden="true" />
+      <span>{title}</span>
+    </div>
+  );
+}
 
 export interface EmptyStateProps {
   icon: LucideIcon;

@@ -32,7 +32,7 @@ func GetAlist(c *gin.Context) {
 // AddAlist handles POST /svr/alist
 func AddAlist(c *gin.Context) {
 	var req map[string]interface{}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil || req == nil {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
@@ -43,7 +43,7 @@ func AddAlist(c *gin.Context) {
 // UpdateAlist handles PUT /svr/alist
 func UpdateAlist(c *gin.Context) {
 	var req map[string]interface{}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil || req == nil {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}

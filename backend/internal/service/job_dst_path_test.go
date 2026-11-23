@@ -32,12 +32,12 @@ func TestParsePathListTreatsColonAsPartOfSinglePath(t *testing.T) {
 
 func TestCleanJobInputNormalizesDstPathToJSON(t *testing.T) {
 	job := map[string]interface{}{
-		"dstPath": []interface{}{"/movies/director:cut", " /backup "},
+		"dstPath": []interface{}{"/movies/director:cut", "\n/backup\r\n", "/dir/trailing "},
 	}
 
 	CleanJobInput(job)
 	got := parsePathList(job["dstPath"])
-	want := []string{"/movies/director:cut", "/backup"}
+	want := []string{"/movies/director:cut", "/backup", "/dir/trailing "}
 
 	if len(got) != len(want) {
 		t.Fatalf("normalized dstPath length = %d, want %d (%#v)", len(got), len(want), got)
@@ -79,12 +79,12 @@ func TestParsePathListTreatsPlainStringAsSinglePath(t *testing.T) {
 
 func TestCleanJobInputNormalizesSrcPathToJSON(t *testing.T) {
 	job := map[string]interface{}{
-		"srcPath": []interface{}{"/photos", " /videos "},
+		"srcPath": []interface{}{"/photos", "\n/videos\n", "/dir/ lead"},
 	}
 
 	CleanJobInput(job)
 	got := parsePathList(job["srcPath"])
-	want := []string{"/photos", "/videos"}
+	want := []string{"/photos", "/videos", "/dir/ lead"}
 
 	if len(got) != len(want) {
 		t.Fatalf("normalized srcPath length = %d, want %d (%#v)", len(got), len(want), got)
@@ -319,8 +319,152 @@ func TestDstPathForSrcSelectionKeepsBaseNameWhenUnique(t *testing.T) {
 // A repeated selection entry is deduped, so it cannot be treated as two
 // sources and produce a doubled separator.
 func TestParsePathListDropsDuplicates(t *testing.T) {
-	got := parsePathList([]string{"/nas/a", "/nas/a", " /nas/a "})
+	got := parsePathList([]string{"/nas/a", "/nas/a", "\n/nas/a\r\n", "nas/a/"})
 	if len(got) != 1 || got[0] != "/nas/a" {
 		t.Fatalf("parsePathList = %#v, want one /nas/a", got)
+	}
+}
+
+func TestParsePathListSkipsNullAndNonStringsAndPreservesComponentSpaces(t *testing.T) {
+	if got := parsePathList(`[null]`); len(got) != 0 {
+		t.Fatalf("parsePathList([null]) = %#v, want empty", got)
+	}
+	if got := parsePathList([]interface{}{nil, 123, true, "/dir/foo ", "/dir/ bar"}); len(got) != 2 || got[0] != "/dir/foo " || got[1] != "/dir/ bar" {
+		t.Fatalf("parsePathList(mixed) = %#v, want [/dir/foo , /dir/ bar]", got)
+	}
+	if got := parsePathList(`[null, 42, "/a/b "]`); len(got) != 1 || got[0] != "/a/b " {
+		t.Fatalf("parsePathList(json mixed) = %#v, want [/a/b ]", got)
+	}
+}
+
+func TestValidateJobInputRejectsOverlappingAndInvalidPathConfigurations(t *testing.T) {
+	cases := []struct {
+		name string
+		job  map[string]interface{}
+	}{
+		{
+			name: "equal src and dst",
+			job: map[string]interface{}{
+				"srcPath": []string{"/data"},
+				"dstPath": []string{"/data/"},
+				"alistId": int64(1),
+				"isCron":  2,
+				"method":  0,
+			},
+		},
+		{
+			name: "src ancestor of dst",
+			job: map[string]interface{}{
+				"srcPath": []string{"/data"},
+				"dstPath": []string{"/data/backup"},
+				"alistId": int64(1),
+				"isCron":  2,
+				"method":  1,
+			},
+		},
+		{
+			name: "dst ancestor of src",
+			job: map[string]interface{}{
+				"srcPath": []string{"/data/photos"},
+				"dstPath": []string{"/data"},
+				"alistId": int64(1),
+				"isCron":  2,
+				"method":  1,
+			},
+		},
+		{
+			name: "duplicate normalized srcPaths",
+			job: map[string]interface{}{
+				"srcPath": []string{"/a/b", "a/b/"},
+				"dstPath": []string{"/dst"},
+				"alistId": int64(1),
+				"isCron":  2,
+				"method":  0,
+			},
+		},
+		{
+			name: "parent and child srcPaths",
+			job: map[string]interface{}{
+				"srcPath": []string{"/nas", "/nas/photos"},
+				"dstPath": []string{"/dst"},
+				"alistId": int64(1),
+				"isCron":  2,
+				"method":  0,
+			},
+		},
+		{
+			name: "duplicate normalized dstPaths",
+			job: map[string]interface{}{
+				"srcPath": []string{"/src"},
+				"dstPath": []string{"/dst", "dst/"},
+				"alistId": int64(1),
+				"isCron":  2,
+				"method":  0,
+			},
+		},
+		{
+			name: "parent and child dstPaths",
+			job: map[string]interface{}{
+				"srcPath": []string{"/src"},
+				"dstPath": []string{"/dst", "/dst/sub"},
+				"alistId": int64(1),
+				"isCron":  2,
+				"method":  0,
+			},
+		},
+		{
+			name: "move mode with multiple dstPaths",
+			job: map[string]interface{}{
+				"srcPath": []string{"/src"},
+				"dstPath": []string{"/dst1", "/dst2"},
+				"alistId": int64(1),
+				"isCron":  2,
+				"method":  2,
+			},
+		},
+		{
+			name: "null only path list",
+			job: map[string]interface{}{
+				"srcPath": `[null]`,
+				"dstPath": []string{"/dst"},
+				"alistId": int64(1),
+				"isCron":  2,
+				"method":  0,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requirePublicPanic(t, func() {
+				ValidateJobInput(tc.job)
+			})
+		})
+	}
+}
+
+func TestDstPathForSrcSelectionAvoidsNestedDestinationsForMixedRoots(t *testing.T) {
+	srcPaths := []string{"/a/docs", "/b/docs", "/x/a"}
+	want := map[string]string{
+		"/a/docs": "/backup/a/docs/",
+		"/b/docs": "/backup/b/docs/",
+		"/x/a":    "/backup/x/a/",
+	}
+
+	mapped := make([]string, 0, len(srcPaths))
+	for _, src := range srcPaths {
+		got := dstPathForSrcSelection("/backup/", src, srcPaths)
+		if got != want[src] {
+			t.Fatalf("dstPathForSrcSelection(%q) = %q, want %q", src, got, want[src])
+		}
+		mapped = append(mapped, canonicalJobPath(got))
+	}
+
+	for i := 0; i < len(mapped); i++ {
+		for j := i + 1; j < len(mapped); j++ {
+			if pathsOverlap(mapped[i], mapped[j]) {
+				t.Fatalf("mapped destinations overlap: %q and %q", mapped[i], mapped[j])
+			}
+		}
 	}
 }

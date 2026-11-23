@@ -3,11 +3,15 @@ package middleware
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"opensync/internal/config"
 	"opensync/internal/mapper"
 	"opensync/internal/model"
@@ -75,9 +79,10 @@ func currentSecureCookie() *securecookie.SecureCookie {
 
 // CookieUser represents the user data stored in cookie
 type CookieUser struct {
-	ID       int64  `json:"id"`
-	UserName string `json:"userName"`
-	Session  string `json:"session"`
+	ID             int64  `json:"id"`
+	UserName       string `json:"userName"`
+	SessionVersion int64  `json:"sessionVersion"`
+	Session        string `json:"session"`
 }
 
 func deriveCookieKey(secret, label string, size int) []byte {
@@ -93,26 +98,71 @@ func authSessionSignature(user map[string]interface{}) string {
 		fmt.Sprintf("%v", user["userName"]),
 		fmt.Sprintf("%v", user["passwd"]),
 	)))
+	_, _ = mac.Write([]byte(fmt.Sprintf("|%d", userSessionVersion(user))))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func userSessionVersion(user map[string]interface{}) int64 {
+	version := util.ToInt64(user["sessionVersion"])
+	if version <= 0 {
+		return 1
+	}
+	return version
 }
 
 // NewCookieUser builds the non-sensitive auth payload for a user record.
 func NewCookieUser(user map[string]interface{}) CookieUser {
 	return CookieUser{
-		ID:       util.ToInt64(user["id"]),
-		UserName: fmt.Sprintf("%v", user["userName"]),
-		Session:  authSessionSignature(user),
+		ID:             util.ToInt64(user["id"]),
+		UserName:       fmt.Sprintf("%v", user["userName"]),
+		SessionVersion: userSessionVersion(user),
+		Session:        authSessionSignature(user),
 	}
 }
 
 // CookieUserMatches verifies a cookie payload against the current user record.
 func CookieUserMatches(cookieUser CookieUser, user map[string]interface{}) bool {
 	if cookieUser.ID != util.ToInt64(user["id"]) ||
-		cookieUser.UserName != fmt.Sprintf("%v", user["userName"]) {
+		cookieUser.UserName != fmt.Sprintf("%v", user["userName"]) ||
+		cookieUser.SessionVersion != userSessionVersion(user) {
 		return false
 	}
 	want := authSessionSignature(user)
 	return hmac.Equal([]byte(cookieUser.Session), []byte(want))
+}
+
+// RevokeAuthSession invalidates the current user's cookies server-side. The
+// cookie is decoded and verified against the current user record before bumping
+// sessionVersion so stale or already-revoked cookies cannot force-logout active
+// sessions.
+func RevokeAuthSession(c *gin.Context) error {
+	cookieVal, err := c.Cookie(cookieName)
+	if err != nil || cookieVal == "" {
+		return nil
+	}
+	var decoded string
+	if err := currentSecureCookie().Decode(cookieName, cookieVal, &decoded); err != nil {
+		return nil
+	}
+	var cookieUser CookieUser
+	if err := json.Unmarshal([]byte(decoded), &cookieUser); err != nil || cookieUser.ID <= 0 {
+		return nil
+	}
+	trueUser, err := mapper.GetUserByID(cookieUser.ID)
+	if err != nil {
+		if errors.Is(err, mapper.ErrUserNotFound) || errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if !CookieUserMatches(cookieUser, trueUser) {
+		return nil
+	}
+	if err := mapper.BumpSessionVersion(cookieUser.ID); err != nil {
+		return err
+	}
+	ClearAuthUserCache()
+	return nil
 }
 
 func authUserCacheKey(cookieUser CookieUser) string {
@@ -251,6 +301,60 @@ func isSecureRequest(c *gin.Context) bool {
 	return strings.EqualFold(c.GetHeader("X-Forwarded-Ssl"), "on")
 }
 
+func isStateChangingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeHostPort(hostPort, defaultScheme string) (string, string) {
+	hostPort = strings.TrimSpace(hostPort)
+	host, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		host = strings.Trim(hostPort, "[]")
+		port = ""
+	}
+	host = strings.ToLower(host)
+	if port == "" {
+		switch strings.ToLower(defaultScheme) {
+		case "https":
+			port = "443"
+		case "http":
+			port = "80"
+		}
+	}
+	return host, port
+}
+
+func checkSameOriginCSRF(r *http.Request) bool {
+	if r == nil || !isStateChangingMethod(r.Method) {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
+		return false
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	if strings.EqualFold(origin, "null") {
+		return false
+	}
+	originURL, err := url.Parse(origin)
+	if err != nil || originURL.Host == "" {
+		return false
+	}
+	if strings.EqualFold(originURL.Host, r.Host) {
+		return true
+	}
+	originHost, originPort := normalizeHostPort(originURL.Host, originURL.Scheme)
+	reqHost, reqPort := normalizeHostPort(r.Host, originURL.Scheme)
+	return originHost != "" && originHost == reqHost && originPort == reqPort
+}
+
 // AuthRequired is the Gin middleware for authentication
 func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -261,6 +365,12 @@ func AuthRequired() gin.HandlerFunc {
 		if (path != "/svr" && !strings.HasPrefix(path, "/svr/")) ||
 			path == "/svr/noAuth" || strings.HasPrefix(path, "/svr/noAuth/") {
 			c.Next()
+			return
+		}
+
+		if !checkSameOriginCSRF(c.Request) {
+			c.JSON(http.StatusForbidden, model.Error("禁止跨站请求"))
+			c.Abort()
 			return
 		}
 
@@ -297,8 +407,14 @@ func AuthRequired() gin.HandlerFunc {
 		// Verify user still exists and matches
 		trueUser, err := mapper.GetUserByID(cUser.ID)
 		if err != nil {
-			ClearAuthCookie(c)
-			c.JSON(http.StatusUnauthorized, model.Unauthorized(msg.LoginExpired))
+			if errors.Is(err, mapper.ErrUserNotFound) || errors.Is(err, sql.ErrNoRows) {
+				ClearAuthCookie(c)
+				c.JSON(http.StatusUnauthorized, model.Unauthorized(msg.LoginExpired))
+				c.Abort()
+				return
+			}
+			log.Printf("AuthRequired failed to query user %d: %v", cUser.ID, err)
+			c.JSON(http.StatusServiceUnavailable, model.Error("服务暂时不可用，请稍后重试"))
 			c.Abort()
 			return
 		}

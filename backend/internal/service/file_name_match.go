@@ -53,6 +53,11 @@ func newSrcNameMatchIndex(raw interface{}) srcNameMatchIndex {
 	return index
 }
 
+func (i dstNameMatchIndex) findExact(key string) (FileMetadata, bool) {
+	value, ok := i.items[key]
+	return value, ok
+}
+
 func (i dstNameMatchIndex) find(srcKey string, srcIndex srcNameMatchIndex) (string, FileMetadata, bool) {
 	if value, ok := i.items[srcKey]; ok {
 		return srcKey, value, true

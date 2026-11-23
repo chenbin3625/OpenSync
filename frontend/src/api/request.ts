@@ -33,17 +33,54 @@ const serializeParams = (params: Record<string, unknown>) => {
 };
 
 const isApiEnvelope = (data: unknown): data is ApiEnvelope => {
-  if (!data || typeof data !== 'object') return false;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
   const envelope = data as Partial<ApiEnvelope>;
   return typeof envelope.code === 'number' && typeof envelope.msg === 'string';
 };
 
-const redirectToLogin = () => {
-  useStore.getState().setUserInfo(null);
-  useStore.getState().setAuthChecked(true);
-  if (window.location.pathname !== '/login') {
-    window.location.replace('/login');
+let unauthorizedHandler: (() => void) | null = null;
+let redirectingToLogin = false;
+
+export const setUnauthorizedHandler = (handler: (() => void) | null) => {
+  unauthorizedHandler = handler;
+  if (!handler) {
+    redirectingToLogin = false;
   }
+};
+
+const redirectToLogin = () => {
+  const state = useStore.getState();
+  const wasChecked = state.authChecked;
+  state.setUserInfo(null);
+  state.setAuthChecked(true);
+
+  if (window.location.pathname === '/login') {
+    redirectingToLogin = false;
+    return;
+  }
+  if (redirectingToLogin) {
+    return;
+  }
+  redirectingToLogin = true;
+
+  if (unauthorizedHandler) {
+    unauthorizedHandler();
+    queueMicrotask(() => {
+      redirectingToLogin = false;
+    });
+    return;
+  }
+
+  // Initial auth bootstrap: AuthGuard handles the redirect via React Router
+  // once authChecked becomes true, avoiding a duplicate hard reload.
+  if (!wasChecked) {
+    queueMicrotask(() => {
+      redirectingToLogin = false;
+    });
+    return;
+  }
+
+  window.location.replace('/login');
 };
 
 const rejectApiEnvelope = (data: ApiEnvelope, fallbackStatus?: number, silent = false) => {
@@ -75,13 +112,22 @@ const service = axios.create({
 // Response interceptor
 service.interceptors.response.use(
   (res) => {
-    if (isApiEnvelope(res.data)) {
-      const rejection = rejectApiEnvelope(res.data, res.status, res.config.silent);
-      if (rejection) return rejection;
+    if (!isApiEnvelope(res.data)) {
+      const msg = 'Invalid server response';
+      if (!res.config.silent) {
+        getMessageInstance()?.error(msg);
+      }
+      return Promise.reject(new Error(msg));
     }
-    return res.data;
+    const rejection = rejectApiEnvelope(res.data, res.status, res.config.silent);
+    if (rejection) return rejection;
+    return res.data as unknown as typeof res;
   },
   (error: AxiosError) => {
+    if (axios.isCancel(error) || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') {
+      return Promise.reject(error);
+    }
+
     const config = error.config as AxiosRequestConfig | undefined;
     const silent = !!config?.silent;
     const status = error.response?.status;

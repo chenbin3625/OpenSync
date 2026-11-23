@@ -32,10 +32,8 @@ func (jt *JobTask) touchWatching() {
 
 // TouchJobWatching refreshes the "viewer present" timestamp used by copy pollers.
 func TouchJobWatching(jobID int64) {
-	jobClientListMu.RLock()
-	client := jobClientList[jobID]
-	jobClientListMu.RUnlock()
-	if client == nil {
+	client, ok := getJobClientIfExists(jobID)
+	if !ok {
 		return
 	}
 	if task := client.currentTask(); task != nil {
@@ -113,8 +111,10 @@ type jobCurrentPayload struct {
 }
 
 type transferMeter struct {
-	duration int
-	doneSize int64
+	initialized bool
+	sampleAt    time.Time
+	doneSize    int64
+	speed       float64
 }
 
 func (item streamDoingItem) countableSize() int64 {
@@ -125,14 +125,15 @@ func (item streamDoingItem) countableSize() int64 {
 }
 
 func (item streamDoingItem) transferredSize() int64 {
-	return int64(float64(item.countableSize()) * item.Progress / 100.0)
+	return int64(float64(item.countableSize()) * clampProgress(item.Progress) / 100.0)
 }
 
 // GetCurrent returns real-time task progress
 func (jt *JobTask) getCurrentPayload() jobCurrentPayload {
 	jt.initRuntime()
 	jt.touchWatching()
-	now := time.Now().Unix()
+	nowTime := time.Now()
+	now := nowTime.Unix()
 
 	doing := jt.doingStreamItems()
 	waitCount, waitSize := jt.Waiting.stats()
@@ -190,10 +191,32 @@ func (jt *JobTask) getCurrentPayload() jobCurrentPayload {
 
 	jt.CurrentMu.Lock()
 	prev := jt.lastMeter
-	if prev.duration > 0 && duration != prev.duration {
-		payload.Speed = float64(doneSize-prev.doneSize) / float64(duration-prev.duration)
+	if !prev.initialized {
+		jt.lastMeter = transferMeter{
+			initialized: true,
+			sampleAt:    nowTime,
+			doneSize:    doneSize,
+			speed:       0,
+		}
+		payload.Speed = 0
+	} else if elapsed := nowTime.Sub(prev.sampleAt).Seconds(); elapsed >= 1.0 {
+		delta := doneSize - prev.doneSize
+		speed := 0.0
+		if delta > 0 {
+			speed = float64(delta) / elapsed
+		}
+		payload.Speed = speed
+		jt.lastMeter = transferMeter{
+			initialized: true,
+			sampleAt:    nowTime,
+			doneSize:    doneSize,
+			speed:       speed,
+		}
+	} else {
+		// Preserve the last measured speed and baseline across sub-second
+		// progress frames so rapid refreshes do not collapse speed to 0.
+		payload.Speed = prev.speed
 	}
-	jt.lastMeter = transferMeter{duration: duration, doneSize: doneSize}
 	jt.CurrentMu.Unlock()
 
 	if payload.SpeedAvg > 0 && remainSize > 0 {

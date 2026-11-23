@@ -144,7 +144,7 @@ export interface CurrentTaskData {
   taskId: number;
   scanFinish: boolean;
   scan?: ScanProgress;
-  doingTask?: TaskItem[];
+  doingTask?: TaskItem[] | null;
   doingPatch?: TaskItem[];
   createTime: number;
   duration: number;

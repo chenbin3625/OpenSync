@@ -6,6 +6,7 @@ import (
 )
 
 func (jt *JobTask) persistRemainingTaskItems() error {
+	jt.cancelPersistFlushTimer()
 	if err := jt.flushPersistBuffer(); err != nil {
 		return err
 	}
@@ -16,9 +17,9 @@ func (jt *JobTask) appendFinish(item JobTaskItem) {
 	jt.appendFinishMany([]JobTaskItem{item})
 }
 
-func (jt *JobTask) appendFinishMany(items []JobTaskItem) {
+func (jt *JobTask) recordFinishNoFlush(items []JobTaskItem) bool {
 	if len(items) == 0 {
-		return
+		return false
 	}
 	jt.initRuntime()
 
@@ -36,7 +37,10 @@ func (jt *JobTask) appendFinishMany(items []JobTaskItem) {
 	jt.persistBuffer = append(jt.persistBuffer, items...)
 	needFlush := len(jt.persistBuffer) >= persistBatchSize
 	jt.persistBufMu.Unlock()
+	return needFlush
+}
 
+func (jt *JobTask) postRecordFinish(needFlush bool) {
 	if needFlush {
 		if err := jt.flushPersistBuffer(); err != nil {
 			jt.recordTaskPersistenceError(err)
@@ -48,6 +52,14 @@ func (jt *JobTask) appendFinishMany(items []JobTaskItem) {
 	jt.notifyProgressChange()
 }
 
+func (jt *JobTask) appendFinishMany(items []JobTaskItem) {
+	if len(items) == 0 {
+		return
+	}
+	needFlush := jt.recordFinishNoFlush(items)
+	jt.postRecordFinish(needFlush)
+}
+
 func (jt *JobTask) schedulePersistFlush() {
 	jt.persistFlushMu.Lock()
 	defer jt.persistFlushMu.Unlock()
@@ -55,9 +67,10 @@ func (jt *JobTask) schedulePersistFlush() {
 		return
 	}
 	jt.persistFlushScheduled = true
-	time.AfterFunc(persistFlushInterval, func() {
+	jt.persistFlushTimer = time.AfterFunc(persistFlushInterval, func() {
 		jt.persistFlushMu.Lock()
 		jt.persistFlushScheduled = false
+		jt.persistFlushTimer = nil
 		jt.persistFlushMu.Unlock()
 		if err := jt.flushPersistBuffer(); err != nil {
 			jt.recordTaskPersistenceError(err)
@@ -67,6 +80,7 @@ func (jt *JobTask) schedulePersistFlush() {
 }
 
 func (jt *JobTask) flushPersistBuffer() error {
+	jt.cancelPersistFlushTimer()
 	// Finalization must wait for batches already removed from the buffer.
 	jt.persistWriteMu.Lock()
 	defer jt.persistWriteMu.Unlock()
@@ -79,14 +93,14 @@ func (jt *JobTask) flushPersistBuffer() error {
 	jt.persistBuffer = jt.persistBuffer[:0]
 	jt.persistBufMu.Unlock()
 
-	if err := persistJobTaskItems(jobTaskItemsToMaps(items)); err != nil {
+	if err := callPersistJobTaskItems(jobTaskItemsToMaps(items)); err != nil {
 		jt.persistBufMu.Lock()
 		jt.persistBuffer = append(items, jt.persistBuffer...)
 		jt.persistBufMu.Unlock()
 
 		jobID := int64(0)
 		if jt.JobClient != nil {
-			jobID = jt.JobClient.JobID
+			jobID = jt.JobClient.idSnapshot()
 		}
 		first := items[0]
 		log.Printf(
@@ -98,6 +112,16 @@ func (jt *JobTask) flushPersistBuffer() error {
 		return err
 	}
 	return jt.taskPersistenceError()
+}
+
+func (jt *JobTask) cancelPersistFlushTimer() {
+	jt.persistFlushMu.Lock()
+	if jt.persistFlushTimer != nil {
+		jt.persistFlushTimer.Stop()
+		jt.persistFlushTimer = nil
+	}
+	jt.persistFlushScheduled = false
+	jt.persistFlushMu.Unlock()
 }
 
 func (jt *JobTask) recordTaskPersistenceError(err error) {

@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -57,15 +58,46 @@ func IsModernPasswordHash(storedHash string) bool {
 		strings.HasPrefix(storedHash, "$2y$")
 }
 
+// isOwnerOnlySecretPerm reports whether perm grants no group, other, or execute
+// permissions (e.g. 0400 read-only mounted secret or 0600 owner read/write).
+func isOwnerOnlySecretPerm(perm os.FileMode) bool {
+	return perm&^0o600 == 0
+}
+
 // ReadOrSetFile reads file content, creating it with defaultValue when it does
 // not exist. Callers must treat a persist error as fatal when the value feeds
 // cryptography: falling back to an in-memory default would silently rotate the
 // secret on every restart and invalidate all stored cookies and tokens.
 func ReadOrSetFile(fileName string, defaultVal string, force bool) (string, error) {
 	if !force {
-		if data, err := os.ReadFile(fileName); err == nil && len(strings.TrimSpace(string(data))) > 0 {
-			_ = os.Chmod(fileName, 0600)
+		if info, err := os.Lstat(fileName); err == nil {
+			if !info.Mode().IsRegular() {
+				return "", fmt.Errorf("%s is not a regular file", fileName)
+			}
+			data, err := os.ReadFile(fileName)
+			if err != nil {
+				return "", err
+			}
+			if len(strings.TrimSpace(string(data))) == 0 {
+				return "", fmt.Errorf("%s is empty", fileName)
+			}
+			perm := info.Mode().Perm()
+			if !isOwnerOnlySecretPerm(perm) {
+				if err := os.Chmod(fileName, 0600); err != nil {
+					return "", err
+				}
+				info, err = os.Stat(fileName)
+				if err != nil {
+					return "", err
+				}
+				perm = info.Mode().Perm()
+			}
+			if !isOwnerOnlySecretPerm(perm) {
+				return "", fmt.Errorf("%s has insecure permissions %04o", fileName, perm)
+			}
 			return string(data), nil
+		} else if !os.IsNotExist(err) {
+			return "", err
 		}
 	}
 	dir := filepath.Dir(fileName)
@@ -74,8 +106,44 @@ func ReadOrSetFile(fileName string, defaultVal string, force bool) (string, erro
 			return "", err
 		}
 	}
-	if err := os.WriteFile(fileName, []byte(defaultVal), 0600); err != nil {
+	tmpFile, err := os.CreateTemp(dir, ".secret-*.tmp")
+	if err != nil {
 		return "", err
+	}
+	tmpName := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if err := tmpFile.Chmod(0600); err != nil {
+		_ = tmpFile.Close()
+		return "", err
+	}
+	if _, err := tmpFile.WriteString(defaultVal); err != nil {
+		_ = tmpFile.Close()
+		return "", err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return "", err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmpName, fileName); err != nil {
+		return "", err
+	}
+	cleanup = false
+
+	info, err := os.Stat(fileName)
+	if err != nil {
+		return "", err
+	}
+	if !isOwnerOnlySecretPerm(info.Mode().Perm()) {
+		return "", fmt.Errorf("%s has insecure permissions %04o", fileName, info.Mode().Perm())
 	}
 	return defaultVal, nil
 }

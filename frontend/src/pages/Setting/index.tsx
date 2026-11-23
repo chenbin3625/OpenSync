@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Lock, Save, Sliders, Shield } from 'lucide-react';
-import { editPwd } from '../../api/user';
+import { editPwd, getUser } from '../../api/user';
 import { getSystemConfig, updateSystemConfig } from '../../api/system';
+import { useStore } from '../../stores/useStore';
 import type { SystemSettings } from '../../types';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -22,20 +23,34 @@ import { ErrorState, PlaceholderCard } from '../../components/common/StatePlaceh
 import { cn } from '../../lib/utils';
 import { icon, layout, surface } from '../../lib/styles';
 
+const MIN_PASSWORD_LENGTH = 8;
+const MAX_PASSWORD_BYTES = 72;
+
+const validateNewPassword = (value: string): string | null => {
+  if (value.trim().length < MIN_PASSWORD_LENGTH) {
+    return `新密码长度不能少于 ${MIN_PASSWORD_LENGTH} 位`;
+  }
+  if (new TextEncoder().encode(value).length > MAX_PASSWORD_BYTES) {
+    return `新密码长度不能超过 ${MAX_PASSWORD_BYTES} 字节`;
+  }
+  return null;
+};
+
 export default function Setting() {
+  const setUserInfo = useStore((s) => s.setUserInfo);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [configError, setConfigError] = useState(false);
+  const [configFormError, setConfigFormError] = useState('');
   const [configValues, setConfigValues] = useState<SystemSettings | null>(null);
-  void configValues;
 
-  // 表单受控状态
-  const [expires, setExpires] = useState(720);
-  const [taskTimeout, setTaskTimeout] = useState(48);
-  const [taskSave, setTaskSave] = useState(500);
-  const [copyConcurrency, setCopyConcurrency] = useState(4);
-  const [scanConcurrency, setScanConcurrency] = useState(4);
-  const [maxRetries, setMaxRetries] = useState(3);
+  // 表单受控状态（使用字符串允许输入过程中临时清空，失焦或提交时校验解析）
+  const [expires, setExpires] = useState('7');
+  const [taskTimeout, setTaskTimeout] = useState('48');
+  const [taskSave, setTaskSave] = useState('30');
+  const [copyConcurrency, setCopyConcurrency] = useState('4');
+  const [scanConcurrency, setScanConcurrency] = useState('4');
+  const [maxRetries, setMaxRetries] = useState('3');
 
   // 修改密码弹窗
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -48,6 +63,15 @@ export default function Setting() {
   const configRequestRef = useRef(0);
   const configAbortRef = useRef<AbortController | null>(null);
 
+  const syncFormFromConfig = useCallback((data: SystemSettings) => {
+    setExpires(String(data.expires ?? 7));
+    setTaskTimeout(String(data.taskTimeout ?? 48));
+    setTaskSave(String(data.taskSave ?? 30));
+    setCopyConcurrency(String(data.copyConcurrency ?? 4));
+    setScanConcurrency(String(data.scanConcurrency ?? 4));
+    setMaxRetries(String(data.maxRetries ?? 3));
+  }, []);
+
   const fetchConfig = useCallback(async () => {
     const requestID = ++configRequestRef.current;
     configAbortRef.current?.abort();
@@ -55,17 +79,13 @@ export default function Setting() {
     configAbortRef.current = controller;
     setLoading(true);
     setConfigError(false);
+    setConfigFormError('');
     try {
       const res = await getSystemConfig({ silent: true, signal: controller.signal });
       if (requestID !== configRequestRef.current) return;
       if (res.data) {
         setConfigValues(res.data);
-        setExpires(res.data.expires ?? 720);
-        setTaskTimeout(res.data.taskTimeout ?? 48);
-        setTaskSave(res.data.taskSave ?? 500);
-        setCopyConcurrency(res.data.copyConcurrency ?? 4);
-        setScanConcurrency(res.data.scanConcurrency ?? 4);
-        setMaxRetries(res.data.maxRetries ?? 3);
+        syncFormFromConfig(res.data);
       }
     } catch (err) {
       if (controller.signal.aborted) return;
@@ -77,7 +97,7 @@ export default function Setting() {
         setLoading(false);
       }
     }
-  }, []);
+  }, [syncFormFromConfig]);
 
   useEffect(() => {
     fetchConfig();
@@ -89,9 +109,10 @@ export default function Setting() {
     {
       name: 'expires',
       label: '登录会话过期时间',
-      tooltip: '登录 Token 保持有效的时间，单位：小时',
-      unit: '小时',
+      tooltip: '登录 Token 保持有效的时间，单位：天',
+      unit: '天',
       min: 1,
+      max: 365,
       value: expires,
       onChange: setExpires,
     },
@@ -107,10 +128,10 @@ export default function Setting() {
     },
     {
       name: 'taskSave',
-      label: '历史任务日志保留条数',
-      tooltip: '单个任务保留的历史记录上限，超出将自动清理旧日志',
-      unit: '条',
-      min: 10,
+      label: '历史任务保留时间',
+      tooltip: '历史任务保留时间，单位：天，0 表示不自动清理',
+      unit: '天',
+      min: 0,
       value: taskSave,
       onChange: setTaskSave,
     },
@@ -145,37 +166,86 @@ export default function Setting() {
       onChange: setMaxRetries,
     },
   ] satisfies Array<{
-    name: string;
+    name: keyof SystemSettings;
     label: string;
     tooltip: string;
     unit: string;
     min: number;
     max?: number;
-    value: number;
-    onChange: (value: number) => void;
+    value: string;
+    onChange: (value: string) => void;
   }>;
+
+  const handleFieldBlur = (field: (typeof configFields)[number]) => {
+    const raw = field.value.trim();
+    if (!raw) return;
+    const num = Number(raw);
+    if (Number.isInteger(num)) {
+      field.onChange(String(num));
+    }
+  };
 
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
+    setConfigFormError('');
+
+    const parsed = {} as Record<keyof SystemSettings, number>;
+    for (const field of configFields) {
+      const raw = field.value.trim();
+      if (raw === '') {
+        setConfigFormError(`请输入${field.label}`);
+        return;
+      }
+      const num = Number(raw);
+      if (!Number.isInteger(num)) {
+        setConfigFormError(`${field.label}必须为整数`);
+        return;
+      }
+      if (num < field.min) {
+        setConfigFormError(`${field.label}不能小于 ${field.min}`);
+        return;
+      }
+      if (field.max !== undefined && num > field.max) {
+        setConfigFormError(`${field.label}不能大于 ${field.max}`);
+        return;
+      }
+      parsed[field.name] = num;
+    }
+
     setSaving(true);
     try {
       const payload: SystemSettings = {
-        expires: Number(expires),
-        taskTimeout: Number(taskTimeout),
-        taskSave: Number(taskSave),
-        copyConcurrency: Number(copyConcurrency),
-        scanConcurrency: Number(scanConcurrency),
-        maxRetries: Number(maxRetries),
+        expires: parsed.expires,
+        taskTimeout: parsed.taskTimeout,
+        taskSave: parsed.taskSave,
+        copyConcurrency: parsed.copyConcurrency,
+        scanConcurrency: parsed.scanConcurrency,
+        maxRetries: parsed.maxRetries,
       };
       const res = await updateSystemConfig(payload);
       if (res.data) {
         setConfigValues(res.data);
+        syncFormFromConfig(res.data);
       }
       toast.success('系统配置已保存');
     } catch (err) {
       console.error('system config save failed', err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const resetPasswordForm = () => {
+    setOldPasswd('');
+    setNewPasswd('');
+    setConfirmPasswd('');
+    setPasswordError('');
+  };
+
+  const handlePasswordDialogOpenChange = (open: boolean) => {
+    setPasswordVisible(open);
+    if (!open) {
+      resetPasswordForm();
     }
   };
 
@@ -191,6 +261,11 @@ export default function Setting() {
       setPasswordError('请输入新密码');
       return;
     }
+    const passwordErr = validateNewPassword(newPasswd);
+    if (passwordErr) {
+      setPasswordError(passwordErr);
+      return;
+    }
     if (newPasswd !== confirmPasswd) {
       setPasswordError('两次输入的新密码不一致');
       return;
@@ -200,10 +275,19 @@ export default function Setting() {
     try {
       await editPwd({ oldPasswd, passwd: newPasswd });
       toast.success('密码修改成功');
-      setOldPasswd('');
-      setNewPasswd('');
-      setConfirmPasswd('');
+      resetPasswordForm();
       setPasswordVisible(false);
+      // Verify session state after password rotation: if the backend re-issued a
+      // cookie this refreshes userInfo seamlessly; if the session was revoked,
+      // the 401 response interceptor clears auth state and redirects to /login.
+      try {
+        const res = await getUser();
+        if (res.data) {
+          setUserInfo(res.data);
+        }
+      } catch {
+        // Handled by the global request interceptor when 401 is returned.
+      }
     } catch (err: unknown) {
       console.error('password change failed', err);
     } finally {
@@ -244,6 +328,8 @@ export default function Setting() {
             >
               <SectionHeading title="运行参数设置" icon={Sliders} bordered />
 
+              {configFormError && <Alert>{configFormError}</Alert>}
+
               <div className={layout.formGrid}>
                 {configFields.map((field) => (
                   <Field
@@ -258,8 +344,13 @@ export default function Setting() {
                       name={field.name}
                       min={field.min}
                       max={field.max}
+                      step={1}
                       value={field.value}
-                      onChange={(e) => field.onChange(Number(e.target.value))}
+                      onChange={(e) => {
+                        setConfigFormError('');
+                        field.onChange(e.target.value);
+                      }}
+                      onBlur={() => handleFieldBlur(field)}
                       required
                     />
                   </Field>
@@ -267,7 +358,7 @@ export default function Setting() {
               </div>
 
               <div className={cn('pt-4 border-t flex justify-end', surface.divider)}>
-                <Button type="submit" loading={saving}>
+                <Button type="submit" loading={saving} disabled={saving || !configValues}>
                   <Save className={cn(icon.md, 'mr-1.5')} />
                   保存系统配置
                 </Button>
@@ -277,7 +368,7 @@ export default function Setting() {
         </div>
 
         {/* 修改密码 Dialog */}
-        <Dialog open={passwordVisible} onOpenChange={setPasswordVisible}>
+        <Dialog open={passwordVisible} onOpenChange={handlePasswordDialogOpenChange}>
           <DialogContent className="max-w-md">
             <DialogHeader>
               <div className="flex items-center gap-2 text-slate-900">
@@ -303,10 +394,10 @@ export default function Setting() {
                 />
               </Field>
 
-              <Field label="新密码" required>
+              <Field label="新密码" required hint="密码长度为 8-72 字符">
                 <Input
                   type="password"
-                  placeholder="请输入新密码"
+                  placeholder="请输入 8-72 位新密码"
                   value={newPasswd}
                   onChange={(e) => setNewPasswd(e.target.value)}
                   prefixIcon={<Lock className={icon.md} />}
@@ -326,7 +417,11 @@ export default function Setting() {
               </Field>
 
               <DialogFooter className="pt-2">
-                <Button type="button" variant="outline" onClick={() => setPasswordVisible(false)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handlePasswordDialogOpenChange(false)}
+                >
                   取消
                 </Button>
                 <Button type="submit" loading={passwordSaving}>

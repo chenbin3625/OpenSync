@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"opensync/internal/config"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestFullSyncPlanMatchesMovedFileByStrongFingerprint(t *testing.T) {
@@ -69,6 +72,10 @@ func TestFullSyncPlanExecutesDestinationMoveBeforeDeletingOldTree(t *testing.T) 
 
 		if r.URL.Path == "/api/fs/move" {
 			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"tasks":[]}}`))
+			return
+		}
+		if r.URL.Path == "/api/fs/get" {
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"name":"movie.mkv","size":8589934592,"is_dir":false,"hash_info":{"md5":"0123456789abcdef0123456789abcdef"}}}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
@@ -280,5 +287,356 @@ func TestFullSyncPlanStillDeletesUnmatchedDestinationFileWithSizeFilter(t *testi
 
 	if len(plan.extraDeletes) != 1 {
 		t.Fatalf("extraDeletes = %#v, want the orphaned destination file", plan.extraDeletes)
+	}
+}
+
+// Issue 5: blocker lookup must use exact match and skip already-matched destination entries.
+func TestFullSyncPlanBlockerLookupUsesExactMatchAndSkipsMatchedEntries(t *testing.T) {
+	meta := FileMetadata{Size: 42}
+	src := &fullSyncSnapshot{
+		root: "/src/",
+		dirs: map[string]FileListResult{
+			"":     {"Q%26A": meta, "Q&A/": {}},
+			"Q&A/": {"inside.txt": meta},
+		},
+	}
+	dst := &fullSyncSnapshot{
+		root: "/dst/",
+		dirs: map[string]FileListResult{
+			"":     {"Q&amp;A": meta, "Q&A/": {}},
+			"Q&A/": {"inside.txt": meta},
+		},
+	}
+	plan := newFullSyncPlan(src, dst)
+	plan.build(map[string]interface{}{"method": 1})
+
+	if len(plan.blockers) != 0 {
+		t.Fatalf("blockers = %#v, want 0 (matched fuzzy file and dir must not collide)", plan.blockers)
+	}
+	if len(plan.extraDeletes) != 0 {
+		t.Fatalf("extraDeletes = %#v, want 0", plan.extraDeletes)
+	}
+	if len(plan.newFiles) != 0 || len(plan.changed) != 0 {
+		t.Fatalf("newFiles=%#v changed=%#v, want none", plan.newFiles, plan.changed)
+	}
+}
+
+// Issue 6: unmatched destination directories with excluded descendants must NOT be deleted wholesale.
+func TestFullSyncPlanProtectsExcludedDescendantsInUnmatchedDirectory(t *testing.T) {
+	src := &fullSyncSnapshot{
+		root: "/src/",
+		dirs: map[string]FileListResult{"": {}},
+	}
+	dst := &fullSyncSnapshot{
+		root: "/dst/",
+		dirs: map[string]FileListResult{
+			"":              {"orphan/": {}, "clean/": {}},
+			"orphan/":       {"drop.txt": {Size: 10}, "sub/": {}, "empty/": {}},
+			"orphan/sub/":   {"drop2.txt": {Size: 20}},
+			"orphan/empty/": {"bye.txt": {Size: 5}},
+			"clean/":        {"gone.txt": {Size: 15}},
+		},
+		excludedDirs: map[string]bool{
+			"orphan/sub/": true, // excluded file (e.g. keep.bak) lived in orphan/sub/
+		},
+	}
+
+	plan := newFullSyncPlan(src, dst)
+	plan.build(map[string]interface{}{"method": 1})
+
+	got := make(map[string]bool)
+	for _, del := range plan.extraDeletes {
+		got[del.object] = true
+	}
+
+	// orphan/ and orphan/sub/ must NOT be deleted because orphan/sub/ has an excluded entry.
+	if got["/dst/orphan"] || got["/dst/orphan/sub"] {
+		t.Fatalf("protected parent dir was slated for deletion: %#v", plan.extraDeletes)
+	}
+	// Non-excluded siblings inside orphan/ and clean/ SHOULD be deleted.
+	for _, want := range []string{"/dst/orphan/drop.txt", "/dst/orphan/sub/drop2.txt", "/dst/orphan/empty", "/dst/clean"} {
+		if !got[want] {
+			t.Fatalf("missing expected non-excluded delete %q in %#v", want, plan.extraDeletes)
+		}
+	}
+}
+
+// Issue 7: Full Sync defers extraDeletes until AFTER queued copies succeed, and skips them on copy failure.
+func TestFullSyncExecutesExtraDeletesAfterQueuedCopiesComplete(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+
+	oldConfig := config.GetConfig()
+	defer config.SetConfigForTest(oldConfig)
+	config.SetConfigForTest(&config.Config{Server: config.ServerConfig{
+		CopyConcurrency: 1,
+		ScanConcurrency: 1,
+		MaxRetries:      0,
+	}})
+
+	var mu sync.Mutex
+	var events []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch r.URL.Path {
+		case "/api/fs/list":
+			path := body["path"].(string)
+			if path == "/src/" {
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"new.txt","size":10,"is_dir":false}]}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"old.txt","size":5,"is_dir":false}]}}`))
+		case "/api/fs/copy":
+			time.Sleep(40 * time.Millisecond)
+			mu.Lock()
+			events = append(events, "copy")
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"tasks":[]}}`))
+		case "/api/fs/get":
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"name":"new.txt","size":10,"is_dir":false}}`))
+		case "/api/fs/remove":
+			mu.Lock()
+			events = append(events, "remove")
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &JobClient{JobID: 1, Job: map[string]interface{}{"id": int64(1), "enable": 1, "isCron": 2}}
+	client.tryMarkDoing()
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{
+		"method":        1,
+		"srcPath":       "/src/",
+		"dstPath":       "/dst/",
+		"useCacheS":     0,
+		"useCacheT":     0,
+		"scanIntervalS": 0,
+		"scanIntervalT": 0,
+	})
+	jt.TaskID = 10
+	jt.JobClient = client
+	client.setCurrentTask(jt)
+
+	jt.Start()
+	if !client.waitUntilIdle(5 * time.Second) {
+		t.Fatal("task did not finish")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 2 || events[0] != "copy" || events[1] != "remove" {
+		t.Fatalf("event order = %#v, want [copy remove]", events)
+	}
+}
+
+func TestFullSyncSkipsDeferredDeletesWhenQueuedCopyFails(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+
+	oldConfig := config.GetConfig()
+	defer config.SetConfigForTest(oldConfig)
+	config.SetConfigForTest(&config.Config{Server: config.ServerConfig{
+		CopyConcurrency: 1,
+		ScanConcurrency: 1,
+		MaxRetries:      0,
+	}})
+
+	var removeCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch r.URL.Path {
+		case "/api/fs/list":
+			path := body["path"].(string)
+			if path == "/src/" {
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"new.txt","size":10,"is_dir":false}]}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"old.txt","size":5,"is_dir":false}]}}`))
+		case "/api/fs/copy":
+			_, _ = w.Write([]byte(`{"code":500,"message":"copy failed","data":null}`))
+		case "/api/fs/remove":
+			removeCalls.Add(1)
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &JobClient{JobID: 1, Job: map[string]interface{}{"id": int64(1), "enable": 1, "isCron": 2}}
+	client.tryMarkDoing()
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{
+		"method":        1,
+		"srcPath":       "/src/",
+		"dstPath":       "/dst/",
+		"useCacheS":     0,
+		"useCacheT":     0,
+		"scanIntervalS": 0,
+		"scanIntervalT": 0,
+	})
+	jt.TaskID = 10
+	jt.JobClient = client
+	client.setCurrentTask(jt)
+
+	jt.Start()
+	if !client.waitUntilIdle(5 * time.Second) {
+		t.Fatal("task did not finish")
+	}
+	if got := removeCalls.Load(); got != 0 {
+		t.Fatalf("removeCalls = %d, want 0 when queued copy failed", got)
+	}
+}
+
+// Issue 8: missing destination root on first run must not retry 3x or emit failed job_task_item.
+func TestFullSyncMissingDestinationRootDoesNotRetryOrRecordFailure(t *testing.T) {
+	oldDelay := scanListRetryDelay
+	scanListRetryDelay = func(int) time.Duration { return 0 }
+	defer func() { scanListRetryDelay = oldDelay }()
+
+	var dstListBeforeMkdir atomic.Int32
+	var dstListCalls atomic.Int32
+	var mkdirCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch r.URL.Path {
+		case "/api/fs/list":
+			path := body["path"].(string)
+			if path == "/src/" {
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"a.txt","size":10,"is_dir":false}]}}`))
+				return
+			}
+			if mkdirCalls.Load() == 0 {
+				dstListBeforeMkdir.Add(1)
+			}
+			if dstListCalls.Add(1) == 1 {
+				_, _ = w.Write([]byte(`{"code":500,"message":"failed get dir: object not found","data":null}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[]}}`))
+		case "/api/fs/mkdir":
+			mkdirCalls.Add(1)
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{
+		"method":        1,
+		"srcPath":       "/src/",
+		"dstPath":       "/dst/",
+		"useCacheS":     0,
+		"useCacheT":     0,
+		"scanIntervalS": 0,
+		"scanIntervalT": 0,
+	})
+
+	jt.sync()
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
+
+	if got := dstListBeforeMkdir.Load(); got != 1 {
+		t.Fatalf("dst root list calls before mkdir = %d, want 1 (no 3x retry on missing root)", got)
+	}
+	if got := dstListCalls.Load(); got != 2 {
+		t.Fatalf("dst root total list calls = %d, want 2 (1 initial miss + 1 post-mkdir rescan)", got)
+	}
+	if got := mkdirCalls.Load(); got != 1 {
+		t.Fatalf("mkdir calls = %d, want 1", got)
+	}
+	for _, item := range persisted {
+		if item["status"] == taskStatusFailed.Int() {
+			t.Fatalf("unexpected failed task item on missing dst root: %#v", item)
+		}
+	}
+	if waiting := jt.Waiting.snapshot(); len(waiting) != 1 || waiting[0].FileName != "a.txt" {
+		t.Fatalf("waiting copies = %#v, want [a.txt]", waiting)
+	}
+}
+
+// Issue 8: deep subdirectory 404 in Full Sync must NOT trigger root Mkdir/rescan and must record scan failure without mutating dst.
+func TestFullSyncDeepSubdirNotFoundDoesNotTriggerRootMkdir(t *testing.T) {
+	oldDelay := scanListRetryDelay
+	scanListRetryDelay = func(int) time.Duration { return 0 }
+	defer func() { scanListRetryDelay = oldDelay }()
+
+	var mkdirCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch r.URL.Path {
+		case "/api/fs/list":
+			path := body["path"].(string)
+			switch {
+			case path == "/src/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[]}}`))
+			case path == "/dst/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"sub","is_dir":true}]}}`))
+			case strings.HasPrefix(path, "/dst/sub"):
+				_, _ = w.Write([]byte(`{"code":500,"message":"failed get dir: object not found","data":null}`))
+			default:
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[]}}`))
+			}
+		case "/api/fs/mkdir":
+			mkdirCalls.Add(1)
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{
+		"method":        1,
+		"srcPath":       "/src/",
+		"dstPath":       "/dst/",
+		"useCacheS":     0,
+		"useCacheT":     0,
+		"scanIntervalS": 0,
+		"scanIntervalT": 0,
+	})
+
+	jt.sync()
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatalf("flushPersistBuffer() error: %v", err)
+	}
+
+	if got := mkdirCalls.Load(); got != 0 {
+		t.Fatalf("mkdirCalls = %d, want 0 for deep subdir 404", got)
+	}
+	if waiting := jt.Waiting.snapshot(); len(waiting) != 0 {
+		t.Fatalf("waiting copies = %#v, want 0 after deep subdir scan failure", waiting)
+	}
+	foundSubdirFail := false
+	for _, item := range persisted {
+		if item["status"] == taskStatusFailed.Int() && item["dstPath"] == "/dst/sub/" {
+			foundSubdirFail = true
+			break
+		}
+	}
+	if !foundSubdirFail {
+		t.Fatalf("expected failed scan item for /dst/sub/, got %#v", persisted)
 	}
 }

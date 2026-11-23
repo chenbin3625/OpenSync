@@ -29,11 +29,11 @@ async function openPage(t, width = 1280) {
 
 for (const width of [320, 1280]) test(`task timeout displays and saves hours at ${width}px`, async (t) => {
   const page = await openPage(t, width);
-  const settings = { expires: 720, taskTimeout: 1, taskSave: 500, copyConcurrency: 4, scanConcurrency: 4, maxRetries: 3 };
+  const settings = { expires: 7, taskTimeout: 1, taskSave: 30, copyConcurrency: 4, scanConcurrency: 4, maxRetries: 3 };
   const submitted = [];
   await page.route('**/svr/system/config', (route) => {
     if (route.request().method() === 'PUT') submitted.push(route.request().postDataJSON());
-    return route.fulfill({ json: { code: 200, data: settings } });
+    return route.fulfill({ json: { code: 200, msg: 'ok', data: settings } });
   });
   await page.goto(`${baseURL}__task_settings_fixture__?settings`);
   const timeout = page.getByRole('spinbutton', { name: '单次任务超时时间', exact: true });
@@ -60,7 +60,7 @@ for (const width of [320, 1280]) test(`task timeout displays and saves hours at 
 
 test('missing task timeout uses the backend default of 48 hours', async (t) => {
   const page = await openPage(t);
-  await page.route('**/svr/system/config', (route) => route.fulfill({ json: { code: 200, data: {} } }));
+  await page.route('**/svr/system/config', (route) => route.fulfill({ json: { code: 200, msg: 'ok', data: {} } }));
   await page.goto(`${baseURL}__task_settings_fixture__?settings`);
   await expect(page.getByRole('spinbutton', { name: '单次任务超时时间', exact: true })).toHaveValue('48');
 });
@@ -82,7 +82,7 @@ for (const width of [320, 1280]) test(`task tab counts stay in their own status 
       if (!String(input).startsWith('/svr/job/stream?')) return originalFetch(input, init);
       const stream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ code: 200, data })}\n\n`));
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ code: 200, msg: 'ok', data })}\n\n`));
           init.signal.addEventListener('abort', () => controller.close(), { once: true });
         },
       });
@@ -95,13 +95,14 @@ for (const width of [320, 1280]) test(`task tab counts stay in their own status 
       waitingRequests += 1;
       if (delayWaiting) await waitingGate;
     }
-    return route.fulfill({ json: { code: 200, data: { count: 37,
+    return route.fulfill({ json: { code: 200, msg: 'ok', data: { count: 37,
       dataList: [{ id: 3, fileName: 'waiting.mkv', status: 0, type: 0, createTime: 3 }] } } }).catch(() => {});
   });
   await page.goto(`${baseURL}__task_settings_fixture__`);
   const running = page.getByRole('button', { name: /^运行中/ });
   const waiting = page.getByRole('button', { name: /^等待/ });
   await expect(running).toHaveText('运行中2');
+  await expect(running).toHaveAttribute('aria-pressed', 'true');
   for (let i = 0; i < 3; i += 1) {
     await waiting.click();
     await expect(page.getByText('waiting.mkv', { exact: true })).toBeVisible();
@@ -112,6 +113,9 @@ for (const width of [320, 1280]) test(`task tab counts stay in their own status 
   const previousRequests = waitingRequests;
   await waiting.click();
   await expect.poll(() => waitingRequests).toBeGreaterThan(previousRequests);
+  await expect(waiting).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('正在更新文件明细', { exact: true })).toBeVisible();
+  await expect(page.getByText('暂无等待文件明细', { exact: true })).toHaveCount(0);
   await running.click();
   releaseWaiting();
   await expect(running).toHaveText('运行中2');
@@ -127,4 +131,38 @@ for (const width of [320, 1280]) test(`task tab counts stay in their own status 
   if (process.env.OPENSYNC_SCREENSHOT_DIR) await page.screenshot({
     path: `${process.env.OPENSYNC_SCREENSHOT_DIR}/task-tab-counts-${width}.png`, fullPage: true,
   });
+});
+
+test('realtime coalesces a snapshot and multiple file patches without dropping file changes', async (t) => {
+  const page = await openPage(t);
+  const oldFile = { id: 1, fileName: 'older.mkv', status: 1, progress: 10, createTime: 10 };
+  const newFile = { id: 2, fileName: 'newer.mkv', status: 1, progress: 20, createTime: 20 };
+  const task = {
+    taskId: 42, scanFinish: true, createTime: Math.floor(Date.now() / 1000) - 20, duration: 20,
+    num: { wait: 0, running: 2, success: 0, fail: 0, other: 0 }, doneSize: 0, remainSize: 100,
+  };
+  await page.addInitScript((frames) => {
+    const originalFetch = window.fetch;
+    window.fetch = (input, init) => {
+      if (!String(input).startsWith('/svr/job/stream?')) return originalFetch(input, init);
+      const stream = new ReadableStream({
+        start(controller) {
+          const chunks = frames.map((data) => `data: ${JSON.stringify({ code: 200, msg: 'ok', data })}\n\n`);
+          controller.enqueue(new TextEncoder().encode(chunks.join('')));
+          init.signal.addEventListener('abort', () => controller.close(), { once: true });
+        },
+      });
+      return Promise.resolve(new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } }));
+    };
+  }, [
+    { ...task, doingTask: [oldFile, newFile] },
+    { ...task, doingTask: null, doingPatch: [{ id: 1, status: 1, progress: 43 }] },
+    { ...task, doingTask: null, doingPatch: [{ id: 2, status: 1, progress: 71 }] },
+    { ...task, doingTask: null, duration: 21 },
+  ]);
+  await page.goto(`${baseURL}__task_settings_fixture__`);
+  await expect(page.getByText('43%', { exact: true })).toBeVisible();
+  await expect(page.getByText('71%', { exact: true })).toBeVisible();
+  const filenames = page.getByText(/^(older|newer)\.mkv$/);
+  await expect(filenames).toHaveText(['newer.mkv', 'older.mkv']);
 });

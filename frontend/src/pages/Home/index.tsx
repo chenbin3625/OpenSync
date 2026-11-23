@@ -1,13 +1,10 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Inbox, LayoutDashboard, PlayCircle, History } from 'lucide-react';
+import { CircleAlert, Inbox, LayoutDashboard, PlayCircle, History } from 'lucide-react';
 import { jobGetJob, jobPut, jobDelete } from '../../api/job';
 import { alistGet } from '../../api/alist';
-import TaskList from './TaskList';
-import TaskDetail from './TaskDetail';
 import HomeSidebar from './HomeSidebar';
 import HomeOverview from './HomeOverview';
-import JobFormDrawer from './JobFormDrawer';
 import type { AlistItem, JobItem } from '../../types';
 import { buildHomeRouteSearch, readHomeRouteState, type HomeRouteState, type HomeTabKey } from './routeState';
 import { formatAlistLabel } from './homeUtils';
@@ -15,61 +12,89 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/ta
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/ui/sheet';
 import { toast } from '../../components/ui/toaster';
 import { Alert } from '../../components/common/Alert';
-import { EmptyState } from '../../components/common/StatePlaceholder';
+import { EmptyState, ErrorState, LoadingState } from '../../components/common/StatePlaceholder';
 import { cn } from '../../lib/utils';
 import { icon, surface } from '../../lib/styles';
 
 const PAGE_SIZE = 12;
+const emptyJobs: JobItem[] = [];
+const TaskList = lazy(() => import('./TaskList'));
+const TaskDetail = lazy(() => import('./TaskDetail'));
+const JobFormDrawer = lazy(() => import('./JobFormDrawer'));
+
+type JobPageResult = {
+  page: number;
+  revision: number;
+  list: JobItem[];
+  total: number;
+  error: boolean;
+};
 
 export default function Home() {
   const [searchParams, setSearchParams] = useSearchParams();
   const routeState = useMemo(() => readHomeRouteState(searchParams), [searchParams]);
   const { tab: activeJobTab, jobId: selectedJobId, page } = routeState;
-  const [list, setList] = useState<JobItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [listLoaded, setListLoaded] = useState(false);
-  const [listError, setListError] = useState(false);
+  const [listResult, setListResult] = useState<JobPageResult | null>(null);
+  const [listRevision, setListRevision] = useState(0);
   const [alistList, setAlistList] = useState<AlistItem[]>([]);
-  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [drawerVisible, setDrawerVisible] = useState<boolean | null>(null);
   const [editingJob, setEditingJob] = useState<JobItem | null>(null);
   const [taskDetailDrawerTaskId, setTaskDetailDrawerTaskId] = useState<string>('');
-  const listRequestRef = useRef(0);
 
-  const fetchList = useCallback(async (p = page, ps = PAGE_SIZE) => {
-    const requestID = ++listRequestRef.current;
-    setLoading(true);
-    setListError(false);
-    try {
-      const res = await jobGetJob({ pageSize: ps, pageNum: p }, { silent: true });
-      if (requestID !== listRequestRef.current) return;
-      setList(res.data?.dataList || []);
-      setTotal(res.data?.count || 0);
-    } catch (err) {
-      if (requestID !== listRequestRef.current) return;
-      setList([]);
-      setTotal(0);
-      setListError(true);
-      console.error('job list fetch failed', err);
-    } finally {
-      if (requestID === listRequestRef.current) {
-        setListLoaded(true);
-        setLoading(false);
+  const pageResult = listResult?.page === page ? listResult : null;
+  const list = pageResult?.list ?? emptyJobs;
+  const total = listResult?.total ?? 0;
+  const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const loading = pageResult?.revision !== listRevision || (pageResult?.error === false && page > maxPage);
+  const listError = !loading && pageResult?.error === true;
+  const selectedJob = list.find((job) => job.id === selectedJobId) ?? list[0] ?? null;
+
+  const refreshList = () => setListRevision((revision) => revision + 1);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadJobs() {
+      try {
+        const res = await jobGetJob({ pageSize: PAGE_SIZE, pageNum: page }, { silent: true, signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setListResult({
+          page,
+          revision: listRevision,
+          list: res.data?.dataList ?? emptyJobs,
+          total: res.data?.count ?? 0,
+          error: false,
+        });
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        console.error('job list fetch failed', err);
+        setListResult((previous) => ({
+          page,
+          revision: listRevision,
+          list: previous?.page === page ? previous.list : emptyJobs,
+          total: previous?.total ?? 0,
+          error: true,
+        }));
       }
     }
-  }, [page]);
+    void loadJobs();
+    return () => controller.abort();
+  }, [listRevision, page]);
 
-  const fetchAlistList = useCallback(async () => {
-    try {
-      const res = await alistGet();
-      setAlistList(res.data || []);
-    } catch (err) {
-      console.error('alist list fetch failed', err);
+  useEffect(() => {
+    const controller = new AbortController();
+    async function fetchAlistList() {
+      try {
+        const res = await alistGet({ signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setAlistList(res.data || []);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        console.error('alist list fetch failed', err);
+      }
     }
+    void fetchAlistList();
+    return () => controller.abort();
   }, []);
-
-  useEffect(() => { fetchAlistList(); }, [fetchAlistList]);
-  useEffect(() => { fetchList(); }, [fetchList]);
 
   const updateHomeRouteState = useCallback((state: Partial<HomeRouteState>) => {
     const current = readHomeRouteState(searchParams);
@@ -81,25 +106,14 @@ export default function Home() {
   }, [searchParams, setSearchParams]);
 
   useEffect(() => {
-    if (!listLoaded) return;
-    let nextJobId = selectedJobId;
-    if (list.length === 0) {
-      nextJobId = null;
-    } else if (!selectedJobId || !list.some((job) => job.id === selectedJobId)) {
-      nextJobId = list[0].id;
-    }
-
-    if (nextJobId === selectedJobId) return;
-    updateHomeRouteState({ jobId: nextJobId });
-  }, [list, listLoaded, selectedJobId, updateHomeRouteState]);
-
-  useEffect(() => {
-    if (!listLoaded) return;
-    const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (!pageResult || pageResult.error || pageResult.revision !== listRevision) return;
     if (page > maxPage) {
-      updateHomeRouteState({ page: maxPage });
+      updateHomeRouteState({ page: maxPage, jobId: null });
+      return;
     }
-  }, [listLoaded, total, page, updateHomeRouteState]);
+    const nextJobId = selectedJob?.id ?? null;
+    if (nextJobId !== selectedJobId) updateHomeRouteState({ jobId: nextJobId });
+  }, [listRevision, maxPage, page, pageResult, selectedJob, selectedJobId, updateHomeRouteState]);
 
   const handleAdd = () => {
     setEditingJob(null);
@@ -114,14 +128,14 @@ export default function Home() {
   const handleDrawerSubmit = () => {
     toast.success(editingJob ? '编辑成功，下次任务生效' : '创建成功');
     setDrawerVisible(false);
-    fetchList();
+    refreshList();
   };
 
   const handleDelete = async (id: number) => {
     try {
       await jobDelete({ id });
       toast.success('删除成功');
-      fetchList();
+      refreshList();
     } catch (err) {
       console.error('job delete failed', err);
     }
@@ -131,7 +145,7 @@ export default function Home() {
     try {
       await jobPut({ id: String(job.id), pause: job.enable === 1 });
       toast.success('操作成功');
-      fetchList();
+      refreshList();
     } catch (err) {
       console.error('job toggle failed', err);
     }
@@ -141,7 +155,7 @@ export default function Home() {
     try {
       await jobPut({ id: String(id) });
       toast.success('已提交执行');
-      fetchList();
+      refreshList();
     } catch (err) {
       console.error('job run failed', err);
     }
@@ -151,13 +165,14 @@ export default function Home() {
     try {
       await jobPut({});
       toast.success('已提交执行所有同步任务');
-      fetchList();
+      refreshList();
     } catch (err) {
       console.error('job run all failed', err);
     }
   };
 
   const handlePageChange = useCallback((nextPage: number) => {
+    setTaskDetailDrawerTaskId('');
     updateHomeRouteState({ page: nextPage, jobId: null });
   }, [updateHomeRouteState]);
 
@@ -167,8 +182,6 @@ export default function Home() {
     return formatAlistLabel(a);
   }, [alistList]);
 
-  const selectedJob = list.find((job) => job.id === selectedJobId) || null;
-
   // 桌面端两栏铺满 main 的剩余高度：md:grow 让容器高度等于 max(内容, 可用空间)，
   // 既不像按视口高度手算那样多出十几像素的整页滚动条，也不会压缩长内容。
   return (
@@ -176,19 +189,29 @@ export default function Home() {
       <HomeSidebar
         list={list}
         loading={loading}
-        selectedJobId={selectedJobId}
+        failed={listError}
+        selectedJobId={selectedJob?.id ?? null}
         total={total}
         page={page}
         pageSize={PAGE_SIZE}
         onAdd={handleAdd}
         onRunAll={handleRunAll}
-        onSelectJob={(jobId) => updateHomeRouteState({ jobId })}
-        onClearTaskDetail={() => setTaskDetailDrawerTaskId('')}
+        onSelectJob={(jobId) => {
+          setTaskDetailDrawerTaskId('');
+          updateHomeRouteState({ jobId });
+        }}
         setPage={handlePageChange}
       />
 
-      <main className={cn(surface.card, 'min-w-0 p-4 sm:p-5 flex flex-col')}>
-        {listError && <Alert className="mb-4">同步任务列表加载失败</Alert>}
+      <section aria-label="同步任务内容" className={cn(surface.card, 'min-w-0 p-4 sm:p-5 flex flex-col')}>
+        {listError && selectedJob && (
+          <Alert className="mb-4">
+            同步任务列表更新失败
+            <button type="button" onClick={refreshList} className="ml-2 rounded-sm underline focus-visible:outline-2">
+              重新加载
+            </button>
+          </Alert>
+        )}
 
         {selectedJob ? (
           <Tabs
@@ -196,17 +219,17 @@ export default function Home() {
             onValueChange={(key) => updateHomeRouteState({ tab: key as HomeTabKey })}
             className="w-full space-y-4"
           >
-            <TabsList>
-              <TabsTrigger value="overview" className="flex items-center gap-1.5 text-xs">
-                <LayoutDashboard className={icon.sm} />
+            <TabsList aria-label="同步任务视图" className="grid w-full grid-cols-3 sm:inline-flex sm:w-auto">
+              <TabsTrigger value="overview" className="flex items-center gap-1.5 px-2 text-xs sm:px-3">
+                <LayoutDashboard className={cn(icon.sm, 'max-[359px]:hidden')} aria-hidden="true" />
                 <span>总览</span>
               </TabsTrigger>
-              <TabsTrigger value="realtime" className="flex items-center gap-1.5 text-xs">
-                <PlayCircle className={icon.sm} />
+              <TabsTrigger value="realtime" className="flex items-center gap-1.5 px-2 text-xs sm:px-3">
+                <PlayCircle className={cn(icon.sm, 'max-[359px]:hidden')} aria-hidden="true" />
                 <span>实时任务</span>
               </TabsTrigger>
-              <TabsTrigger value="history" className="flex items-center gap-1.5 text-xs">
-                <History className={icon.sm} />
+              <TabsTrigger value="history" className="flex items-center gap-1.5 px-2 text-xs sm:px-3">
+                <History className={cn(icon.sm, 'max-[359px]:hidden')} aria-hidden="true" />
                 <span>历史任务</span>
               </TabsTrigger>
             </TabsList>
@@ -223,42 +246,56 @@ export default function Home() {
             </TabsContent>
 
             <TabsContent value="realtime">
-              <TaskList
-                key={`realtime-${selectedJob.id}`}
-                jobId={String(selectedJob.id)}
-                view="realtime"
-                active={activeJobTab === 'realtime'}
-                onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-              />
+              <Suspense fallback={<LoadingState title="正在加载实时任务" />}>
+                <TaskList
+                  key={`realtime-${selectedJob.id}`}
+                  jobId={String(selectedJob.id)}
+                  view="realtime"
+                  active={activeJobTab === 'realtime'}
+                  onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+                />
+              </Suspense>
             </TabsContent>
 
             <TabsContent value="history">
-              <TaskList
-                key={`history-${selectedJob.id}`}
-                jobId={String(selectedJob.id)}
-                view="history"
-                active={activeJobTab === 'history'}
-                onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
-              />
+              <Suspense fallback={<LoadingState title="正在加载历史任务" />}>
+                <TaskList
+                  key={`history-${selectedJob.id}`}
+                  jobId={String(selectedJob.id)}
+                  view="history"
+                  active={activeJobTab === 'history'}
+                  onTaskDetail={(taskId) => setTaskDetailDrawerTaskId(String(taskId))}
+                />
+              </Suspense>
             </TabsContent>
           </Tabs>
         ) : (
           <div className="grid place-items-center flex-1 min-h-[360px]">
-            <EmptyState
-              icon={Inbox}
-              title="暂无同步任务，点击「新建」创建第一个同步任务"
-            />
+            {loading ? (
+              <LoadingState title="正在加载同步任务" />
+            ) : listError ? (
+              <ErrorState icon={CircleAlert} title="同步任务列表加载失败" onRetry={refreshList} />
+            ) : (
+              <EmptyState icon={Inbox} title="暂无同步任务" />
+            )}
           </div>
         )}
-      </main>
+      </section>
 
-      <JobFormDrawer
-        visible={drawerVisible}
-        editingJob={editingJob}
-        alistList={alistList}
-        onClose={() => setDrawerVisible(false)}
-        onSubmit={handleDrawerSubmit}
-      />
+      {drawerVisible !== null && (
+        <Suspense fallback={<LoadingState
+          title="正在加载任务表单"
+          className="fixed inset-x-4 bottom-4 z-40 mx-auto w-fit rounded-lg border border-line bg-surface px-4 py-3 shadow-sm"
+        />}>
+          <JobFormDrawer
+            visible={drawerVisible}
+            editingJob={editingJob}
+            alistList={alistList}
+            onClose={() => setDrawerVisible(false)}
+            onSubmit={handleDrawerSubmit}
+          />
+        </Suspense>
+      )}
 
       <Sheet
         open={!!taskDetailDrawerTaskId}
@@ -266,14 +303,16 @@ export default function Home() {
       >
         <SheetContent
           side="bottom"
-          className="h-[90vh] overflow-hidden flex flex-col p-4 sm:p-6"
+          className="h-[90dvh] overflow-hidden flex flex-col p-4 sm:p-6"
         >
           <SheetHeader className={cn('pb-3 border-b', surface.divider)}>
             <SheetTitle>任务详情 — 任务 #{taskDetailDrawerTaskId}</SheetTitle>
           </SheetHeader>
           <div className="flex-1 overflow-auto pt-3">
             {taskDetailDrawerTaskId && (
-              <TaskDetail key={taskDetailDrawerTaskId} taskId={taskDetailDrawerTaskId} embedded />
+              <Suspense fallback={<LoadingState title="正在加载任务详情" />}>
+                <TaskDetail key={taskDetailDrawerTaskId} taskId={taskDetailDrawerTaskId} embedded />
+              </Suspense>
             )}
           </div>
         </SheetContent>

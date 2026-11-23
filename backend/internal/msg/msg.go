@@ -23,6 +23,7 @@ const (
 	AlistNoCopyTask         = "AList未返回复制任务，且目标文件不存在"
 	NotifyNotFound          = "未找到通知配置，可能已经被删除"
 	SetCookieFail           = "登录态写入失败，请重试"
+	InitialSetupLocalOnly   = "首次初始化只能在服务器本机执行，或显式开启远程初始化"
 	TaskMayDelete           = "任务未找到。可能是您手动到AList中删除了复制任务；或者Alist因手动/异常奔溃被重启，导致任务记录丢失"
 	Src                     = "来源"
 	Dst                     = "目标"

@@ -1,6 +1,7 @@
 package mapper
 
 import (
+	"context"
 	"database/sql"
 	"opensync/internal/config"
 	"path/filepath"
@@ -27,6 +28,13 @@ func TestInitSQLCreatesSchemaWithoutInitialAdminUser(t *testing.T) {
 	if !tableHasColumn(GetDB(), "user_list", "recoveryKey") {
 		t.Fatalf("user_list missing recoveryKey column")
 	}
+	var userVer int
+	if err := GetDB().QueryRow("PRAGMA user_version").Scan(&userVer); err != nil {
+		t.Fatalf("PRAGMA user_version error: %v", err)
+	}
+	if userVer != currentVersion {
+		t.Fatalf("PRAGMA user_version = %d, want %d", userVer, currentVersion)
+	}
 }
 
 func TestInitSQLCanRestartBeforeInitialAdminUserExists(t *testing.T) {
@@ -52,6 +60,239 @@ func TestInitSQLCanRestartBeforeInitialAdminUserExists(t *testing.T) {
 	var version int64
 	if err := GetDB().QueryRow("SELECT sqlVersion FROM user_list LIMIT 1").Scan(&version); err != sql.ErrNoRows {
 		t.Fatalf("read empty sqlVersion error = %v, want sql.ErrNoRows", err)
+	}
+	ver, err := schemaVersion(GetDB())
+	if err != nil {
+		t.Fatalf("schemaVersion() error: %v", err)
+	}
+	if ver != currentVersion {
+		t.Fatalf("schemaVersion() = %d, want %d", ver, currentVersion)
+	}
+}
+
+func TestInitSchemaRollsBackCompletelyOnPartialDDLFailure(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "partial-init.db")
+	testDB, err := openConfiguredDB(dbPath)
+	if err != nil {
+		t.Fatalf("openConfiguredDB() error: %v", err)
+	}
+	defer testDB.Close()
+
+	brokenStmts := append([]string{}, firstRunSchemaStatements()[:2]...)
+	brokenStmts = append(brokenStmts, "CREATE TABLE invalid_syntax ((")
+
+	if err := initSchemaWithStmts(testDB, brokenStmts); err == nil {
+		t.Fatalf("initSchemaWithStmts(broken) error = nil, want failure")
+	}
+
+	if tableExists(testDB, "user_list") {
+		t.Fatalf("partial first-run init left user_list behind instead of rolling back")
+	}
+	if tableExists(testDB, "alist_list") {
+		t.Fatalf("partial first-run init left alist_list behind instead of rolling back")
+	}
+	var userVer int
+	if err := testDB.QueryRow("PRAGMA user_version").Scan(&userVer); err != nil {
+		t.Fatalf("PRAGMA user_version error: %v", err)
+	}
+	if userVer != 0 {
+		t.Fatalf("PRAGMA user_version after rollback = %d, want 0", userVer)
+	}
+
+	// Retry with valid schema must succeed cleanly.
+	if err := initSchema(testDB); err != nil {
+		t.Fatalf("retry initSchema() after rollback error: %v", err)
+	}
+	for _, tbl := range []string{"user_list", "alist_list", "job", "job_task", "job_task_item", "job_task_item_fts", "notify"} {
+		if !tableExists(testDB, tbl) {
+			t.Fatalf("expected table %q after clean retry", tbl)
+		}
+	}
+}
+
+func TestSchemaVersionPropagatesDBErrors(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	_ = testDB.Close()
+
+	if _, err := schemaVersion(testDB); err == nil {
+		t.Fatalf("schemaVersion(closedDB) error = nil, want error")
+	}
+}
+
+func TestSchemaVersionNeverRegressesOnStaleColumnDefault(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+	defer SetDBForTest(testDB)()
+
+	// Simulate a DB originally created by version 260612 with a stale column DEFAULT.
+	if _, err := testDB.Exec(`CREATE TABLE user_list(
+		id integer primary key autoincrement,
+		userName text,
+		passwd text,
+		recoveryKey text,
+		sqlVersion integer DEFAULT 260612
+	)`); err != nil {
+		t.Fatalf("create user_list: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO user_list(userName, passwd, sqlVersion) VALUES ('admin', 'x', 260612)"); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+
+	if err := migrateDBTx(testDB, 260612); err != nil {
+		t.Fatalf("migrateDBTx() error: %v", err)
+	}
+
+	// Wipe users and re-create via CreateInitialUser; sqlVersion must be currentVersion.
+	if _, err := testDB.Exec("DELETE FROM user_list"); err != nil {
+		t.Fatalf("delete users: %v", err)
+	}
+	if _, err := CreateInitialUser("admin2", "hash", "rec"); err != nil {
+		t.Fatalf("CreateInitialUser() error: %v", err)
+	}
+	var rowVer int
+	if err := testDB.QueryRow("SELECT sqlVersion FROM user_list WHERE userName='admin2'").Scan(&rowVer); err != nil {
+		t.Fatalf("read sqlVersion: %v", err)
+	}
+	if rowVer != currentVersion {
+		t.Fatalf("CreateInitialUser sqlVersion = %d, want %d", rowVer, currentVersion)
+	}
+
+	// Even if a row is inserted via raw SQL triggering the stale 260612 DEFAULT,
+	// schemaVersion() must still return currentVersion via PRAGMA user_version.
+	if _, err := testDB.Exec("DELETE FROM user_list"); err != nil {
+		t.Fatalf("delete users: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO user_list(userName, passwd) VALUES ('legacy-insert', 'hash')"); err != nil {
+		t.Fatalf("raw insert user: %v", err)
+	}
+	ver, err := schemaVersion(testDB)
+	if err != nil {
+		t.Fatalf("schemaVersion() error: %v", err)
+	}
+	if ver != currentVersion {
+		t.Fatalf("schemaVersion() = %d, want %d (must not regress to stale column DEFAULT)", ver, currentVersion)
+	}
+}
+
+func TestInitSchemaRebuildsPre260614FTSWithEmptyUserList(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+	defer SetDBForTest(testDB)()
+
+	// Simulate a pre-260614 DB with empty user_list (PRAGMA user_version == 0)
+	// and an outdated FTS5 table without trigram or alistTaskId/errMsg columns.
+	for _, stmt := range []string{
+		`CREATE TABLE user_list(
+			id integer primary key autoincrement,
+			userName text,
+			passwd text,
+			recoveryKey text,
+			sqlVersion integer DEFAULT 260612,
+			createTime integer DEFAULT (strftime('%s', 'now'))
+		)`,
+		`CREATE TABLE job(
+			id integer primary key autoincrement,
+			enable integer DEFAULT 1,
+			remark text,
+			srcPath text,
+			dstPath text,
+			alistId integer,
+			useCacheT integer DEFAULT 0,
+			scanIntervalT integer DEFAULT 0,
+			useCacheS integer DEFAULT 0,
+			scanIntervalS integer DEFAULT 0,
+			method integer,
+			interval integer,
+			isCron integer DEFAULT 0,
+			month text DEFAULT NULL,
+			day text DEFAULT NULL,
+			day_of_week text DEFAULT NULL,
+			hour text DEFAULT NULL,
+			minute text DEFAULT NULL,
+			second text DEFAULT NULL,
+			exclude text DEFAULT NULL,
+			minFileSize integer DEFAULT 0,
+			maxFileSize integer DEFAULT 0,
+			createTime integer DEFAULT (strftime('%s', 'now'))
+		)`,
+		`CREATE TABLE job_task(
+			id integer primary key autoincrement,
+			jobId integer,
+			status integer DEFAULT 1,
+			errMsg text,
+			runTime integer,
+			taskNum text,
+			createTime integer DEFAULT (strftime('%s', 'now'))
+		)`,
+		`CREATE TABLE job_task_item(
+			id integer primary key autoincrement,
+			taskId integer,
+			srcPath text,
+			dstPath text,
+			isPath integer DEFAULT 0,
+			fileName text,
+			fileSize integer,
+			type integer,
+			alistTaskId text,
+			status integer DEFAULT 0,
+			progress real,
+			errMsg text,
+			createTime integer DEFAULT (strftime('%s', 'now'))
+		)`,
+		`CREATE VIRTUAL TABLE job_task_item_fts USING fts5(
+			fileName,
+			content='job_task_item',
+			content_rowid='id'
+		)`,
+		`INSERT INTO job_task_item(id, taskId, srcPath, dstPath, fileName, alistTaskId, errMsg)
+		 VALUES (1, 10, '/src/alpha.mkv', '/dst/alpha.mkv', 'alpha.mkv', 'copy_xyz_999', 'network stalled')`,
+	} {
+		if _, err := testDB.Exec(stmt); err != nil {
+			t.Fatalf("setup SQL %q failed: %v", stmt, err)
+		}
+	}
+
+	if err := initSchema(testDB); err != nil {
+		t.Fatalf("initSchema() error: %v", err)
+	}
+
+	// Substring trigram searches across fileName, alistTaskId, and errMsg must match.
+	for _, needle := range []string{"lpha.m", "xyz_9", "stalled"} {
+		var rowID int64
+		if err := testDB.QueryRow("SELECT rowid FROM job_task_item_fts WHERE job_task_item_fts MATCH ?", fts5Phrase(needle)).Scan(&rowID); err != nil {
+			t.Fatalf("rebuilt FTS5 failed to match %q: %v", needle, err)
+		}
+		if rowID != 1 {
+			t.Fatalf("rebuilt FTS5 rowid for %q = %d, want 1", needle, rowID)
+		}
+	}
+}
+
+func TestMigrationHelpersPropagateErrors(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	_ = testDB.Close()
+
+	ctx := context.Background()
+	if _, err := tableExistsContext(ctx, testDB, "user_list"); err == nil {
+		t.Fatalf("tableExistsContext(closedDB) error = nil, want error")
+	}
+	if _, err := tableHasColumnDB(testDB, "user_list", "sqlVersion"); err == nil {
+		t.Fatalf("tableHasColumnDB(closedDB) error = nil, want error")
+	}
+	if _, err := shouldSkipMigrationStatement(ctx, testDB, "ALTER TABLE job DROP COLUMN cron"); err == nil {
+		t.Fatalf("shouldSkipMigrationStatement(closedDB) error = nil, want error")
 	}
 }
 
@@ -258,9 +499,17 @@ func TestEnsureIndexesCreatesTaskStatusTimeIndex(t *testing.T) {
 	)`); err != nil {
 		t.Fatalf("create job_task_item: %v", err)
 	}
+	if _, err := testDB.Exec(`CREATE INDEX idx_job_task_item_task_status ON job_task_item(taskId, status)`); err != nil {
+		t.Fatalf("create legacy redundant index: %v", err)
+	}
 
-	ensureIndexes(testDB)
+	if err := ensureIndexes(testDB); err != nil {
+		t.Fatalf("ensureIndexes() error: %v", err)
+	}
 
+	if indexExists(testDB, "idx_job_task_item_task_status") {
+		t.Fatalf("expected redundant idx_job_task_item_task_status to be dropped")
+	}
 	if !indexExists(testDB, "idx_job_task_item_task_status_time") {
 		t.Fatalf("expected idx_job_task_item_task_status_time to exist")
 	}
