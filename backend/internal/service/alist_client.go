@@ -591,8 +591,11 @@ func (c *AlistClient) FilePathList(ctx context.Context, path string) ([]map[stri
 // when AList reports the object does not exist, and (nil, false, err) on
 // transport, auth, proxy, or decode errors.
 func (c *AlistClient) GetFileInfoContext(ctx context.Context, dir, name string) (*FileListEntry, bool, error) {
-	dir = strings.TrimRight(strings.TrimSpace(dir), "/")
-	filePath := dir + "/" + strings.TrimLeft(strings.TrimSpace(name), "/")
+	// Preserve leading/trailing spaces in directory and file names; only strip
+	// line breaks and joining slashes.
+	dir = strings.TrimRight(strings.Trim(dir, "\r\n"), "/")
+	cleanName := strings.TrimLeft(strings.Trim(name, "\r\n"), "/")
+	filePath := dir + "/" + cleanName
 	data, err := c.PostContext(ctx, "/api/fs/get", alistPathRequest{Path: filePath}, nil)
 	if err != nil {
 		if isAlistObjectNotFound(err) {

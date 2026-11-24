@@ -413,13 +413,13 @@ func NewJobClient(job map[string]interface{}, isInit bool) *JobClient {
 }
 
 func (jc *JobClient) runMarkedJob() {
-	jc.runMarkedJobConfig(0, nil)
+	jc.runMarkedJobConfig(0, 0, 0, nil)
 }
 
 // runMarkedJobConfig starts a task. With sourceTaskID > 0 it replays the source
 // task's items whose status is in statuses (retry-failed); otherwise it runs a
 // fresh full scan.
-func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatus) {
+func (jc *JobClient) runMarkedJobConfig(sourceTaskID, sourceAlistID, expectedAlistID int64, statuses []taskStatus) {
 	taskID := int64(0)
 	var task *JobTask
 	defer func() {
@@ -446,9 +446,18 @@ func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatu
 		return
 	}
 
-	jobID := jc.idSnapshot()
+	jobID, job, _ := jc.configSnapshot()
+	alistID := util.ToInt64(job["alistId"])
+	if sourceTaskID > 0 {
+		if (sourceAlistID > 0 && alistID != sourceAlistID) || (expectedAlistID > 0 && alistID != expectedAlistID) {
+			log.Printf("Aborting retry of task %d for job %d: engine changed (%d -> %d)", sourceTaskID, jobID, sourceAlistID, alistID)
+			jc.releaseTask(nil)
+			return
+		}
+	}
+
 	var err error
-	taskID, err = mapper.AddJobTask(jobID, time.Now().Unix())
+	taskID, err = mapper.AddJobTaskWithAlist(jobID, alistID, time.Now().Unix())
 	if err != nil {
 		log.Printf("Failed to create task for job %d: %v", jobID, err)
 		panic(err.Error())
@@ -460,9 +469,10 @@ func (jc *JobClient) runMarkedJobConfig(sourceTaskID int64, statuses []taskStatu
 		jc.releaseTask(nil)
 		return
 	}
-	task = newJobTask(taskID, jc)
+	task = newJobTaskWithConfig(taskID, jc, job)
 	if sourceTaskID > 0 {
 		task.RetrySourceTaskID = sourceTaskID
+		task.RetrySourceAlistID = sourceAlistID
 		task.RetryStatuses = append([]taskStatus(nil), statuses...)
 	}
 	if !jc.attachTaskIfActive(task) {
@@ -509,10 +519,16 @@ func (jc *JobClient) DoManual() {
 // DoRetryFailedTaskItems triggers a manual execution that replays the non-success
 // items of a historical task.
 func (jc *JobClient) DoRetryFailedTaskItems(sourceTaskID int64) {
+	jc.DoRetryFailedTaskItemsWithAlist(sourceTaskID, 0, 0)
+}
+
+// DoRetryFailedTaskItemsWithAlist replays the non-success items of a historical
+// task after verifying the job's engine still matches the historical task.
+func (jc *JobClient) DoRetryFailedTaskItemsWithAlist(sourceTaskID, sourceAlistID, expectedAlistID int64) {
 	if err := jc.tryStartManualRun(); err != nil {
 		panicPublic(err.Error())
 	}
-	go jc.runMarkedJobConfig(sourceTaskID, retryableTaskStatuses)
+	go jc.runMarkedJobConfig(sourceTaskID, sourceAlistID, expectedAlistID, retryableTaskStatuses)
 }
 
 // ResumeJob enables and resumes the job

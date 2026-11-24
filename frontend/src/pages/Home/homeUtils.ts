@@ -175,6 +175,32 @@ export const cronValue = (value?: string | null, fallback = '*') => {
   return normalized || fallback;
 };
 
+// Match backend buildCronSpec so editing an existing cron job preserves its
+// effective schedule instead of backfilling omitted fields (such as hour) with
+// the new-job preset default.
+export function resolveCronFields(values: ScheduleValues): typeof defaultCronFields {
+  const raw = {
+    second: String(values.second ?? '').trim(),
+    minute: String(values.minute ?? '').trim(),
+    hour: String(values.hour ?? '').trim(),
+    day: String(values.day ?? '').trim(),
+    month: String(values.month ?? '').trim(),
+    day_of_week: String(values.day_of_week ?? '').trim(),
+  };
+  if (!Object.values(raw).some(Boolean)) {
+    return { ...defaultCronFields };
+  }
+  const hasCoarserThanMinute = Boolean(raw.hour || raw.day || raw.month || raw.day_of_week);
+  return {
+    second: raw.second || '0',
+    minute: raw.minute || (hasCoarserThanMinute ? '0' : '*'),
+    hour: raw.hour || '*',
+    day: raw.day || '*',
+    month: raw.month || '*',
+    day_of_week: raw.day_of_week || '*',
+  };
+}
+
 export const formatTime = (hour?: string | null, minute?: string | null, second?: string | null) => {
   const h = cronValue(hour);
   const m = cronValue(minute);
@@ -205,8 +231,13 @@ export const formatCronDayOfWeek = (value?: string | null) => {
 };
 
 export const describeCronPlan = (values: ScheduleValues) => {
+  const rawHour = String(values.hour ?? '').trim();
+  const rawDay = String(values.day ?? '').trim();
+  const rawMonth = String(values.month ?? '').trim();
+  const rawDayOfWeek = String(values.day_of_week ?? '').trim();
+  const hasCoarserThanMinute = Boolean(rawHour || rawDay || rawMonth || rawDayOfWeek);
   const second = cronValue(values.second, '0');
-  const minute = cronValue(values.minute);
+  const minute = cronValue(values.minute, hasCoarserThanMinute ? '0' : '*');
   const hour = cronValue(values.hour);
   const day = cronValue(values.day);
   const month = cronValue(values.month);

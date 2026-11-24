@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const currentVersion = 260616
+const currentVersion = 260617
 
 const (
 	ftsCreateTableSQL = `CREATE VIRTUAL TABLE IF NOT EXISTS job_task_item_fts USING fts5(
@@ -199,6 +199,7 @@ func firstRunSchemaStatements() []string {
 		`CREATE TABLE job_task(
 				id integer primary key autoincrement,
 				jobId integer,
+				alistId integer DEFAULT 0,
 				status integer DEFAULT 1,
 				errMsg text,
 				runTime integer,
@@ -406,6 +407,9 @@ func migrationStatements(fromVersion int64) []string {
 			"DROP INDEX IF EXISTS idx_job_task_item_task_is_path_time",
 		)
 	}
+	if fromVersion < 260617 {
+		stmts = append(stmts, "ALTER TABLE job_task ADD COLUMN alistId integer DEFAULT 0")
+	}
 	stmts = append(stmts,
 		fmt.Sprintf("UPDATE user_list SET sqlVersion=%d", currentVersion),
 		fmt.Sprintf("PRAGMA user_version=%d", currentVersion),
@@ -477,6 +481,13 @@ func migrateDBTx(db *sql.DB, fromVersion int64) error {
 
 func shouldSkipMigrationStatement(ctx context.Context, q sqlContextQueryer, stmt string) (bool, error) {
 	if tableName, columnName, ok := parseAlterTableAddColumn(stmt); ok {
+		exists, err := tableExistsContext(ctx, q, tableName)
+		if err != nil {
+			return false, err
+		}
+		if !exists {
+			return true, nil
+		}
 		return tableHasColumnContext(ctx, q, tableName, columnName)
 	}
 

@@ -623,6 +623,38 @@ func TestMigrateDBTxAddsRecoveryKeyColumn(t *testing.T) {
 	}
 }
 
+func TestMigrateDBTxAddsJobTaskAlistIDColumn(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+
+	for _, stmt := range []string{
+		`CREATE TABLE user_list(id integer primary key autoincrement, userName text, passwd text, sqlVersion integer)`,
+		`INSERT INTO user_list(userName, passwd, sqlVersion) VALUES ('admin', 'x', 260616)`,
+		`CREATE TABLE job_task(id integer primary key autoincrement, jobId integer, status integer, errMsg text, runTime integer, taskNum text, createTime integer)`,
+	} {
+		if _, err := testDB.Exec(stmt); err != nil {
+			t.Fatalf("setup SQL %q: %v", stmt, err)
+		}
+	}
+
+	if err := migrateDBTx(testDB, 260616); err != nil {
+		t.Fatalf("migrateDBTx(260616) error: %v", err)
+	}
+	if !tableHasColumn(testDB, "job_task", "alistId") {
+		t.Fatalf("job_task missing migrated alistId column")
+	}
+	var version int64
+	if err := testDB.QueryRow("SELECT sqlVersion FROM user_list LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("read sqlVersion: %v", err)
+	}
+	if version != currentVersion {
+		t.Fatalf("sqlVersion = %d, want %d", version, currentVersion)
+	}
+}
+
 func tableHasColumn(db *sql.DB, tableName, columnName string) bool {
 	rows, err := db.Query("PRAGMA table_info(" + tableName + ")")
 	if err != nil {

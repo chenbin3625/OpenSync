@@ -383,3 +383,42 @@ func TestFetchAllToPageUsesSeparateCountAndKeepsPageRowsClean(t *testing.T) {
 		t.Fatalf("unpaged response should set truncated when rows exceed the limit")
 	}
 }
+
+func TestInitDBSupportsHashAndSpecialCharactersInPath(t *testing.T) {
+	for _, dirName := range []string{"backup#1", "dir?v=1", "pct%20dir"} {
+		t.Run(dirName, func(t *testing.T) {
+			root := t.TempDir()
+			dataDir := filepath.Join(root, dirName)
+			if err := os.MkdirAll(dataDir, 0755); err != nil {
+				t.Fatalf("MkdirAll(%s) error: %v", dataDir, err)
+			}
+			dbPath := filepath.Join(dataDir, "openSync.db")
+			resetGlobalDBForTest(t, &config.Config{
+				DB:     config.DBConfig{DBName: dbPath},
+				Server: config.ServerConfig{PasswdStr: "test-secret"},
+			})
+
+			InitSQL()
+			if _, err := os.Stat(dbPath); err != nil {
+				t.Fatalf("expected DB file at %q: %v", dbPath, err)
+			}
+			if dirName == "backup#1" {
+				sibling := filepath.Join(root, "backup")
+				if _, err := os.Stat(sibling); !os.IsNotExist(err) {
+					t.Fatalf("unexpected truncated sibling DB %q created instead of %q", sibling, dbPath)
+				}
+			}
+			var journalMode string
+			if err := GetDB().QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil || journalMode != "wal" {
+				t.Fatalf("PRAGMA journal_mode = %q, err = %v; want wal", journalMode, err)
+			}
+			var fk, autoVac int
+			if err := GetDB().QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil || fk != 1 {
+				t.Fatalf("PRAGMA foreign_keys = %d, err = %v; want 1", fk, err)
+			}
+			if err := GetDB().QueryRow("PRAGMA auto_vacuum").Scan(&autoVac); err != nil || autoVac != 2 {
+				t.Fatalf("PRAGMA auto_vacuum = %d, err = %v; want 2", autoVac, err)
+			}
+		})
+	}
+}

@@ -59,6 +59,7 @@ type JobTask struct {
 	CurrentMu sync.RWMutex
 
 	RetrySourceTaskID         int64
+	RetrySourceAlistID        int64
 	RetryStatuses             []taskStatus
 	FatalMu                   sync.Mutex
 	FatalErr                  *string
@@ -82,7 +83,10 @@ func NewJobTask(taskID int64, jc *JobClient) *JobTask {
 }
 
 func newJobTask(taskID int64, jc *JobClient) *JobTask {
-	job := jc.jobSnapshot()
+	return newJobTaskWithConfig(taskID, jc, jc.jobSnapshot())
+}
+
+func newJobTaskWithConfig(taskID int64, jc *JobClient, job map[string]interface{}) *JobTask {
 	now := time.Now().Unix()
 	jt := &JobTask{
 		TaskID:         taskID,
@@ -337,7 +341,9 @@ func (jt *JobTask) finishCopyItem(item *CopyItem) {
 	isRelocation := item.isRelocation
 	item.mu.RUnlock()
 
-	if status == taskStatusFailed && !isRelocation {
+	// Any non-success terminal status (failed, remotely canceled/stopped, etc.)
+	// means the replacement file did not land and deferred mirror deletes must not run.
+	if status != taskStatusSuccess && !isRelocation {
 		jt.queuedCopyFailures.Add(1)
 	}
 

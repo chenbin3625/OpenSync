@@ -14,12 +14,14 @@ import (
 )
 
 type flexibleID struct {
-	set   bool
-	valid bool
-	value int64
+	present bool
+	set     bool
+	valid   bool
+	value   int64
 }
 
 func (f *flexibleID) UnmarshalJSON(data []byte) error {
+	f.present = true
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		f.set = false
@@ -152,6 +154,11 @@ func GetJob(c *gin.Context) {
 		"pageSize": c.Query("pageSize"),
 		"pageNum":  c.Query("pageNum"),
 	}
+	if locateJobIDStr := c.Query("locateJobId"); locateJobIDStr != "" {
+		if locateJobID, err := parseRequiredID(locateJobIDStr, "locateJobId"); err == nil {
+			req["locateJobId"] = locateJobID
+		}
+	}
 	removeEmptyStringValues(req)
 	result := service.GetJobList(req)
 	c.JSON(http.StatusOK, model.Success(result))
@@ -208,8 +215,8 @@ func UpdateJob(c *gin.Context) {
 		return
 	}
 
-	if req.TaskID.set {
-		if !req.TaskID.valid {
+	if req.TaskID.present || strings.TrimSpace(req.Action) != "" {
+		if !req.TaskID.set || !req.TaskID.valid {
 			c.JSON(http.StatusOK, model.Error(msg.LostPart))
 			return
 		}
@@ -227,9 +234,13 @@ func UpdateJob(c *gin.Context) {
 	}
 
 	if req.Pause == nil {
+		if req.Abort != nil {
+			c.JSON(http.StatusOK, model.Error(msg.LostPart))
+			return
+		}
 		// Manual execution
-		if req.ID.set {
-			if !req.ID.valid {
+		if req.ID.present {
+			if !req.ID.set || !req.ID.valid {
 				c.JSON(http.StatusOK, model.Error(msg.LostPart))
 				return
 			}

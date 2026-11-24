@@ -6,6 +6,7 @@ const engineSource = readFileSync(new URL('../src/pages/Engine/index.tsx', impor
 const notifySource = readFileSync(new URL('../src/pages/Notify/index.tsx', import.meta.url), 'utf8');
 const jobFormDrawerSource = readFileSync(new URL('../src/pages/Home/JobFormDrawer.tsx', import.meta.url), 'utf8');
 const usePathTreeSource = readFileSync(new URL('../src/pages/Home/usePathTree.ts', import.meta.url), 'utf8');
+const useRealtimeTaskSource = readFileSync(new URL('../src/pages/Home/useRealtimeTask.ts', import.meta.url), 'utf8');
 const taskListSource = readFileSync(new URL('../src/pages/Home/TaskList.tsx', import.meta.url), 'utf8');
 const loginSource = readFileSync(new URL('../src/pages/Login/index.tsx', import.meta.url), 'utf8');
 const userApiSource = readFileSync(new URL('../src/api/user.ts', import.meta.url), 'utf8');
@@ -241,4 +242,16 @@ test('login page supports first-run web initialization', () => {
   assert.match(loginSource, /创建管理员账号/);
   assert.match(loginSource, /recoveryKey/);
   assert.match(loginSource, /请立即保存恢复密钥/);
+});
+
+test('job edit drawer preserves existing cron fields with resolveCronFields instead of default hour', () => {
+  assert.match(jobFormDrawerSource, /setCronState\(resolveCronFields\(editingJob\)\);/);
+  assert.doesNotMatch(jobFormDrawerSource, /hour: editingJob\.hour \|\| defaultCronFields\.hour/);
+});
+
+test('realtime view distinguishes load errors from confirmed idle state', () => {
+  assert.match(useRealtimeTaskSource, /realtimeError/);
+  assert.match(useRealtimeTaskSource, /hasSnapshot/);
+  assert.match(taskListSource, /title="实时任务加载失败"/);
+  assert.match(taskListSource, /onRetry=\{retryRealtime\}/);
 });

@@ -303,3 +303,78 @@ func TestUpdateClientDoesNotResurrectConcurrentlyDeletedAlist(t *testing.T) {
 		t.Fatal("UpdateClient() did not close newly created client after concurrent delete")
 	}
 }
+
+func TestUpdateClientPersistsVerifiedUserNameAndEnforcesUniqueness(t *testing.T) {
+	defer resetAlistClientCacheForTest(t)()
+
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+	if _, err := testDB.Exec(`CREATE TABLE alist_list(
+		id integer primary key autoincrement,
+		remark text,
+		url text,
+		userName text,
+		token text,
+		UNIQUE(url, userName)
+	)`); err != nil {
+		t.Fatalf("create alist_list: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO alist_list(id, remark, url, userName, token) VALUES (1, 'primary', 'https://alist.test', 'old_user', 'tok-old')"); err != nil {
+		t.Fatalf("insert alist 1: %v", err)
+	}
+	if _, err := testDB.Exec("INSERT INTO alist_list(id, remark, url, userName, token) VALUES (2, 'secondary', 'https://alist.test', 'taken_user', 'tok-2')"); err != nil {
+		t.Fatalf("insert alist 2: %v", err)
+	}
+	defer mapper.SetDBForTest(testDB)()
+
+	newAlistClient = func(alistURL, token string, alistID int64) (*AlistClient, error) {
+		user := "new_user"
+		if token == "tok-taken" {
+			user = "taken_user"
+		}
+		return &AlistClient{
+			AlistID: alistID,
+			URL:     alistURL,
+			Token:   token,
+			User:    user,
+		}, nil
+	}
+
+	// Replacing token with one belonging to an already-registered (url, userName) must fail with AlistExists.
+	var dupPanic interface{}
+	func() {
+		defer func() { dupPanic = recover() }()
+		UpdateClient(map[string]interface{}{
+			"id":     int64(1),
+			"url":    "https://alist.test",
+			"token":  "tok-taken",
+			"remark": "primary",
+		})
+	}()
+	if dupPanic == nil || dupPanic.(error).Error() != msg.AlistExists {
+		t.Fatalf("duplicate (url, userName) update panic = %v, want %q", dupPanic, msg.AlistExists)
+	}
+
+	// Replacing token with a distinct account must persist the new verified userName.
+	UpdateClient(map[string]interface{}{
+		"id":     int64(1),
+		"url":    "https://alist.test",
+		"token":  "tok-new",
+		"remark": "primary",
+	})
+
+	row, err := mapper.GetAlistByID(1)
+	if err != nil {
+		t.Fatalf("GetAlistByID(1) error: %v", err)
+	}
+	if row["userName"] != "new_user" || row["token"] != "tok-new" {
+		t.Fatalf("updated DB row = %#v, want userName=new_user token=tok-new", row)
+	}
+	list := GetClientList()
+	if len(list) != 2 || list[0]["userName"] != "new_user" {
+		t.Fatalf("GetClientList() = %#v, want updated userName=new_user", list)
+	}
+}

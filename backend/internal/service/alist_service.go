@@ -310,6 +310,11 @@ func UpdateClient(alist map[string]interface{}) {
 	if hasToken {
 		tokenPtr = &token
 	}
+	var userNamePtr *string
+	if client != nil {
+		userName := client.User
+		userNamePtr = &userName
+	}
 	remarkStr := ""
 	remark, _ := alist["remark"]
 	if remark != nil {
@@ -334,11 +339,14 @@ func UpdateClient(alist map[string]interface{}) {
 		}
 		panicPublic(msg.WithoutToken)
 	}
-	if err := mapper.UpdateAlist(alistID, remarkStr, urlStr, tokenPtr); err != nil {
+	if err := mapper.UpdateAlist(alistID, remarkStr, urlStr, tokenPtr, userNamePtr); err != nil {
 		if client != nil {
 			client.Close()
 		}
-		panic(err.Error())
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			panicPublic(msg.AlistExists)
+		}
+		panicPublicIf(err, msg.AlistNotFound)
 	}
 	if client != nil {
 		storeAlistClient(alistID, client)

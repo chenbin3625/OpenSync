@@ -396,8 +396,8 @@ func (ci *CopyItem) verifyDstExists(runtime copyItemRuntime, client copyItemClie
 	}
 
 	meta := entry.Metadata()
-	expectedSize := util.ToInt64(ci.FileSize)
-	if expectedSize > 0 && meta.Size != expectedSize {
+	expectedSize, hasExpectedSize := expectedCopyFileSize(ci.FileSize)
+	if hasExpectedSize && meta.Size != expectedSize {
 		return false, nil
 	}
 
@@ -423,8 +423,8 @@ func (ci *CopyItem) verifyDstExists(runtime copyItemRuntime, client copyItemClie
 		if preCopy.Modified > 0 && meta.Modified > 0 && meta.Modified < preCopy.Modified {
 			return false, nil
 		}
-		if preCopy.Size == expectedSize {
-			// Overwrite with unchanged size and no MD5 proof: require a newer mtime
+		if !hasExpectedSize || preCopy.Size == expectedSize {
+			// Overwrite with unchanged (or unknown) size and no MD5 proof: require a newer mtime
 			// so a pre-existing stale destination file is not mistaken for success.
 			if preCopy.Modified > 0 {
 				if meta.Modified <= preCopy.Modified {
@@ -437,6 +437,23 @@ func (ci *CopyItem) verifyDstExists(runtime copyItemRuntime, client copyItemClie
 	}
 
 	return true, nil
+}
+
+// expectedCopyFileSize extracts a known non-negative expected file size
+// (including 0-byte empty files). Returns (_, false) only when the size is
+// unknown (nil, blank string, or negative).
+func expectedCopyFileSize(value interface{}) (int64, bool) {
+	if value == nil {
+		return 0, false
+	}
+	if s, ok := value.(string); ok && strings.TrimSpace(s) == "" {
+		return 0, false
+	}
+	size := util.ToInt64(value)
+	if size < 0 {
+		return 0, false
+	}
+	return size, true
 }
 
 func (ci *CopyItem) stopRemoteTask(client copyItemClient, cause error) {

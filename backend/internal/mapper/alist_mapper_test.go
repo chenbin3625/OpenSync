@@ -58,14 +58,25 @@ func TestUpdateAlistReturnsNotFoundWhenRowMissing(t *testing.T) {
 
 	defer SetDBForTest(testDB)()
 
-	if err := UpdateAlist(1, "new", "https://new.test", nil); err != nil {
+	if err := UpdateAlist(1, "new", "https://new.test", nil, nil); err != nil {
 		t.Fatalf("UpdateAlist(existing) error: %v", err)
 	}
-	if err := UpdateAlist(999, "missing", "https://missing.test", nil); err == nil || err.Error() != msg.AlistNotFound {
+	if err := UpdateAlist(999, "missing", "https://missing.test", nil, nil); err == nil || err.Error() != msg.AlistNotFound {
 		t.Fatalf("UpdateAlist(missing) error = %v, want %q", err, msg.AlistNotFound)
 	}
 	tok := "new-token"
-	if err := UpdateAlist(999, "missing", "https://missing.test", &tok); err == nil || err.Error() != msg.AlistNotFound {
+	if err := UpdateAlist(999, "missing", "https://missing.test", &tok, nil); err == nil || err.Error() != msg.AlistNotFound {
 		t.Fatalf("UpdateAlist(missing with token) error = %v, want %q", err, msg.AlistNotFound)
+	}
+	user := "alice"
+	if err := UpdateAlist(1, "new", "https://new.test", &tok, &user); err != nil {
+		t.Fatalf("UpdateAlist(existing with token+user) error: %v", err)
+	}
+	row, err := GetAlistByID(1)
+	if err != nil {
+		t.Fatalf("GetAlistByID(1) error: %v", err)
+	}
+	if row["userName"] != "alice" || row["token"] != "new-token" {
+		t.Fatalf("updated row = %#v, want userName=alice token=new-token", row)
 	}
 }

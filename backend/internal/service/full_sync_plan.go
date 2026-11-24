@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"opensync/internal/msg"
 	"opensync/pkg/util"
 	"path"
 	"sort"
@@ -43,11 +44,12 @@ type fullSyncDir struct {
 }
 
 type fullSyncDelete struct {
-	dir        string
-	name       string
-	metadata   FileMetadata
-	object     string
-	blocksPath string
+	dir               string
+	name              string
+	metadata          FileMetadata
+	object            string
+	blocksPath        string
+	protectedExcluded bool
 }
 
 type fullSyncRelocation struct {
@@ -286,7 +288,11 @@ func (plan *fullSyncPlan) compareDir(job map[string]interface{}, srcRelDir, dstR
 			if conflictMeta, ok := dstIndex.findExact(conflictKey); ok {
 				if _, alreadyMatched := matchedDst[conflictKey]; !alreadyMatched {
 					matchedDst[conflictKey] = struct{}{}
-					plan.addBlocker(dstDir, conflictKey, conflictMeta, fullSyncObjectPath(dstDir, name))
+					if plan.hasExcludedDescendant(dstRelDir + conflictKey) {
+						plan.addProtectedBlocker(dstDir, conflictKey, conflictMeta, fullSyncObjectPath(dstDir, name))
+					} else {
+						plan.addBlocker(dstDir, conflictKey, conflictMeta, fullSyncObjectPath(dstDir, name))
+					}
 				}
 			}
 			if match.exists {
@@ -443,6 +449,18 @@ func (plan *fullSyncPlan) addBlocker(dir, name string, metadata FileMetadata, bl
 	}
 }
 
+func (plan *fullSyncPlan) addProtectedBlocker(dir, name string, metadata FileMetadata, blocksPath string) {
+	object := fullSyncObjectPath(dir, name)
+	plan.blockers[object] = fullSyncDelete{
+		dir:               dir,
+		name:              name,
+		metadata:          metadata,
+		object:            object,
+		blocksPath:        blocksPath,
+		protectedExcluded: true,
+	}
+}
+
 func newFullSyncFile(srcDir, dstDir, name string, metadata FileMetadata) *fullSyncFile {
 	return &fullSyncFile{
 		srcDir:   srcDir,
@@ -485,8 +503,16 @@ func (jt *JobTask) executeFullSyncPlan(plan *fullSyncPlan) {
 			return
 		}
 		item := plan.blockers[key]
+		if item.protectedExcluded {
+			errMsg := msg.DirDeleteProtectedByExclude
+			jt.DelHook(item.dir, item.name, nil, taskStatusFailed, &errMsg, taskItemPath, time.Now().Unix())
+			blocked[normalizeBlockedPath(item.blocksPath)] = struct{}{}
+			jt.queuedCopyFailures.Add(1)
+			continue
+		}
 		if jt.delFile(item.dir, item.name, item.metadata.Size) != taskStatusSuccess {
 			blocked[normalizeBlockedPath(item.blocksPath)] = struct{}{}
+			jt.queuedCopyFailures.Add(1)
 		}
 	}
 
@@ -500,6 +526,7 @@ func (jt *JobTask) executeFullSyncPlan(plan *fullSyncPlan) {
 		}
 		if jt.createFullSyncDir(item) != taskStatusSuccess {
 			blocked[normalizeBlockedPath(item.dstDir)] = struct{}{}
+			jt.queuedCopyFailures.Add(1)
 		}
 	}
 
@@ -562,6 +589,13 @@ func (jt *JobTask) executeFullSyncPlan(plan *fullSyncPlan) {
 		}
 		jt.queueCopyFileWithMeta(file.srcDir, file.dstDir, file.name, file.metadata.Size, taskItemTypeCopy, file.metadata.MD5, nil)
 		queuedCopies++
+	}
+
+	// If any blocker delete or destination directory creation failed, some new
+	// or changed files could not be queued at all; skip extra deletes so old
+	// copies are never removed before replacements have landed.
+	if len(blocked) > 0 {
+		return
 	}
 
 	eligibleDeletes := make([]fullSyncDelete, 0, len(plan.extraDeletes))

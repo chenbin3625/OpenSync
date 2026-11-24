@@ -4,7 +4,7 @@ import type { AlistItem, JobItem } from '../../types';
 import { fileSizeToBytes, fileSizeUnitOptions, splitBytesToFileSize } from './fileSizeUnits';
 import {
   methodOptions, methodNames, cronTypeNames, cronFields, defaultCronFields,
-  defaultExclude, parseJobPathList, normalizeFormPaths,
+  defaultExclude, parseJobPathList, normalizeFormPaths, resolveCronFields,
   formatSchedulePlan, formatAlistLabel, type ScheduleValues,
 } from './homeUtils';
 import { useDirectoryRequests, usePathTree } from './usePathTree';
@@ -207,14 +207,7 @@ export default function JobFormDrawer({
       setMaxFileSize(maxObj.value);
       setMaxFileSizeUnit(maxObj.unit);
 
-      setCronState({
-        second: editingJob.second || defaultCronFields.second,
-        minute: editingJob.minute || defaultCronFields.minute,
-        hour: editingJob.hour || defaultCronFields.hour,
-        day: editingJob.day || defaultCronFields.day,
-        month: editingJob.month || defaultCronFields.month,
-        day_of_week: editingJob.day_of_week || defaultCronFields.day_of_week,
-      });
+      setCronState(resolveCronFields(editingJob));
     } else {
       setDirectorySelection(null);
       setSrcPath([]);

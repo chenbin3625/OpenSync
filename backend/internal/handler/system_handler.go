@@ -193,26 +193,15 @@ func UpdateSystemConfig(c *gin.Context) {
 		c.JSON(http.StatusOK, model.Error(msg.LostPart))
 		return
 	}
-	next := config.GetSystemSettings()
-	if req.Expires != nil {
-		next.Expires = *req.Expires
-	}
-	if req.TaskTimeout != nil {
-		next.TaskTimeout = *req.TaskTimeout
-	}
-	if req.TaskSave != nil {
-		next.TaskSave = *req.TaskSave
-	}
-	if req.CopyConcurrency != nil {
-		next.CopyConcurrency = *req.CopyConcurrency
-	}
-	if req.ScanConcurrency != nil {
-		next.ScanConcurrency = *req.ScanConcurrency
-	}
-	if req.MaxRetries != nil {
-		next.MaxRetries = *req.MaxRetries
-	}
-	if err := config.UpdateSystemSettings(next); err != nil {
+	updated, err := config.PatchSystemSettings(config.SystemSettingsPatch{
+		Expires:         req.Expires,
+		TaskTimeout:     req.TaskTimeout,
+		TaskSave:        req.TaskSave,
+		CopyConcurrency: req.CopyConcurrency,
+		ScanConcurrency: req.ScanConcurrency,
+		MaxRetries:      req.MaxRetries,
+	})
+	if err != nil {
 		c.JSON(http.StatusOK, model.Error(err.Error()))
 		return
 	}
@@ -226,5 +215,5 @@ func UpdateSystemConfig(c *gin.Context) {
 		}()
 		cleanupFn()
 	}()
-	c.JSON(http.StatusOK, model.Success(config.GetSystemSettings()))
+	c.JSON(http.StatusOK, model.Success(updated))
 }

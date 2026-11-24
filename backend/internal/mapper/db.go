@@ -216,7 +216,22 @@ func sqliteDSN(dbName string) string {
 		}
 		return dbName + sep + query
 	}
-	return "file:" + dbName + "?" + query
+	return "file:" + encodeSQLiteURIPath(dbName) + "?" + query
+}
+
+// encodeSQLiteURIPath percent-encodes characters that have special meaning in
+// SQLite URI filenames ('%', '?', '#') so paths like "backup#1/openSync.db"
+// open the intended database instead of truncating at '#' or '?'.
+func encodeSQLiteURIPath(p string) string {
+	p = filepath.ToSlash(p)
+	if vol := filepath.VolumeName(p); vol != "" && !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return strings.NewReplacer(
+		"%", "%25",
+		"?", "%3F",
+		"#", "%23",
+	).Replace(p)
 }
 
 // GetDB returns the database connection
@@ -467,6 +482,10 @@ func fetchPage(ctx context.Context, baseSQL string, limit int, offset int64, pag
 	}
 	defer tx.Rollback()
 
+	return fetchPageTx(ctx, tx, baseSQL, limit, offset, paginated, sqlArgs)
+}
+
+func fetchPageTx(ctx context.Context, tx *sql.Tx, baseSQL string, limit int, offset int64, paginated bool, sqlArgs []interface{}) (map[string]interface{}, error) {
 	query, args := pageQuery(baseSQL, limit, offset, paginated, sqlArgs)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {

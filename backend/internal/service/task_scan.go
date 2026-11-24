@@ -201,13 +201,23 @@ func (jt *JobTask) markScanFinished() {
 }
 
 func (jt *JobTask) syncRetryItems() {
+	if jt.RetrySourceAlistID > 0 {
+		currentAlistID := util.ToInt64(jt.Job["alistId"])
+		if currentAlistID > 0 && currentAlistID != jt.RetrySourceAlistID {
+			errMsg := msg.RetryTaskEngineChanged
+			jt.CopyHook("", "", "", nil, "", taskStatusFailed, &errMsg, taskItemPath, taskItemTypeCopy, time.Now().Unix())
+			jt.markScanFinished()
+			return
+		}
+	}
 	scope := jt.buildRetryJobScope()
+	var retriedDirs []retryPathPair
 	err := forEachJobTaskItemsByStatuses(jt.RetrySourceTaskID, taskStatusValues(jt.RetryStatuses...), retryTaskItemBatchSize, func(items []map[string]interface{}) error {
 		for _, item := range items {
 			if jt.isBreak() {
 				return errScanAborted
 			}
-			jt.retryTaskItemWithScope(item, scope)
+			jt.retryTaskItemWithScopeAndTracker(item, scope, &retriedDirs)
 		}
 		return nil
 	})
@@ -227,6 +237,19 @@ func (jt *JobTask) retryTaskItem(item map[string]interface{}) {
 }
 
 func (jt *JobTask) retryTaskItemWithScope(item map[string]interface{}, scope retryJobScope) {
+	jt.retryTaskItemWithScopeAndTracker(item, scope, nil)
+}
+
+func isCoveredByRetriedDir(retriedDirs []retryPathPair, srcPath, dstPath string) bool {
+	for _, pair := range retriedDirs {
+		if isDirUnderRoot(srcPath, pair.srcRoot) && isDirUnderRoot(dstPath, pair.dstRoot) {
+			return true
+		}
+	}
+	return false
+}
+
+func (jt *JobTask) retryTaskItemWithScopeAndTracker(item map[string]interface{}, scope retryJobScope, retriedDirs *[]retryPathPair) {
 	if jt.isBreak() {
 		return
 	}
@@ -239,6 +262,7 @@ func (jt *JobTask) retryTaskItemWithScope(item map[string]interface{}, scope ret
 
 	switch copyType {
 	case taskItemTypeDelete:
+		isDirDelete := isPath || strings.HasSuffix(fileName, "/")
 		if scope.configured {
 			// Only Full Sync (mirror mode) permits deleting destination entries.
 			if scope.method != 1 {
@@ -248,10 +272,19 @@ func (jt *JobTask) retryTaskItemWithScope(item map[string]interface{}, scope ret
 			if !ok {
 				return
 			}
-			if scope.spec != nil && fileName != "" {
-				checkPath := excludeMatchPath(matchedPair.dstRoot, normalizeDirPath(dstPath), fileName)
-				if scope.spec.MatchesPath(checkPath) {
+			if scope.spec != nil {
+				if scope.isDirExcluded(matchedPair.dstRoot, dstPath) {
 					return
+				}
+				if fileName != "" {
+					checkName := fileName
+					if isDirDelete && !strings.HasSuffix(checkName, "/") {
+						checkName += "/"
+					}
+					checkPath := excludeMatchPath(matchedPair.dstRoot, normalizeDirPath(dstPath), checkName)
+					if scope.spec.MatchesPath(checkPath) {
+						return
+					}
 				}
 			}
 			// Verify the source object is still absent before deleting from
@@ -268,13 +301,30 @@ func (jt *JobTask) retryTaskItemWithScope(item map[string]interface{}, scope ret
 					}
 					errMsg := fmt.Sprintf("failed to verify source before retry delete: %v", err)
 					var delSize interface{}
-					if !strings.HasSuffix(fileName, "/") {
+					if !isDirDelete {
 						delSize = fileSize
 					}
-					jt.DelHook(dstPath, fileName, delSize, taskStatusFailed, &errMsg, boolToTaskItemObject(strings.HasSuffix(fileName, "/")), time.Now().Unix())
+					jt.DelHook(dstPath, fileName, delSize, taskStatusFailed, &errMsg, boolToTaskItemObject(isDirDelete), time.Now().Unix())
 					return
 				}
 				if exists && entry != nil {
+					return
+				}
+			}
+			// For directory deletes, also verify no excluded descendants live
+			// inside the target subtree before removing the whole directory.
+			if isDirDelete && scope.spec != nil && jt.AlistClient != nil && fileName != "" {
+				targetDir := normalizeDirPath(dstPath) + strings.TrimSuffix(fileName, "/") + "/"
+				hasExcluded, err := jt.dstDirHasExcludedDescendant(jt.context(), matchedPair.dstRoot, targetDir, scope.spec)
+				if err != nil {
+					if jt.isBreak() {
+						return
+					}
+					errMsg := fmt.Sprintf("failed to verify excluded descendants before retry delete: %v", err)
+					jt.DelHook(dstPath, fileName, nil, taskStatusFailed, &errMsg, taskItemPath, time.Now().Unix())
+					return
+				}
+				if hasExcluded {
 					return
 				}
 			}
@@ -294,6 +344,7 @@ func (jt *JobTask) retryTaskItemWithScope(item map[string]interface{}, scope ret
 				jt.CopyHook(srcPath, dstPath, fileName, fileSize, "", taskStatusFailed, &errMsg, taskItemPath, copyType, time.Now().Unix())
 				return
 			}
+			var srcRoot, dstRoot string
 			if scope.configured {
 				pair, ok := scope.matchSrcDstPair(srcPath, dstPath, copyType)
 				if !ok {
@@ -302,8 +353,24 @@ func (jt *JobTask) retryTaskItemWithScope(item map[string]interface{}, scope ret
 				if scope.spec != nil && scope.isDirExcluded(pair.dstRoot, dstPath) {
 					return
 				}
+				srcRoot = pair.srcRoot
+				dstRoot = pair.dstRoot
+			} else {
+				srcRoot = normalizeDirPath(srcPath)
+				dstRoot = normalizeDirPath(dstPath)
 			}
-			jt.retryMkdir(srcPath, dstPath, copyType)
+			if retriedDirs != nil && isCoveredByRetriedDir(*retriedDirs, srcPath, dstPath) {
+				return
+			}
+			if jt.retryMkdir(srcPath, dstPath, srcRoot, dstRoot, scope.spec, copyType) && retriedDirs != nil {
+				*retriedDirs = append(*retriedDirs, retryPathPair{
+					srcRoot: normalizeDirPath(srcPath),
+					dstRoot: normalizeDirPath(dstPath),
+				})
+			}
+			return
+		}
+		if retriedDirs != nil && isCoveredByRetriedDir(*retriedDirs, srcPath, dstPath) {
 			return
 		}
 		if scope.configured {
@@ -330,6 +397,45 @@ func (jt *JobTask) retryTaskItemWithScope(item map[string]interface{}, scope ret
 		errMsg := fmt.Sprintf("unsupported retry task type: %d", copyType)
 		jt.CopyHook(srcPath, dstPath, fileName, fileSize, "", taskStatusFailed, &errMsg, boolToTaskItemObject(isPath), copyType, time.Now().Unix())
 	}
+}
+
+func (jt *JobTask) dstDirHasExcludedDescendant(ctx context.Context, dstRoot, targetDir string, spec *ignore.GitIgnore) (bool, error) {
+	if spec == nil || jt.AlistClient == nil {
+		return false, nil
+	}
+	dstRoot = normalizeDirPath(dstRoot)
+	targetDir = normalizeDirPath(targetDir)
+	scanInterval := util.ToInt(jt.Job["scanIntervalT"])
+
+	var walk func(curDir string, isRoot bool) (bool, error)
+	walk = func(curDir string, isRoot bool) (bool, error) {
+		if jt.isBreak() || ctx.Err() != nil {
+			return false, errScanAborted
+		}
+		items, err := jt.AlistClient.FileListApiContext(ctx, curDir, 0, scanInterval)
+		if err != nil {
+			if isRoot && isAlistObjectNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		for name := range items {
+			checkPath := excludeMatchPath(dstRoot, curDir, name)
+			if spec.MatchesPath(checkPath) {
+				return true, nil
+			}
+		}
+		for name := range items {
+			if strings.HasSuffix(name, "/") {
+				found, err := walk(curDir+name, false)
+				if err != nil || found {
+					return found, err
+				}
+			}
+		}
+		return false, nil
+	}
+	return walk(targetDir, true)
 }
 
 func (s retryJobScope) matchDstPair(dstPath string) (retryPathPair, bool) {
@@ -380,11 +486,11 @@ func (s retryJobScope) isDirExcluded(rootDir, dirPath string) bool {
 	return s.spec.MatchesPath(rel + "/")
 }
 
-func (jt *JobTask) retryMkdir(srcPath, dstPath string, copyType taskItemType) {
+func (jt *JobTask) retryMkdir(srcPath, dstPath, srcRoot, dstRoot string, spec *ignore.GitIgnore, copyType taskItemType) bool {
 	if dstPath == "" {
 		errMsg := "missing destination path for directory retry"
 		jt.CopyHook(srcPath, dstPath, "", nil, "", taskStatusFailed, &errMsg, taskItemPath, copyType, time.Now().Unix())
-		return
+		return false
 	}
 
 	status := taskStatusSuccess
@@ -392,13 +498,38 @@ func (jt *JobTask) retryMkdir(srcPath, dstPath string, copyType taskItemType) {
 	scanIntervalT := util.ToInt(jt.Job["scanIntervalT"])
 	if err := jt.AlistClient.MkdirContext(jt.context(), dstPath, scanIntervalT); err != nil {
 		if jt.isBreak() {
-			return
+			return false
 		}
 		status = taskStatusFailed
 		e := err.Error()
 		errMsg = &e
 	}
 	jt.CopyHook(srcPath, dstPath, "", nil, "", status, errMsg, taskItemPath, copyType, time.Now().Unix())
+	if status != taskStatusSuccess || jt.isBreak() {
+		return false
+	}
+
+	// A failed directory creation aborted before scanning its subtree, so
+	// after creating the directory we also scan and sync its contents.
+	normSrc := normalizeDirPath(srcPath)
+	normDst := normalizeDirPath(dstPath)
+	if normSrc != "" && normDst != "" {
+		if srcRoot == "" {
+			srcRoot = normSrc
+		}
+		if dstRoot == "" {
+			dstRoot = normDst
+		}
+		jt.syncWithHave(scanWork{
+			SrcPath:     normSrc,
+			DstPath:     normDst,
+			SrcRootPath: srcRoot,
+			DstRootPath: dstRoot,
+			FirstDst:    true,
+			Mode:        scanWorkCompare,
+		}, spec)
+	}
+	return true
 }
 
 func dstPathForSrcSelection(dstPath, srcPath string, srcPaths []string) string {
@@ -551,6 +682,7 @@ func (jt *JobTask) queueCopyFileWithMeta(srcPath, dstPath, fileName string, file
 		ci.setExpectedVerification(expectedMD5, preCopyDst)
 	}
 	if !jt.Waiting.pushWait(jt.context(), ci) {
+		jt.queuedCopyFailures.Add(1)
 		ci.setStatus(taskStatusStopped)
 		jt.CopyHook(ci.SrcPath, ci.DstPath, ci.FileName, ci.FileSize, ci.AlistTaskID,
 			ci.Status, ci.ErrMsg, taskItemFile, ci.CopyType, ci.CreateTime)

@@ -221,3 +221,40 @@ func TestHasPresentJobIDIgnoresNullZeroAndEmpty(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateJobStopOrInvalidFieldsNeverFallThroughToRunAll(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.PUT("/svr/job", UpdateJob)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"stop without taskId", `{"action":"stop"}`},
+		{"stop with null taskId", `{"action":"stop","taskId":null}`},
+		{"stop with invalid taskId", `{"action":"stop","taskId":0}`},
+		{"retry with null taskId", `{"action":"retry","taskId":null}`},
+		{"null taskId alone", `{"taskId":null}`},
+		{"null id alone", `{"id":null}`},
+		{"invalid id alone", `{"id":"abc"}`},
+		{"abort without pause", `{"abort":true}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/svr/job", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", w.Code)
+			}
+			body := w.Body.String()
+			if !strings.Contains(body, `"code":500`) || !strings.Contains(body, msg.LostPart) {
+				t.Fatalf("PUT /svr/job %s response = %s, want code=500 with LostPart (must not run all jobs)", tc.body, body)
+			}
+		})
+	}
+}

@@ -383,6 +383,16 @@ func TestFileListApiContextNonObjectDataStillChecksAlistCode(t *testing.T) {
 			body:        `{"code":200,"message":"ok","data":"unexpected"}`,
 			wantErrPart: "not an object",
 		},
+		{
+			name:        "200 with null data fails instead of empty dir",
+			body:        `{"code":200,"message":"ok","data":null}`,
+			wantErrPart: "null",
+		},
+		{
+			name:        "200 with missing data fails instead of empty dir",
+			body:        `{"code":200,"message":"ok"}`,
+			wantErrPart: "missing data",
+		},
 	}
 
 	for _, tt := range tests {
@@ -409,4 +419,21 @@ func TestFileListApiContextNonObjectDataStillChecksAlistCode(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("200 with empty object and null content still succeeds", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":null,"total":0}}`))
+		}))
+		defer server.Close()
+
+		client := &AlistClient{URL: server.URL, client: server.Client()}
+		files, err := client.FileListApiContext(context.Background(), "/empty", 0, 0)
+		if err != nil {
+			t.Fatalf("FileListApiContext(empty dir) error: %v", err)
+		}
+		if len(files) != 0 {
+			t.Fatalf("len(files) = %d, want 0", len(files))
+		}
+	})
 }

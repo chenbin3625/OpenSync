@@ -23,10 +23,17 @@ function isCurrentTaskData(data: CurrentTaskData | PageData<TaskItem> | TaskItem
 }
 export function useRealtimeTask(jobId: string, enabled: boolean): {
   currentTask: CurrentTaskView | null;
+  realtimeLoading: boolean;
+  realtimeError: boolean;
   refreshCurrentTask: () => Promise<void>;
+  retryRealtime: () => void;
 } {
   const [currentTask, setCurrentTask] = useState<CurrentTaskView | null>(null);
+  const [hasSnapshot, setHasSnapshot] = useState(false);
+  const [realtimeError, setRealtimeError] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
   const prevTaskRef = useRef<CurrentTaskView | null>(null);
+  const hasSnapshotRef = useRef(false);
   const requestRef = useRef(0);
   const inFlightRef = useRef(false);
   const pollAbortRef = useRef<AbortController | null>(null);
@@ -36,7 +43,10 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
     const sameTask = data && previous && getRealtimeTaskIdentity(data) === getRealtimeTaskIdentity(previous);
     const nextTask = data ? { ...data, ...calcRealtimeProgress(data, sameTask ? previous : null) } : null;
     prevTaskRef.current = nextTask;
+    hasSnapshotRef.current = true;
     setCurrentTask(nextTask);
+    setHasSnapshot(true);
+    setRealtimeError(false);
   }, []);
 
   const refreshCurrentTask = useCallback(async () => {
@@ -53,7 +63,13 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
       const data = res.data || null;
       publishCurrentTask(isCurrentTaskData(data) ? mergeCurrentTaskData(data, prevTaskRef.current) : null);
     } catch {
-      /* keep the last visible realtime snapshot on transient polling errors */
+      if (controller.signal.aborted || requestID !== requestRef.current) return;
+      // Keep the last visible running task card on transient polling errors,
+      // but surface an error when no active snapshot is available so the UI
+      // never misreports a connection failure as "idle".
+      if (!prevTaskRef.current) {
+        setRealtimeError(true);
+      }
     } finally {
       if (pollAbortRef.current === controller) {
         pollAbortRef.current = null;
@@ -62,13 +78,21 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
     }
   }, [jobId, publishCurrentTask]);
 
+  const retryRealtime = useCallback(() => {
+    setRealtimeError(false);
+    setRetryNonce((nonce) => nonce + 1);
+  }, []);
+
   useEffect(() => {
     requestRef.current += 1;
     pollAbortRef.current?.abort();
     pollAbortRef.current = null;
     inFlightRef.current = false;
     prevTaskRef.current = null;
+    hasSnapshotRef.current = false;
     setCurrentTask(null);
+    setHasSnapshot(false);
+    setRealtimeError(false);
   }, [jobId]);
 
   useEffect(() => {
@@ -163,6 +187,7 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
           return;
         }
         if (payload.code !== 200) {
+          retryOrPoll();
           return;
         }
         if (!payload.data) {
@@ -191,8 +216,12 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
       // visibilitychange instead of reconnecting or polling in the background.
       if (!isVisible()) return;
       if (supportsSSE && sseRetries < SSE_MAX_RETRIES) {
+        const isFirstFailure = sseRetries === 0;
         const delay = SSE_RETRY_BASE_MS * (2 ** sseRetries);
         sseRetries += 1;
+        if (isFirstFailure && !hasSnapshotRef.current) {
+          void refreshCurrentTask();
+        }
         retryTimer = setTimeout(connectSSE, delay);
         return;
       }
@@ -265,7 +294,9 @@ export function useRealtimeTask(jobId: string, enabled: boolean): {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       stopRealtime();
     };
-  }, [enabled, jobId, publishCurrentTask, refreshCurrentTask]);
+  }, [enabled, jobId, publishCurrentTask, refreshCurrentTask, retryNonce]);
 
-  return { currentTask, refreshCurrentTask };
+  const realtimeLoading = enabled && Boolean(jobId) && !hasSnapshot && !realtimeError;
+
+  return { currentTask, realtimeLoading, realtimeError, refreshCurrentTask, retryRealtime };
 }

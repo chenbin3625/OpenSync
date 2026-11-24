@@ -223,6 +223,7 @@ func (jt *JobTask) markWaitingAsAborted() {
 	if len(items) == 0 {
 		return
 	}
+	jt.queuedCopyFailures.Add(int64(len(items)))
 	taskItems := make([]JobTaskItem, 0, len(items))
 	for _, item := range items {
 		item.setStatus(taskStatusStopped)

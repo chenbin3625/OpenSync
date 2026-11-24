@@ -251,6 +251,146 @@ func TestRetryTaskItemValidatesScopeMethodExcludesAndSourceExistence(t *testing.
 	}
 }
 
+func TestRetryDirectoryDeleteProtectsExcludedDescendants(t *testing.T) {
+	var removeTargets []string
+	var failList atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch r.URL.Path {
+		case "/api/fs/get":
+			_, _ = w.Write([]byte(`{"code":500,"message":"object not found","data":null}`))
+		case "/api/fs/list":
+			if failList.Load() {
+				_, _ = w.Write([]byte(`{"code":500,"message":"list failed","data":null}`))
+				return
+			}
+			switch body["path"].(string) {
+			case "/dst/old/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"sub","is_dir":true}]}}`))
+			case "/dst/old/sub/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"keep.bak","size":5,"is_dir":false}]}}`))
+			case "/dst/clean/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"drop.txt","size":5,"is_dir":false}]}}`))
+			default:
+				t.Fatalf("unexpected list path %v", body["path"])
+			}
+		case "/api/fs/remove":
+			names := body["names"].([]interface{})
+			removeTargets = append(removeTargets, body["dir"].(string)+names[0].(string))
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var persisted []map[string]interface{}
+	restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+	defer restorePersist()
+
+	jt := newScanRetryTestTask(server)
+	jt.Job = map[string]interface{}{
+		"srcPath": `["/src"]`,
+		"dstPath": `["/dst"]`,
+		"method":  1,
+		"exclude": "*.bak",
+	}
+
+	// 1. Directory containing excluded nested child must NOT be deleted.
+	jt.retryTaskItem(map[string]interface{}{
+		"type":     taskItemTypeDelete.Int(),
+		"dstPath":  "/dst/",
+		"fileName": "old/",
+		"isPath":   taskItemPath.Int(),
+	})
+	if len(removeTargets) != 0 {
+		t.Fatalf("removeTargets = %v, want empty when excluded descendant exists", removeTargets)
+	}
+
+	// 2. Directory list error during verification must NOT delete and must record failure.
+	failList.Store(true)
+	jt.retryTaskItem(map[string]interface{}{
+		"type":     taskItemTypeDelete.Int(),
+		"dstPath":  "/dst/",
+		"fileName": "old/",
+		"isPath":   taskItemPath.Int(),
+	})
+	if err := jt.flushPersistBuffer(); err != nil {
+		t.Fatal(err)
+	}
+	if len(removeTargets) != 0 {
+		t.Fatalf("removeTargets = %v, want empty on verification list error", removeTargets)
+	}
+	if len(persisted) != 1 || persisted[0]["status"] != taskStatusFailed.Int() {
+		t.Fatalf("persisted = %#v, want 1 failed delete record", persisted)
+	}
+
+	// 3. Clean directory without excluded descendants IS deleted.
+	failList.Store(false)
+	jt.retryTaskItem(map[string]interface{}{
+		"type":     taskItemTypeDelete.Int(),
+		"dstPath":  "/dst/",
+		"fileName": "clean/",
+		"isPath":   taskItemPath.Int(),
+	})
+	if len(removeTargets) != 1 || removeTargets[0] != "/dst/clean" {
+		t.Fatalf("removeTargets = %v, want [/dst/clean]", removeTargets)
+	}
+}
+
+func TestRetryDeletePreservesLeadingAndTrailingSpacesInFilename(t *testing.T) {
+	var probedPaths []string
+	var removeCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch r.URL.Path {
+		case "/api/fs/get":
+			p := body["path"].(string)
+			probedPaths = append(probedPaths, p)
+			if p == "/src/report " {
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"name":"report ","size":12,"is_dir":false}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":500,"message":"object not found","data":null}`))
+		case "/api/fs/remove":
+			removeCalls.Add(1)
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	restorePersist := stubPersistJobTaskItems(t, nil, nil)
+	defer restorePersist()
+
+	jt := newScanRetryTestTask(server)
+	jt.Job = map[string]interface{}{
+		"srcPath": `["/src"]`,
+		"dstPath": `["/dst"]`,
+		"method":  1,
+	}
+
+	jt.retryTaskItem(map[string]interface{}{
+		"type":     taskItemTypeDelete.Int(),
+		"dstPath":  "/dst/",
+		"fileName": "report ",
+		"fileSize": int64(12),
+		"isPath":   taskItemFile.Int(),
+	})
+
+	if len(probedPaths) != 1 || probedPaths[0] != "/src/report " {
+		t.Fatalf("probedPaths = %q, want [\"/src/report \"]", probedPaths)
+	}
+	if got := removeCalls.Load(); got != 0 {
+		t.Fatalf("removeCalls = %d, want 0 when source file with trailing space exists", got)
+	}
+}
+
 func newScanRetryTestTask(server *httptest.Server) *JobTask {
 	client := server.Client()
 	client.Timeout = time.Second

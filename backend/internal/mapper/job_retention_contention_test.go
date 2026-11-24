@@ -238,3 +238,87 @@ func TestDeleteJobTaskChunksLargeItemDeletionAndProtectsActiveTasks(t *testing.T
 		t.Fatalf("task 4 items remaining = %d, err = %v; want 0", task4Items, err)
 	}
 }
+
+func TestChunkedDeleteKeepsParentUntilFinalBatchAndCleansOrphans(t *testing.T) {
+	oldChunk := taskItemDeleteChunkSize
+	taskItemDeleteChunkSize = 3
+	t.Cleanup(func() { taskItemDeleteChunkSize = oldChunk })
+
+	testDB, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "interrupted-chunk.db")+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = testDB.Close() })
+	t.Cleanup(SetDBForTest(testDB))
+
+	for _, stmt := range []string{
+		"CREATE TABLE job_task (id INTEGER PRIMARY KEY, runTime INTEGER, createTime INTEGER, status INTEGER)",
+		"CREATE TABLE job_task_item (id INTEGER PRIMARY KEY AUTOINCREMENT, taskId INTEGER)",
+		"CREATE TABLE delete_guard (deleted_count INTEGER NOT NULL)",
+		"INSERT INTO delete_guard VALUES (0)",
+		"INSERT INTO job_task VALUES (1, 10, 10, 2), (2, 10, 10, 2)",
+		// Pre-existing orphaned item whose parent task 999 does not exist.
+		"INSERT INTO job_task_item(taskId) VALUES (999), (999)",
+	} {
+		if _, err := testDB.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 7; i++ {
+		if _, err := testDB.Exec("INSERT INTO job_task_item(taskId) VALUES (1), (2)"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Abort on the 4th item deletion (second batch) to simulate crash/interruption after batch 1 commits.
+	if _, err := testDB.Exec(`
+		CREATE TRIGGER abort_second_batch BEFORE DELETE ON job_task_item
+		BEGIN
+			UPDATE delete_guard SET deleted_count = deleted_count + 1;
+			SELECT RAISE(ABORT, 'simulated interruption') WHERE (SELECT deleted_count FROM delete_guard) >= 4;
+		END
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. DeleteJobTaskByTaskID interrupted mid-way must keep parent job_task=1 alive so retry finds it.
+	if err := DeleteJobTaskByTaskID(1); err == nil {
+		t.Fatal("DeleteJobTaskByTaskID(1) error = nil, want simulated interruption")
+	}
+	var parentCount, remainingItems int
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM job_task WHERE id=1").Scan(&parentCount); err != nil || parentCount != 1 {
+		t.Fatalf("task 1 parent count after mid-chunk abort = %d, err = %v; want 1", parentCount, err)
+	}
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM job_task_item WHERE taskId=1").Scan(&remainingItems); err != nil || remainingItems != 4 {
+		t.Fatalf("task 1 remaining items after batch 1 = %d, err = %v; want 4", remainingItems, err)
+	}
+
+	// 2. DeleteJobTaskByRunTime interrupted mid-way must keep parent job_task=2 alive too.
+	if _, err := testDB.Exec("UPDATE delete_guard SET deleted_count = 0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteJobTaskByRunTime(50); err == nil {
+		t.Fatal("DeleteJobTaskByRunTime(50) error = nil, want simulated interruption")
+	}
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM job_task WHERE id=2").Scan(&parentCount); err != nil || parentCount != 1 {
+		t.Fatalf("task 2 parent count after mid-chunk abort = %d, err = %v; want 1", parentCount, err)
+	}
+
+	// 3. Once interruption clears, manual retry and retention cleanup remove all remaining items, parents, and orphans.
+	if _, err := testDB.Exec("DROP TRIGGER abort_second_batch"); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteJobTaskByTaskID(1); err != nil {
+		t.Fatalf("retry DeleteJobTaskByTaskID(1) error: %v", err)
+	}
+	if err := DeleteJobTaskByRunTime(50); err != nil {
+		t.Fatalf("retry DeleteJobTaskByRunTime(50) error: %v", err)
+	}
+	var totalTasks, totalItems int
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM job_task").Scan(&totalTasks); err != nil || totalTasks != 0 {
+		t.Fatalf("remaining tasks = %d, err = %v; want 0", totalTasks, err)
+	}
+	if err := testDB.QueryRow("SELECT COUNT(*) FROM job_task_item").Scan(&totalItems); err != nil || totalItems != 0 {
+		t.Fatalf("remaining items (including orphans) = %d, err = %v; want 0", totalItems, err)
+	}
+}

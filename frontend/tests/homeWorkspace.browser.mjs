@@ -342,3 +342,61 @@ test('file detail keeps its rows visible while a silent refresh is pending', asy
   await refreshed;
   await expect(file).toBeVisible();
 });
+
+test('editing only remark preserves minute-only hourly cron schedule', async (t) => {
+  const page = await openPage(t, 1280);
+  await page.route('**/svr/alist', (route) => respond(route, engines));
+  await page.route('**/svr/alist?*', (route) => respond(route, []));
+  const hourlyJob = {
+    id: 1, enable: 1, remark: '每小时备份', srcPath: '/source', dstPath: '/backup', alistId: 1,
+    useCacheT: false, useCacheS: false, method: 0, interval: 1440, isCron: 1,
+    second: '', minute: '30', hour: '', day: '', month: '', day_of_week: '',
+  };
+  await page.route('**/svr/job?*', (route) => respond(route, { dataList: [hourlyJob], count: 1 }));
+  const saves = [];
+  await page.route('**/svr/job', (route) => {
+    if (route.request().method() === 'POST') saves.push(route.request().postDataJSON());
+    return respond(route, null);
+  });
+
+  await page.goto(`${baseURL}home`);
+  await expect(page.getByRole('heading', { name: '每小时备份', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '编辑', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: '编辑同步任务' });
+  await drawer.getByRole('textbox', { name: '任务备注' }).fill('每小时备份-已改备注');
+  await drawer.getByRole('button', { name: '保存任务配置', exact: true }).click();
+  await expect.poll(() => saves.length).toBe(1);
+  assert.equal(saves[0].remark, '每小时备份-已改备注');
+  assert.equal(saves[0].minute, '30');
+  assert.equal(saves[0].hour, '*');
+  assert.equal(saves[0].second, '0');
+});
+
+test('saved jobId link locates job on later page and never substitutes another job when missing', async (t) => {
+  const page = await openPage(t, 1280);
+  await page.route('**/svr/job?*', (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const locateJobId = params.get('locateJobId');
+    if (locateJobId === '3') {
+      return respond(route, { dataList: [jobs[2]], count: 13, pageNum: 2, locatedJobFound: true });
+    }
+    if (locateJobId === '999') {
+      return respond(route, { dataList: jobs.slice(0, 2), count: 13, pageNum: 1, locatedJobFound: false });
+    }
+    const pageNum = params.get('pageNum');
+    return respond(route, { dataList: pageNum === '2' ? [jobs[2]] : jobs.slice(0, 2), count: 13 });
+  });
+
+  // 1. Job 3 lives on page 2: opening /home?jobId=3 must move to page 2 and select job 3.
+  await page.goto(`${baseURL}home?jobId=3`);
+  await expect(page.getByRole('heading', { name: '媒体同步', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '相册备份', exact: true })).toHaveCount(0);
+  await expect.poll(() => new URL(page.url()).searchParams.get('jobId')).toBe('3');
+  await expect.poll(() => new URL(page.url()).searchParams.get('page')).toBe('2');
+
+  // 2. Non-existent jobId=999 must show missing state without selecting job 1 or rewriting jobId.
+  await page.goto(`${baseURL}home?jobId=999`);
+  await expect(page.getByText('未找到同步任务 #999', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '相册备份', exact: true })).toHaveCount(0);
+  assert.equal(new URL(page.url()).searchParams.get('jobId'), '999');
+});

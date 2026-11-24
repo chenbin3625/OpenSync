@@ -9,6 +9,7 @@ import type { AlistItem, JobItem } from '../../types';
 import { buildHomeRouteSearch, readHomeRouteState, type HomeRouteState, type HomeTabKey } from './routeState';
 import { formatAlistLabel } from './homeUtils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { Button } from '../../components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/ui/sheet';
 import { toast } from '../../components/ui/toaster';
 import { Alert } from '../../components/common/Alert';
@@ -17,6 +18,7 @@ import { cn } from '../../lib/utils';
 import { icon, surface } from '../../lib/styles';
 
 const PAGE_SIZE = 12;
+const MAX_LOCATE_SCAN_PAGES = 50;
 const emptyJobs: JobItem[] = [];
 const TaskList = lazy(() => import('./TaskList'));
 const TaskDetail = lazy(() => import('./TaskDetail'));
@@ -28,6 +30,7 @@ type JobPageResult = {
   list: JobItem[];
   total: number;
   error: boolean;
+  missingJobId?: number | null;
 };
 
 export default function Home() {
@@ -45,9 +48,26 @@ export default function Home() {
   const list = pageResult?.list ?? emptyJobs;
   const total = listResult?.total ?? 0;
   const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const loading = pageResult?.revision !== listRevision || (pageResult?.error === false && page > maxPage);
+  const selectedJobInList = selectedJobId !== null
+    ? (list.find((job) => job.id === selectedJobId) ?? null)
+    : null;
+  const needsLocateSelectedJob = selectedJobId !== null &&
+    pageResult?.revision === listRevision &&
+    !pageResult.error &&
+    !selectedJobInList &&
+    pageResult.missingJobId !== selectedJobId;
+  const selectedJobMissing = selectedJobId !== null &&
+    pageResult?.revision === listRevision &&
+    !pageResult.error &&
+    !selectedJobInList &&
+    pageResult.missingJobId === selectedJobId;
+  const loading = pageResult?.revision !== listRevision ||
+    needsLocateSelectedJob ||
+    (pageResult?.error === false && page > maxPage && selectedJobId === null);
   const listError = !loading && pageResult?.error === true;
-  const selectedJob = list.find((job) => job.id === selectedJobId) ?? list[0] ?? null;
+  // Never substitute list[0] when the URL explicitly requested a jobId; doing
+  // so would silently attach Run/Delete actions to a different job.
+  const selectedJob = selectedJobId !== null ? selectedJobInList : (list[0] ?? null);
 
   const refreshList = () => setListRevision((revision) => revision + 1);
 
@@ -63,6 +83,7 @@ export default function Home() {
           list: res.data?.dataList ?? emptyJobs,
           total: res.data?.count ?? 0,
           error: false,
+          missingJobId: null,
         });
       } catch (err) {
         if (controller.signal.aborted) return;
@@ -73,12 +94,108 @@ export default function Home() {
           list: previous?.page === page ? previous.list : emptyJobs,
           total: previous?.total ?? 0,
           error: true,
+          missingJobId: null,
         }));
       }
     }
     void loadJobs();
     return () => controller.abort();
   }, [listRevision, page]);
+
+  const updateHomeRouteState = useCallback((state: Partial<HomeRouteState>) => {
+    const current = readHomeRouteState(searchParams);
+    setSearchParams(buildHomeRouteSearch(searchParams, {
+      tab: state.tab ?? current.tab,
+      jobId: state.jobId !== undefined ? state.jobId : current.jobId,
+      page: state.page ?? current.page,
+    }), { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  // When a bookmarked URL requests a jobId that moved to another page (e.g.
+  // after new jobs were added), locate its actual page instead of falling back
+  // to the first job on the current page.
+  useEffect(() => {
+    if (!needsLocateSelectedJob || selectedJobId === null) return undefined;
+    const targetJobId = selectedJobId;
+    const controller = new AbortController();
+
+    async function locateSelectedJob() {
+      try {
+        const located = await jobGetJob(
+          { pageSize: PAGE_SIZE, pageNum: page, locateJobId: targetJobId },
+          { silent: true, signal: controller.signal },
+        );
+        if (controller.signal.aborted) return;
+        const locatedList = located.data?.dataList ?? emptyJobs;
+        const locatedTotal = located.data?.count ?? total;
+        const locatedPage = located.data?.pageNum;
+        if (locatedList.some((job) => job.id === targetJobId)) {
+          const targetPage = typeof locatedPage === 'number' && locatedPage >= 1 ? locatedPage : page;
+          setListResult({
+            page: targetPage,
+            revision: listRevision,
+            list: locatedList,
+            total: locatedTotal,
+            error: false,
+            missingJobId: null,
+          });
+          if (targetPage !== page) {
+            updateHomeRouteState({ page: targetPage, jobId: targetJobId });
+          }
+          return;
+        }
+        if (located.data?.locatedJobFound === false) {
+          setListResult((previous) => (previous && previous.page === page
+            ? { ...previous, list: locatedList, total: locatedTotal, missingJobId: targetJobId }
+            : previous));
+          return;
+        }
+
+        // Fallback when the endpoint does not report locatedJobFound (e.g.
+        // older backends or mock handlers): scan other pages for targetJobId.
+        const totalPages = Math.min(MAX_LOCATE_SCAN_PAGES, Math.max(1, Math.ceil(locatedTotal / PAGE_SIZE)));
+        for (let candidate = 1; candidate <= totalPages; candidate += 1) {
+          if (candidate === page) continue;
+          const res = await jobGetJob(
+            { pageSize: PAGE_SIZE, pageNum: candidate },
+            { silent: true, signal: controller.signal },
+          );
+          if (controller.signal.aborted) return;
+          const candidateList = res.data?.dataList ?? emptyJobs;
+          if (candidateList.some((job) => job.id === targetJobId)) {
+            setListResult({
+              page: candidate,
+              revision: listRevision,
+              list: candidateList,
+              total: res.data?.count ?? locatedTotal,
+              error: false,
+              missingJobId: null,
+            });
+            updateHomeRouteState({ page: candidate, jobId: targetJobId });
+            return;
+          }
+        }
+
+        setListResult((previous) => (previous && previous.page === page
+          ? { ...previous, missingJobId: targetJobId }
+          : previous));
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        console.error('job locate failed', err);
+        setListResult((previous) => ({
+          page,
+          revision: listRevision,
+          list: previous?.page === page ? previous.list : emptyJobs,
+          total: previous?.total ?? 0,
+          error: true,
+          missingJobId: null,
+        }));
+      }
+    }
+
+    void locateSelectedJob();
+    return () => controller.abort();
+  }, [listRevision, needsLocateSelectedJob, page, selectedJobId, total, updateHomeRouteState]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -96,24 +213,28 @@ export default function Home() {
     return () => controller.abort();
   }, []);
 
-  const updateHomeRouteState = useCallback((state: Partial<HomeRouteState>) => {
-    const current = readHomeRouteState(searchParams);
-    setSearchParams(buildHomeRouteSearch(searchParams, {
-      tab: state.tab ?? current.tab,
-      jobId: state.jobId !== undefined ? state.jobId : current.jobId,
-      page: state.page ?? current.page,
-    }), { replace: true });
-  }, [searchParams, setSearchParams]);
-
   useEffect(() => {
     if (!pageResult || pageResult.error || pageResult.revision !== listRevision) return;
+    if (needsLocateSelectedJob) return;
     if (page > maxPage) {
-      updateHomeRouteState({ page: maxPage, jobId: null });
+      updateHomeRouteState({ page: maxPage, jobId: selectedJobMissing ? selectedJobId : null });
       return;
     }
-    const nextJobId = selectedJob?.id ?? null;
-    if (nextJobId !== selectedJobId) updateHomeRouteState({ jobId: nextJobId });
-  }, [listRevision, maxPage, page, pageResult, selectedJob, selectedJobId, updateHomeRouteState]);
+    if (selectedJobId === null) {
+      const nextJobId = selectedJob?.id ?? null;
+      if (nextJobId !== null) updateHomeRouteState({ jobId: nextJobId });
+    }
+  }, [
+    listRevision,
+    maxPage,
+    needsLocateSelectedJob,
+    page,
+    pageResult,
+    selectedJob,
+    selectedJobId,
+    selectedJobMissing,
+    updateHomeRouteState,
+  ]);
 
   const handleAdd = () => {
     setEditingJob(null);
@@ -135,6 +256,9 @@ export default function Home() {
     try {
       await jobDelete({ id });
       toast.success('删除成功');
+      if (id === selectedJobId) {
+        updateHomeRouteState({ jobId: null });
+      }
       refreshList();
     } catch (err) {
       console.error('job delete failed', err);
@@ -275,6 +399,20 @@ export default function Home() {
               <LoadingState title="正在加载同步任务" />
             ) : listError ? (
               <ErrorState icon={CircleAlert} title="同步任务列表加载失败" onRetry={refreshList} />
+            ) : selectedJobMissing && selectedJobId !== null ? (
+              <div className="text-center space-y-3">
+                <EmptyState icon={Inbox} title={`未找到同步任务 #${selectedJobId}`} className="py-4" />
+                {list.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => updateHomeRouteState({ page: 1, jobId: null })}
+                  >
+                    查看当前列表
+                  </Button>
+                )}
+              </div>
             ) : (
               <EmptyState icon={Inbox} title="暂无同步任务" />
             )}

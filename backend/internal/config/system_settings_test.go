@@ -301,3 +301,100 @@ func TestSystemSettingsCanBeReadWhileUpdated(t *testing.T) {
 	close(start)
 	wg.Wait()
 }
+
+func TestUpdateSystemSettingsDoesNotPersistEnvDeploymentOverrides(t *testing.T) {
+	withTempConfigDir(t)
+
+	configPath := filepath.Join("data", "config.ini")
+	if err := os.WriteFile(configPath, []byte("[opensync]\nport=8023\nexpires=7\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(config.ini) error: %v", err)
+	}
+
+	t.Setenv("OPENSYNC_BIND", "0.0.0.0")
+	t.Setenv("OPENSYNC_PORT", "9999")
+	t.Setenv("OPENSYNC_TRUSTED_PROXIES", "10.0.0.0/8")
+	t.Setenv("OPENSYNC_LOG_LEVEL", "debug")
+
+	cfg := GetConfig()
+	if cfg.Server.Bind != "0.0.0.0" || cfg.Server.Port != 9999 {
+		t.Fatalf("env overrides not loaded in memory: bind=%q port=%d", cfg.Server.Bind, cfg.Server.Port)
+	}
+
+	cc := 9
+	if _, err := PatchSystemSettings(SystemSettingsPatch{CopyConcurrency: &cc}); err != nil {
+		t.Fatalf("PatchSystemSettings() error: %v", err)
+	}
+
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile(config.ini) error: %v", err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "copy_concurrency=9") || !strings.Contains(text, "port=8023") {
+		t.Fatalf("config.ini missing expected runtime/original keys:\n%s", text)
+	}
+	for _, forbidden := range []string{"0.0.0.0", "9999", "10.0.0.0/8", "bind=", "trusted_proxies=", "log_level="} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("config.ini leaked temporary env deployment override %q:\n%s", forbidden, text)
+		}
+	}
+}
+
+func TestPatchSystemSettingsConcurrentDisjointUpdatesPreserveBoth(t *testing.T) {
+	withTempConfigDir(t)
+	_ = GetConfig()
+
+	expires := 14
+	timeout := 72
+	taskSave := 45
+	copyConc := 9
+	scanConc := 12
+	maxRetries := 6
+
+	patches := []SystemSettingsPatch{
+		{Expires: &expires},
+		{TaskTimeout: &timeout},
+		{TaskSave: &taskSave},
+		{CopyConcurrency: &copyConc},
+		{ScanConcurrency: &scanConc},
+		{MaxRetries: &maxRetries},
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, len(patches))
+	for _, patch := range patches {
+		patch := patch
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, err := PatchSystemSettings(patch); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("PatchSystemSettings() error: %v", err)
+	}
+
+	want := SystemSettings{
+		Expires:         expires,
+		TaskTimeout:     timeout,
+		TaskSave:        taskSave,
+		CopyConcurrency: copyConc,
+		ScanConcurrency: scanConc,
+		MaxRetries:      maxRetries,
+	}
+	if got := GetSystemSettings(); got != want {
+		t.Fatalf("in-memory settings = %+v, want %+v", got, want)
+	}
+
+	sysConfig = nil
+	if reloaded := GetSystemSettings(); reloaded != want {
+		t.Fatalf("reloaded settings from config.ini = %+v, want %+v", reloaded, want)
+	}
+}

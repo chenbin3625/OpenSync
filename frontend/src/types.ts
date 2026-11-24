@@ -7,6 +7,8 @@ export interface ApiResponse<T> {
 export interface PageData<T> {
   dataList: T[];
   count: number;
+  pageNum?: number;
+  locatedJobFound?: boolean;
 }
 
 export interface UserInfo {

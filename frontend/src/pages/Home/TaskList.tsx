@@ -191,7 +191,13 @@ export default function TaskList({
   const inFlightParamsRef = useRef<string | null>(null);
   const showRealtime = view === 'realtime' && active;
   const showHistory = view === 'history' && active;
-  const { currentTask, refreshCurrentTask } = useRealtimeTask(jobId, showRealtime);
+  const {
+    currentTask,
+    realtimeLoading,
+    realtimeError,
+    refreshCurrentTask,
+    retryRealtime,
+  } = useRealtimeTask(jobId, showRealtime);
   const {
     activeTab,
     setActiveTab,
@@ -376,6 +382,19 @@ export default function TaskList({
       onPageChange={setTabTaskPage}
       onTabChange={setActiveTab}
     />
+  ) : realtimeError ? (
+    <PlaceholderCard>
+      <ErrorState
+        icon={InfoCircleOutlined}
+        title="实时任务加载失败"
+        onRetry={retryRealtime}
+        retryLabel="重试"
+      />
+    </PlaceholderCard>
+  ) : realtimeLoading ? (
+    <PlaceholderCard>
+      <LoadingState className="min-h-40" title="正在加载实时任务" />
+    </PlaceholderCard>
   ) : (
     <PlaceholderCard>
       <EmptyState icon={Inbox} title="当前没有正在同步的任务" />

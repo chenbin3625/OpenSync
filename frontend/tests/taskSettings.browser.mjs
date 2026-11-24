@@ -166,3 +166,33 @@ test('realtime coalesces a snapshot and multiple file patches without dropping f
   const filenames = page.getByText(/^(older|newer)\.mkv$/);
   await expect(filenames).toHaveText(['newer.mkv', 'older.mkv']);
 });
+
+test('realtime view shows load failure instead of idle state when stream and poll fail on initial open', async (t) => {
+  const page = await openPage(t);
+  let failRealtime = true;
+  await page.route('**/svr/job/stream?*', (route) => {
+    if (failRealtime) {
+      return route.fulfill({ status: 503, json: { code: 503, msg: 'Unavailable', data: null } });
+    }
+    return route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+      body: `data: ${JSON.stringify({ code: 200, msg: 'ok', data: null })}\n\n`,
+    });
+  });
+  await page.route('**/svr/job?*', (route) => {
+    if (failRealtime) {
+      return route.fulfill({ status: 503, json: { code: 503, msg: 'Unavailable', data: null } });
+    }
+    return route.fulfill({ json: { code: 200, msg: 'ok', data: null } });
+  });
+
+  await page.goto(`${baseURL}__task_settings_fixture__`);
+  await expect(page.getByText('实时任务加载失败', { exact: true })).toBeVisible();
+  await expect(page.getByText('当前没有正在同步的任务', { exact: true })).toHaveCount(0);
+
+  failRealtime = false;
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(page.getByText('当前没有正在同步的任务', { exact: true })).toBeVisible();
+  await expect(page.getByText('实时任务加载失败', { exact: true })).toHaveCount(0);
+});

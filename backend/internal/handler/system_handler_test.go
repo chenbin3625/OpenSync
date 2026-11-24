@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -384,6 +385,85 @@ func TestUpdateSystemConfigPreservesOmittedFieldsAndRunsCleanupAsync(t *testing.
 	}
 	if got.TaskTimeout != 48 || got.TaskSave != 30 || got.MaxRetries != 4 {
 		t.Fatalf("omitted zero-min fields were overwritten: %+v", got)
+	}
+}
+
+func TestUpdateSystemConfigConcurrentDisjointRequestsPreserveBoth(t *testing.T) {
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error: %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir() error: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	if err := os.MkdirAll("data", 0755); err != nil {
+		t.Fatalf("MkdirAll() error: %v", err)
+	}
+
+	oldConfig := config.GetConfig()
+	config.SetConfigForTest(&config.Config{
+		Server: config.ServerConfig{
+			Bind:            "127.0.0.1",
+			Port:            8023,
+			Expires:         7,
+			Timeout:         48,
+			TaskSave:        30,
+			CopyConcurrency: 4,
+			ScanConcurrency: 4,
+			MaxRetries:      3,
+			PasswdStr:       "test-config-secret",
+		},
+	})
+	t.Cleanup(func() {
+		config.SetConfigForTest(oldConfig)
+		middleware.InitSecureCookie()
+	})
+
+	origCleanup := runTaskRetentionCleanup
+	runTaskRetentionCleanup = func() {}
+	t.Cleanup(func() { runTaskRetentionCleanup = origCleanup })
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.PUT("/svr/system/config", UpdateSystemConfig)
+
+	payloads := []string{
+		`{"copyConcurrency":9}`,
+		`{"taskSave":45}`,
+		`{"scanConcurrency":12}`,
+		`{"maxRetries":6}`,
+		`{"taskTimeout":72}`,
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan string, len(payloads))
+	for _, payload := range payloads {
+		payload := payload
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			req := httptest.NewRequest(http.MethodPut, "/svr/system/config", strings.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"code":200`) {
+				errs <- fmt.Sprintf("%s -> status=%d body=%s", payload, w.Code, w.Body.String())
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for msg := range errs {
+		t.Fatal(msg)
+	}
+
+	got := config.GetSystemSettings()
+	if got.CopyConcurrency != 9 || got.TaskSave != 45 || got.ScanConcurrency != 12 || got.MaxRetries != 6 || got.TaskTimeout != 72 || got.Expires != 7 {
+		t.Fatalf("concurrent disjoint updates lost fields: got %+v", got)
 	}
 }
 

@@ -449,6 +449,19 @@ func EditJobClient(job map[string]interface{}) {
 			alistRefMu.Unlock()
 			panicPublicIf(err, msg.AlistNotFound)
 		}
+		if oldJob != nil {
+			oldAlistID := util.ToInt64(oldJob["alistId"])
+			newAlistID := util.ToInt64(job["alistId"])
+			if oldAlistID > 0 && oldAlistID != newAlistID {
+				// Tag any pre-migration historical tasks with the previous engine
+				// before switching job.alistId so old failed deletes cannot be
+				// replayed against the new engine.
+				if err := mapper.BackfillJobTaskAlistID(jobID, oldAlistID); err != nil {
+					alistRefMu.Unlock()
+					panic(err.Error())
+				}
+			}
+		}
 		if err := mapper.UpdateJob(job); err != nil {
 			alistRefMu.Unlock()
 			panicPublicIf(err, msg.JobNotFound)
@@ -637,11 +650,11 @@ func StopTask(taskID int64) {
 
 // RetryFailedTask replays the non-success items of a historical task.
 func RetryFailedTask(taskID int64) {
-	job, err := mapper.GetJobByTaskID(taskID)
+	sourceTask, err := mapper.GetJobTaskByID(taskID)
 	if err != nil {
-		panicPublicIf(err, msg.JobNotFound)
+		panicPublicIf(err, msg.TaskNotFound)
 	}
-	client := GetJobClientByID(util.ToInt64(job["id"]))
+	client := GetJobClientByID(util.ToInt64(sourceTask["jobId"]))
 	client.opMu.Lock()
 	defer client.opMu.Unlock()
 
@@ -654,6 +667,11 @@ func RetryFailedTask(taskID int64) {
 	if client.isBusy() {
 		panicPublic(msg.JobRunning)
 	}
+	sourceAlistID := util.ToInt64(sourceTask["alistId"])
+	currentAlistID := util.ToInt64(client.jobSnapshot()["alistId"])
+	if sourceAlistID > 0 && sourceAlistID != currentAlistID {
+		panicPublic(msg.RetryTaskEngineChanged)
+	}
 	count, err := countJobTaskItemsByStatuses(taskID, retryableStatusValues())
 	if err != nil {
 		panic(err.Error())
@@ -661,7 +679,7 @@ func RetryFailedTask(taskID int64) {
 	if count == 0 {
 		panicPublic(msg.NoFailedTaskItems)
 	}
-	client.DoRetryFailedTaskItems(taskID)
+	client.DoRetryFailedTaskItemsWithAlist(taskID, sourceAlistID, currentAlistID)
 }
 
 // GetJobList returns paginated job list

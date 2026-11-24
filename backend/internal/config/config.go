@@ -305,17 +305,33 @@ func SetConfigForTest(cfg *Config) {
 	sysConfig = cfg
 }
 
+// SystemSettingsPatch describes an atomic partial update to runtime settings.
+// Nil fields preserve the current value under configMu so concurrent requests
+// modifying disjoint fields never overwrite each other.
+type SystemSettingsPatch struct {
+	Expires         *int
+	TaskTimeout     *int
+	TaskSave        *int
+	CopyConcurrency *int
+	ScanConcurrency *int
+	MaxRetries      *int
+}
+
+func systemSettingsFromServer(s ServerConfig) SystemSettings {
+	return SystemSettings{
+		Expires:         s.Expires,
+		TaskTimeout:     s.Timeout,
+		TaskSave:        s.TaskSave,
+		CopyConcurrency: s.CopyConcurrency,
+		ScanConcurrency: s.ScanConcurrency,
+		MaxRetries:      s.MaxRetries,
+	}
+}
+
 // GetSystemSettings returns the runtime-editable settings.
 func GetSystemSettings() SystemSettings {
 	cfg := GetConfig()
-	return SystemSettings{
-		Expires:         cfg.Server.Expires,
-		TaskTimeout:     cfg.Server.Timeout,
-		TaskSave:        cfg.Server.TaskSave,
-		CopyConcurrency: cfg.Server.CopyConcurrency,
-		ScanConcurrency: cfg.Server.ScanConcurrency,
-		MaxRetries:      cfg.Server.MaxRetries,
-	}
+	return systemSettingsFromServer(cfg.Server)
 }
 
 // UpdateSystemSettings validates, persists, and applies runtime-editable settings.
@@ -329,6 +345,9 @@ func UpdateSystemSettings(settings SystemSettings) error {
 	defer configMu.Unlock()
 
 	cfg := sysConfig
+	if err := writeConfigKeys(runtimeSettingsValues(settings), runtimeConfigManagedKeys); err != nil {
+		return err
+	}
 	nextServer := cfg.Server
 	nextServer.Expires = settings.Expires
 	nextServer.Timeout = settings.TaskTimeout
@@ -336,15 +355,78 @@ func UpdateSystemSettings(settings SystemSettings) error {
 	nextServer.CopyConcurrency = settings.CopyConcurrency
 	nextServer.ScanConcurrency = settings.ScanConcurrency
 	nextServer.MaxRetries = settings.MaxRetries
-
-	if err := writeConfigFile(nextServer); err != nil {
-		return err
-	}
 	sysConfig = &Config{
 		DB:     cfg.DB,
 		Server: nextServer,
 	}
 	return nil
+}
+
+// PatchSystemSettings atomically merges non-nil fields from patch onto the
+// current runtime configuration under configMu, validates, persists only the
+// modified runtime keys, and returns the updated settings snapshot.
+func PatchSystemSettings(patch SystemSettingsPatch) (SystemSettings, error) {
+	GetConfig()
+	configMu.Lock()
+	defer configMu.Unlock()
+
+	cfg := sysConfig
+	nextSettings := systemSettingsFromServer(cfg.Server)
+	patchedKeys := make([]string, 0, len(runtimeConfigManagedKeys))
+	patchedValues := make(map[string]string, len(runtimeConfigManagedKeys))
+
+	if patch.Expires != nil {
+		nextSettings.Expires = *patch.Expires
+		patchedKeys = append(patchedKeys, "expires")
+		patchedValues["expires"] = strconv.Itoa(*patch.Expires)
+	}
+	if patch.TaskSave != nil {
+		nextSettings.TaskSave = *patch.TaskSave
+		patchedKeys = append(patchedKeys, "task_save")
+		patchedValues["task_save"] = strconv.Itoa(*patch.TaskSave)
+	}
+	if patch.TaskTimeout != nil {
+		nextSettings.TaskTimeout = *patch.TaskTimeout
+		patchedKeys = append(patchedKeys, "task_timeout")
+		patchedValues["task_timeout"] = strconv.Itoa(*patch.TaskTimeout)
+	}
+	if patch.CopyConcurrency != nil {
+		nextSettings.CopyConcurrency = *patch.CopyConcurrency
+		patchedKeys = append(patchedKeys, "copy_concurrency")
+		patchedValues["copy_concurrency"] = strconv.Itoa(*patch.CopyConcurrency)
+	}
+	if patch.ScanConcurrency != nil {
+		nextSettings.ScanConcurrency = *patch.ScanConcurrency
+		patchedKeys = append(patchedKeys, "scan_concurrency")
+		patchedValues["scan_concurrency"] = strconv.Itoa(*patch.ScanConcurrency)
+	}
+	if patch.MaxRetries != nil {
+		nextSettings.MaxRetries = *patch.MaxRetries
+		patchedKeys = append(patchedKeys, "max_retries")
+		patchedValues["max_retries"] = strconv.Itoa(*patch.MaxRetries)
+	}
+
+	if err := validateSystemSettings(nextSettings); err != nil {
+		return SystemSettings{}, err
+	}
+
+	if len(patchedKeys) > 0 {
+		if err := writeConfigKeys(patchedValues, patchedKeys); err != nil {
+			return SystemSettings{}, err
+		}
+		nextServer := cfg.Server
+		nextServer.Expires = nextSettings.Expires
+		nextServer.Timeout = nextSettings.TaskTimeout
+		nextServer.TaskSave = nextSettings.TaskSave
+		nextServer.CopyConcurrency = nextSettings.CopyConcurrency
+		nextServer.ScanConcurrency = nextSettings.ScanConcurrency
+		nextServer.MaxRetries = nextSettings.MaxRetries
+		sysConfig = &Config{
+			DB:     cfg.DB,
+			Server: nextServer,
+		}
+	}
+	return nextSettings, nil
 }
 
 func validateSystemSettings(settings SystemSettings) error {
@@ -391,45 +473,36 @@ func envBoolConfigValue(envName string, fallback bool) bool {
 	}
 }
 
-// configManagedKeys are the [opensync] keys the server writes itself. Any
-// other line in config.ini — comments, unknown keys, other sections — is
-// preserved verbatim when settings are updated at runtime.
-var configManagedKeys = []string{
-	"bind", "port", "expires", "log_level", "console_level", "log_save",
-	"task_save", "task_timeout", "copy_concurrency", "scan_concurrency",
-	"max_retries", "trusted_proxies",
+// runtimeConfigManagedKeys are the runtime-editable [opensync] keys persisted
+// when settings are saved from the UI or API. Deployment parameters such as
+// bind, port, trusted_proxies, and log levels are intentionally excluded so
+// temporary environment overrides are never baked into config.ini.
+var runtimeConfigManagedKeys = []string{
+	"expires", "task_save", "task_timeout",
+	"copy_concurrency", "scan_concurrency", "max_retries",
 }
 
-func configManagedValues(sCfg ServerConfig) map[string]string {
+func runtimeSettingsValues(settings SystemSettings) map[string]string {
 	return map[string]string{
-		"bind":             sCfg.Bind,
-		"port":             strconv.Itoa(sCfg.Port),
-		"expires":          strconv.Itoa(sCfg.Expires),
-		"log_level":        strconv.Itoa(sCfg.LogLevel),
-		"console_level":    strconv.Itoa(sCfg.ConsoleLevel),
-		"log_save":         strconv.Itoa(sCfg.LogSave),
-		"task_save":        strconv.Itoa(sCfg.TaskSave),
-		"task_timeout":     strconv.Itoa(sCfg.Timeout),
-		"copy_concurrency": strconv.Itoa(sCfg.CopyConcurrency),
-		"scan_concurrency": strconv.Itoa(sCfg.ScanConcurrency),
-		"max_retries":      strconv.Itoa(sCfg.MaxRetries),
-		"trusted_proxies":  strings.Join(sCfg.TrustedProxies, ","),
+		"expires":          strconv.Itoa(settings.Expires),
+		"task_save":        strconv.Itoa(settings.TaskSave),
+		"task_timeout":     strconv.Itoa(settings.TaskTimeout),
+		"copy_concurrency": strconv.Itoa(settings.CopyConcurrency),
+		"scan_concurrency": strconv.Itoa(settings.ScanConcurrency),
+		"max_retries":      strconv.Itoa(settings.MaxRetries),
 	}
 }
 
-// writeConfigFile rewrites the [opensync] section of data/config.ini while
-// preserving comments, unknown keys, and any other sections the operator added.
-// If missing managed keys need to be inserted, they are added inside the
-// existing [opensync] section rather than creating a duplicate section; any
-// pre-existing duplicate [opensync] sections or duplicate managed keys are
-// merged cleanly so updated settings never revert on restart.
-func writeConfigFile(sCfg ServerConfig) error {
+// writeConfigKeys updates only the given [opensync] keys in data/config.ini
+// while preserving deployment keys, comments, unknown keys, and any other
+// sections verbatim. Duplicate [opensync] sections or duplicate entries for
+// updated keys are merged cleanly so updated settings never revert on restart.
+func writeConfigKeys(values map[string]string, orderedKeys []string) error {
 	configPath := DataPath("config.ini")
 	dataDir := filepath.Dir(configPath)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return err
 	}
-	values := configManagedValues(sCfg)
 	pending := make(map[string]string, len(values))
 	for k, v := range values {
 		pending[k] = v
@@ -495,7 +568,7 @@ func writeConfigFile(sCfg ServerConfig) error {
 	trailingBlanks := append([]string(nil), opensyncBody[len(opensyncBody)-trailingBlankCount:]...)
 	opensyncBody = opensyncBody[:len(opensyncBody)-trailingBlankCount]
 
-	for _, key := range configManagedKeys {
+	for _, key := range orderedKeys {
 		if v, ok := pending[key]; ok {
 			opensyncBody = append(opensyncBody, key+"="+v)
 			delete(pending, key)

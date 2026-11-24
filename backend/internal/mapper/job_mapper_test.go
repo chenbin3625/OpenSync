@@ -665,3 +665,119 @@ func TestGetJobTaskCountsByTaskIDsWithErrorChunksLargeSlices(t *testing.T) {
 		t.Fatalf("task 1204 counts = %#v, want allNum=1 sumSize=12040", counts[1204])
 	}
 }
+
+func TestDeleteJobKeepsParentWhenInterruptedMidChunk(t *testing.T) {
+	oldChunk := taskItemDeleteChunkSize
+	taskItemDeleteChunkSize = 3
+	t.Cleanup(func() { taskItemDeleteChunkSize = oldChunk })
+
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+	defer SetDBForTest(testDB)()
+
+	for _, stmt := range []string{
+		`CREATE TABLE job(id integer primary key autoincrement, remark text)`,
+		`CREATE TABLE job_task(id integer primary key autoincrement, jobId integer)`,
+		`CREATE TABLE job_task_item(id integer primary key autoincrement, taskId integer)`,
+		`CREATE TABLE delete_guard(deleted_count integer NOT NULL)`,
+		`INSERT INTO delete_guard VALUES (0)`,
+		`INSERT INTO job(id, remark) VALUES (1, 'big-job')`,
+		`INSERT INTO job_task(id, jobId) VALUES (10, 1)`,
+	} {
+		if _, err := testDB.Exec(stmt); err != nil {
+			t.Fatalf("setup %q: %v", stmt, err)
+		}
+	}
+	for i := 0; i < 7; i++ {
+		if _, err := testDB.Exec("INSERT INTO job_task_item(taskId) VALUES (10)"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := testDB.Exec(`
+		CREATE TRIGGER abort_job_delete_second_batch BEFORE DELETE ON job_task_item
+		BEGIN
+			UPDATE delete_guard SET deleted_count = deleted_count + 1;
+			SELECT RAISE(ABORT, 'simulated interruption') WHERE (SELECT deleted_count FROM delete_guard) >= 4;
+		END
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := DeleteJob(1); err == nil {
+		t.Fatal("DeleteJob(1) error = nil, want simulated interruption")
+	}
+	var jobCount, taskCount, itemCount int
+	_ = testDB.QueryRow("SELECT COUNT(*) FROM job WHERE id=1").Scan(&jobCount)
+	_ = testDB.QueryRow("SELECT COUNT(*) FROM job_task WHERE id=10").Scan(&taskCount)
+	_ = testDB.QueryRow("SELECT COUNT(*) FROM job_task_item WHERE taskId=10").Scan(&itemCount)
+	if jobCount != 1 || taskCount != 1 || itemCount != 4 {
+		t.Fatalf("after interrupted DeleteJob: job=%d task=%d items=%d, want 1/1/4", jobCount, taskCount, itemCount)
+	}
+
+	if _, err := testDB.Exec("DROP TRIGGER abort_job_delete_second_batch"); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteJob(1); err != nil {
+		t.Fatalf("retry DeleteJob(1) error: %v", err)
+	}
+	_ = testDB.QueryRow("SELECT COUNT(*) FROM job").Scan(&jobCount)
+	_ = testDB.QueryRow("SELECT COUNT(*) FROM job_task").Scan(&taskCount)
+	_ = testDB.QueryRow("SELECT COUNT(*) FROM job_task_item").Scan(&itemCount)
+	if jobCount != 0 || taskCount != 0 || itemCount != 0 {
+		t.Fatalf("after retry DeleteJob: job=%d task=%d items=%d, want 0/0/0", jobCount, taskCount, itemCount)
+	}
+}
+
+func TestGetJobListLocatesJobAcrossPages(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error: %v", err)
+	}
+	defer testDB.Close()
+	defer SetDBForTest(testDB)()
+
+	if _, err := testDB.Exec(`CREATE TABLE job(
+		id integer primary key autoincrement,
+		remark text,
+		createTime integer
+	)`); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	// Ordered DESC by createTime, id: 5, 4 (page 1), 3, 2 (page 2), 1 (page 3).
+	for i := 1; i <= 5; i++ {
+		if _, err := testDB.Exec("INSERT INTO job(id, remark, createTime) VALUES (?, ?, ?)", i, "job", i*100); err != nil {
+			t.Fatalf("insert job %d: %v", i, err)
+		}
+	}
+
+	located, err := GetJobList(map[string]interface{}{
+		"pageSize":    "2",
+		"pageNum":     "1",
+		"locateJobId": int64(2),
+	})
+	if err != nil {
+		t.Fatalf("GetJobList(locateJobId=2) error: %v", err)
+	}
+	if located["locatedJobFound"] != true || located["pageNum"] != 2 {
+		t.Fatalf("located metadata = pageNum:%v found:%v, want 2/true", located["pageNum"], located["locatedJobFound"])
+	}
+	rows := located["dataList"].([]map[string]interface{})
+	if len(rows) != 2 || rows[0]["id"] != int64(3) || rows[1]["id"] != int64(2) {
+		t.Fatalf("page 2 rows = %#v, want ids [3, 2]", rows)
+	}
+
+	missing, err := GetJobList(map[string]interface{}{
+		"pageSize":    "2",
+		"pageNum":     "1",
+		"locateJobId": int64(999),
+	})
+	if err != nil {
+		t.Fatalf("GetJobList(locateJobId=999) error: %v", err)
+	}
+	if missing["locatedJobFound"] != false || missing["pageNum"] != 1 {
+		t.Fatalf("missing metadata = pageNum:%v found:%v, want 1/false", missing["pageNum"], missing["locatedJobFound"])
+	}
+}

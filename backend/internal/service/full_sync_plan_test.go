@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"opensync/internal/config"
+	"opensync/internal/msg"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -638,5 +639,298 @@ func TestFullSyncDeepSubdirNotFoundDoesNotTriggerRootMkdir(t *testing.T) {
 	}
 	if !foundSubdirFail {
 		t.Fatalf("expected failed scan item for /dst/sub/, got %#v", persisted)
+	}
+}
+
+func TestFullSyncAbortsWithoutDeletingWhenSourceListReturnsNullOrMissingData(t *testing.T) {
+	oldDelay := scanListRetryDelay
+	scanListRetryDelay = func(int) time.Duration { return 0 }
+	defer func() { scanListRetryDelay = oldDelay }()
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "null data", body: `{"code":200,"message":"ok","data":null}`},
+		{name: "missing data", body: `{"code":200,"message":"ok"}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var removeCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				var body map[string]interface{}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				switch r.URL.Path {
+				case "/api/fs/list":
+					if body["path"].(string) == "/src/" {
+						_, _ = w.Write([]byte(tc.body))
+						return
+					}
+					_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"important.txt","size":100,"is_dir":false}]}}`))
+				case "/api/fs/remove":
+					removeCalls.Add(1)
+					_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+				default:
+					t.Fatalf("unexpected path %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+
+			var persisted []map[string]interface{}
+			restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+			defer restorePersist()
+
+			jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{
+				"method":        1,
+				"srcPath":       "/src/",
+				"dstPath":       "/dst/",
+				"useCacheS":     0,
+				"useCacheT":     0,
+				"scanIntervalS": 0,
+				"scanIntervalT": 0,
+			})
+
+			jt.sync()
+			if err := jt.flushPersistBuffer(); err != nil {
+				t.Fatalf("flushPersistBuffer() error: %v", err)
+			}
+			if got := removeCalls.Load(); got != 0 {
+				t.Fatalf("removeCalls = %d, want 0 when source list returned %s", got, tc.name)
+			}
+			if len(jt.deferredDeletes) != 0 {
+				t.Fatalf("deferredDeletes = %#v, want empty", jt.deferredDeletes)
+			}
+			foundScanFailure := false
+			for _, item := range persisted {
+				if item["status"] == taskStatusFailed.Int() && item["srcPath"] == "/src/" {
+					foundScanFailure = true
+					break
+				}
+			}
+			if !foundScanFailure {
+				t.Fatalf("expected failed source scan record, got %#v", persisted)
+			}
+		})
+	}
+}
+
+func TestFullSyncSkipsDeferredDeletesWhenRemoteCopyCanceled(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+
+	oldConfig := config.GetConfig()
+	defer config.SetConfigForTest(oldConfig)
+	config.SetConfigForTest(&config.Config{Server: config.ServerConfig{
+		CopyConcurrency: 1,
+		ScanConcurrency: 1,
+		MaxRetries:      0,
+	}})
+
+	var removeCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch r.URL.Path {
+		case "/api/fs/list":
+			if body["path"].(string) == "/src/" {
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"new.txt","size":10,"is_dir":false}]}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"old.txt","size":5,"is_dir":false}]}}`))
+		case "/api/fs/copy":
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"tasks":[{"id":"remote-cancel-1"}]}}`))
+		case "/api/admin/task/copy/undone":
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":[]}`))
+		case "/api/admin/task/copy/info":
+			// AList tache.State 4 = canceled -> taskStatusStopped.
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"id":"remote-cancel-1","state":4,"progress":20,"error":"canceled in alist"}}`))
+		case "/api/admin/task/copy/delete":
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		case "/api/fs/remove":
+			removeCalls.Add(1)
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &JobClient{JobID: 1, Job: map[string]interface{}{"id": int64(1), "enable": 1, "isCron": 2}}
+	client.tryMarkDoing()
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{
+		"method":        1,
+		"srcPath":       "/src/",
+		"dstPath":       "/dst/",
+		"useCacheS":     0,
+		"useCacheT":     0,
+		"scanIntervalS": 0,
+		"scanIntervalT": 0,
+	})
+	jt.TaskID = 10
+	jt.JobClient = client
+	jt.LastWatching.Store(time.Now().Unix())
+	client.setCurrentTask(jt)
+
+	jt.Start()
+	if !client.waitUntilIdle(5 * time.Second) {
+		t.Fatal("task did not finish")
+	}
+	if got := removeCalls.Load(); got != 0 {
+		t.Fatalf("removeCalls = %d, want 0 when remote AList copy was canceled", got)
+	}
+}
+
+func TestFullSyncSkipsDeferredDeletesWhenNewDirMkdirFails(t *testing.T) {
+	testDB := newServiceTaskStatusTestDB(t)
+	oldDB := mapperDBForServiceTest(testDB)
+	defer oldDB()
+
+	oldConfig := config.GetConfig()
+	defer config.SetConfigForTest(oldConfig)
+	config.SetConfigForTest(&config.Config{Server: config.ServerConfig{
+		CopyConcurrency: 1,
+		ScanConcurrency: 1,
+		MaxRetries:      0,
+	}})
+
+	var removeCalls atomic.Int32
+	var copyCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch r.URL.Path {
+		case "/api/fs/list":
+			switch body["path"].(string) {
+			case "/src/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"newdir","is_dir":true}]}}`))
+			case "/src/newdir/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"moved.txt","size":10,"is_dir":false}]}}`))
+			case "/dst/":
+				_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"old.txt","size":10,"is_dir":false}]}}`))
+			default:
+				t.Fatalf("unexpected list path %v", body["path"])
+			}
+		case "/api/fs/mkdir":
+			_, _ = w.Write([]byte(`{"code":500,"message":"permission denied","data":null}`))
+		case "/api/fs/copy":
+			copyCalls.Add(1)
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"tasks":[]}}`))
+		case "/api/fs/remove":
+			removeCalls.Add(1)
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := &JobClient{JobID: 1, Job: map[string]interface{}{"id": int64(1), "enable": 1, "isCron": 2}}
+	client.tryMarkDoing()
+	jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{
+		"method":        1,
+		"srcPath":       "/src/",
+		"dstPath":       "/dst/",
+		"useCacheS":     0,
+		"useCacheT":     0,
+		"scanIntervalS": 0,
+		"scanIntervalT": 0,
+	})
+	jt.TaskID = 10
+	jt.JobClient = client
+	client.setCurrentTask(jt)
+
+	jt.Start()
+	if !client.waitUntilIdle(5 * time.Second) {
+		t.Fatal("task did not finish")
+	}
+	if got := copyCalls.Load(); got != 0 {
+		t.Fatalf("copyCalls = %d, want 0 when newdir mkdir failed", got)
+	}
+	if got := removeCalls.Load(); got != 0 {
+		t.Fatalf("removeCalls = %d, want 0 when newdir mkdir failed", got)
+	}
+}
+
+func TestFullSyncFileDirConflictProtectsExcludedDescendants(t *testing.T) {
+	for _, nested := range []bool{false, true} {
+		name := "direct excluded child"
+		if nested {
+			name = "nested excluded descendant"
+		}
+		t.Run(name, func(t *testing.T) {
+			var removeCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				var body map[string]interface{}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				switch r.URL.Path {
+				case "/api/fs/list":
+					switch body["path"].(string) {
+					case "/src/":
+						_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"report","size":12,"is_dir":false}]}}`))
+					case "/dst/":
+						_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"report","is_dir":true}]}}`))
+					case "/dst/report/":
+						if nested {
+							_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"sub","is_dir":true}]}}`))
+						} else {
+							_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"keep.bak","size":5,"is_dir":false}]}}`))
+						}
+					case "/dst/report/sub/":
+						_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"content":[{"name":"keep.bak","size":5,"is_dir":false}]}}`))
+					default:
+						t.Fatalf("unexpected list path %v", body["path"])
+					}
+				case "/api/fs/remove":
+					removeCalls.Add(1)
+					_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{}}`))
+				default:
+					t.Fatalf("unexpected path %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+
+			var persisted []map[string]interface{}
+			restorePersist := stubPersistJobTaskItems(t, &persisted, nil)
+			defer restorePersist()
+
+			jt := scanTestTask(server.URL, server.Client(), map[string]interface{}{
+				"method":        1,
+				"srcPath":       "/src/",
+				"dstPath":       "/dst/",
+				"exclude":       "*.bak",
+				"useCacheS":     0,
+				"useCacheT":     0,
+				"scanIntervalS": 0,
+				"scanIntervalT": 0,
+			})
+
+			jt.sync()
+			if err := jt.flushPersistBuffer(); err != nil {
+				t.Fatalf("flushPersistBuffer() error: %v", err)
+			}
+			if got := removeCalls.Load(); got != 0 {
+				t.Fatalf("removeCalls = %d, want 0 when conflicting dir contains excluded descendant", got)
+			}
+			if waiting := jt.Waiting.snapshot(); len(waiting) != 0 {
+				t.Fatalf("waiting copies = %#v, want 0 because conflicting dir was protected", waiting)
+			}
+			foundProtectedErr := false
+			for _, item := range persisted {
+				if item["type"] == taskItemTypeDelete.Int() && item["status"] == taskStatusFailed.Int() {
+					if errPtr, ok := item["errMsg"].(*string); ok && errPtr != nil && *errPtr == msg.DirDeleteProtectedByExclude {
+						foundProtectedErr = true
+					}
+				}
+			}
+			if !foundProtectedErr {
+				t.Fatalf("expected protected delete failure %q, got %#v", msg.DirDeleteProtectedByExclude, persisted)
+			}
+		})
 	}
 }

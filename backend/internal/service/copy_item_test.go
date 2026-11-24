@@ -267,6 +267,48 @@ func TestVerifyDstExistsChecksSizeMD5AndOverwriteMtime(t *testing.T) {
 			t.Fatalf("verifyDstExists(valid overwrite) = (%v, %v), want (true, nil)", ok, err)
 		}
 	})
+
+	t.Run("rejects stale non-empty destination when source is empty", func(t *testing.T) {
+		client := &copyItemTestClient{
+			fileExists: true,
+			fileEntry:  &FileListEntry{Name: "empty.txt", Size: 50, Modified: oldTime},
+		}
+		item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "empty.txt", int64(0), taskItemTypeCopy)
+		item.preCopyDst = &FileMetadata{Size: 50, Modified: oldTime}
+		item.setAttemptStartTime(1_700_000_100)
+		ok, err := item.verifyDstExists(copyItemTestRuntime{}, client)
+		if err != nil || ok {
+			t.Fatalf("verifyDstExists(0-byte over stale 50-byte) = (%v, %v), want (false, nil)", ok, err)
+		}
+	})
+
+	t.Run("accepts empty destination replacing non-empty file", func(t *testing.T) {
+		client := &copyItemTestClient{
+			fileExists: true,
+			fileEntry:  &FileListEntry{Name: "empty.txt", Size: 0, Modified: newTime},
+		}
+		item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "empty.txt", int64(0), taskItemTypeCopy)
+		item.preCopyDst = &FileMetadata{Size: 50, Modified: oldTime}
+		item.setAttemptStartTime(1_700_000_100)
+		ok, err := item.verifyDstExists(copyItemTestRuntime{}, client)
+		if err != nil || !ok {
+			t.Fatalf("verifyDstExists(0-byte over 50-byte succeeded) = (%v, %v), want (true, nil)", ok, err)
+		}
+	})
+
+	t.Run("rejects stale 0-byte overwrite without newer mtime", func(t *testing.T) {
+		client := &copyItemTestClient{
+			fileExists: true,
+			fileEntry:  &FileListEntry{Name: "empty.txt", Size: 0, Modified: oldTime},
+		}
+		item := newCopyItem(copyItemTestRuntime{}, client, "/src", "/dst", "empty.txt", int64(0), taskItemTypeCopy)
+		item.preCopyDst = &FileMetadata{Size: 0, Modified: oldTime}
+		item.setAttemptStartTime(1_700_000_100)
+		ok, err := item.verifyDstExists(copyItemTestRuntime{}, client)
+		if err != nil || ok {
+			t.Fatalf("verifyDstExists(stale 0-byte overwrite) = (%v, %v), want (false, nil)", ok, err)
+		}
+	})
 }
 
 func TestConfirmSynchronousCopyReturnsFalseWhenProbesExhaustErrors(t *testing.T) {

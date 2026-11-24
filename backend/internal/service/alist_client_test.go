@@ -593,4 +593,27 @@ func TestAlistClientGetFileInfoContextReturnsMetadataAndErrors(t *testing.T) {
 			t.Fatalf("GetFileInfoContext(proxy 404) = (%#v, %v, %v), want (nil, false, non-nil err)", entry, exists, err)
 		}
 	})
+
+	t.Run("preserves leading and trailing spaces in directory and filename", func(t *testing.T) {
+		var gotPath string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req alistPathRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			gotPath = req.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":200,"message":"success","data":{"name":"report ","size":12,"is_dir":false}}`))
+		}))
+		defer server.Close()
+
+		client := &AlistClient{URL: server.URL, client: server.Client()}
+		entry, exists, err := client.GetFileInfoContext(context.Background(), "/media/ folder /", "report ")
+		if err != nil || !exists || entry == nil {
+			t.Fatalf("GetFileInfoContext(spaces) = (%#v, %v, %v), want exists=true", entry, exists, err)
+		}
+		if gotPath != "/media/ folder /report " {
+			t.Fatalf("requested path = %q, want %q", gotPath, "/media/ folder /report ")
+		}
+	})
 }

@@ -251,6 +251,7 @@ func decodeFileListResponse(r io.Reader, limit int64, result FileListResult) (n,
 		return 0, 0, 0, "", err
 	}
 	var dataErr error
+	hasData := false
 	for dec.More() {
 		key, keyErr := decodeObjectKey(dec)
 		if keyErr != nil {
@@ -266,6 +267,7 @@ func decodeFileListResponse(r io.Reader, limit int64, result FileListResult) (n,
 				return 0, 0, 0, "", err
 			}
 		case "data":
+			hasData = true
 			var dErr error
 			n, total, dErr, err = decodeFileListData(dec, result)
 			if err != nil {
@@ -283,8 +285,11 @@ func decodeFileListResponse(r io.Reader, limit int64, result FileListResult) (n,
 	if err = consumeDelim(dec, '}'); err != nil {
 		return 0, 0, 0, "", err
 	}
+	if !hasData && dataErr == nil {
+		dataErr = fmt.Errorf("AList list response missing data")
+	}
 	// If AList returned an API error code (e.g. 401/404/500) along with a
-	// non-object data field (e.g. string or array), let checkAlistCode report
+	// missing, null, or non-object data field, let checkAlistCode report
 	// the API error instead of masking it with a shape error.
 	if dataErr != nil && (code == 0 || code == http.StatusOK) {
 		return 0, 0, code, message, dataErr
@@ -293,17 +298,17 @@ func decodeFileListResponse(r io.Reader, limit int64, result FileListResult) (n,
 }
 
 // decodeFileListData decodes the "data" field of /api/fs/list.
-// shapeErr records non-fatal shape mismatches (e.g. data is a string/array on
-// an error response) after skipping the full JSON value so the caller can keep
-// reading code/message and invoke checkAlistCode. fatalErr indicates a stream,
-// syntax, or limit error.
+// shapeErr records non-fatal shape mismatches (e.g. data is null or a
+// string/array on an error response) after skipping the full JSON value so the
+// caller can keep reading code/message and invoke checkAlistCode. fatalErr
+// indicates a stream, syntax, or limit error.
 func decodeFileListData(dec *json.Decoder, result FileListResult) (n, total int, shapeErr, fatalErr error) {
 	tok, err := dec.Token()
 	if err != nil {
 		return 0, 0, nil, err
 	}
 	if tok == nil {
-		return 0, 0, nil, nil
+		return 0, 0, fmt.Errorf("AList list data is null"), nil
 	}
 	delim, ok := tok.(json.Delim)
 	if !ok || delim != '{' {

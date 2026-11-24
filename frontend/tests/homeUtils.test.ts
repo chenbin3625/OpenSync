@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { defaultExclude, formatExcludePreview } from '../src/pages/Home/homeUtils.ts';
+import { defaultCronFields, defaultExclude, describeCronPlan, formatExcludePreview, resolveCronFields } from '../src/pages/Home/homeUtils.ts';
 
 test('defaultExclude escapes #recycle/ so gitignore parsers treat it as a rule instead of a comment', () => {
   const lines = defaultExclude.split(/\r?\n/).map((line) => line.trim());
@@ -24,4 +24,29 @@ test('formatExcludePreview summarizes long rule lists including defaultExclude',
 
   const defaultPreview = formatExcludePreview(defaultExclude);
   assert.match(defaultPreview, /^\.DS_Store、\._\*、\.Spotlight-V100\/ 等 \d+ 条$/);
+});
+
+test('resolveCronFields preserves minute-only hourly schedule without backfilling default hour', () => {
+  assert.deepEqual(resolveCronFields({ minute: '30' }), {
+    second: '0',
+    minute: '30',
+    hour: '*',
+    day: '*',
+    month: '*',
+    day_of_week: '*',
+  });
+  assert.deepEqual(resolveCronFields({ hour: '8' }), {
+    second: '0',
+    minute: '0',
+    hour: '8',
+    day: '*',
+    month: '*',
+    day_of_week: '*',
+  });
+  assert.deepEqual(resolveCronFields({}), defaultCronFields);
+});
+
+test('describeCronPlan matches backend cron defaults for partial fields', () => {
+  assert.equal(describeCronPlan({ minute: '30' }), '按 Cron 表达式 0 30 * * * * 执行');
+  assert.equal(describeCronPlan({ hour: '8' }), '每天 08:00:00 执行');
 });

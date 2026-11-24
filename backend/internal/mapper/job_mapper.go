@@ -27,9 +27,96 @@ const (
 // so removing a large task does not hold SQLite's write lock indefinitely.
 var taskItemDeleteChunkSize = 5000
 
-// GetJobList gets paginated job list
+// GetJobList gets paginated job list. When locateJobId is provided alongside
+// pagination parameters, it resolves the page containing that job inside the
+// same read-only snapshot and returns pageNum and locatedJobFound.
 func GetJobList(params map[string]interface{}) (map[string]interface{}, error) {
-	return FetchAllToPage("SELECT * FROM job ORDER BY createTime DESC, id DESC", params)
+	const baseSQL = "SELECT * FROM job ORDER BY createTime DESC, id DESC"
+	locateJobID, hasLocate := parsePositiveInt64Param(params["locateJobId"])
+	if !hasLocate {
+		return FetchAllToPage(baseSQL, params)
+	}
+
+	pageSize, pageNum, paginated, err := parsePageParams(params)
+	if err != nil {
+		return nil, err
+	}
+	if !paginated {
+		return FetchAllToPage(baseSQL, params)
+	}
+
+	ctx := context.Background()
+	tx, err := GetDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	resolvedPage := pageNum
+	found := false
+	var ct sql.NullInt64
+	err = tx.QueryRowContext(ctx, "SELECT createTime FROM job WHERE id=?", locateJobID).Scan(&ct)
+	if err == nil {
+		found = true
+		var beforeCount int64
+		if ct.Valid {
+			err = tx.QueryRowContext(
+				ctx,
+				"SELECT COUNT(*) FROM job WHERE createTime > ? OR (createTime = ? AND id > ?)",
+				ct.Int64, ct.Int64, locateJobID,
+			).Scan(&beforeCount)
+		} else {
+			err = tx.QueryRowContext(
+				ctx,
+				"SELECT COUNT(*) FROM job WHERE createTime IS NOT NULL OR id > ?",
+				locateJobID,
+			).Scan(&beforeCount)
+		}
+		if err != nil {
+			return nil, err
+		}
+		resolvedPage = int(beforeCount/int64(pageSize)) + 1
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	offset, err := pageOffset(pageSize, resolvedPage)
+	if err != nil {
+		return nil, err
+	}
+	result, err := fetchPageTx(ctx, tx, baseSQL, pageSize, offset, true, nil)
+	if err != nil {
+		return nil, err
+	}
+	result["pageNum"] = resolvedPage
+	result["locatedJobFound"] = found
+	return result, nil
+}
+
+func parsePositiveInt64Param(value interface{}) (int64, bool) {
+	if value == nil {
+		return 0, false
+	}
+	switch v := value.(type) {
+	case int:
+		return int64(v), v > 0
+	case int64:
+		return v, v > 0
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v || v <= 0 || v >= maxFloat64BeforeInt64Overflow {
+			return 0, false
+		}
+		return int64(v), true
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return 0, false
+		}
+		n, err := strconv.ParseInt(trimmed, 10, 64)
+		return n, err == nil && n > 0
+	default:
+		return 0, false
+	}
 }
 
 // GetJobListAll gets all jobs
@@ -109,64 +196,55 @@ func UpdateJobEnable(jobID int64, enable int) error {
 	return ExecuteUpdate("UPDATE job SET enable=? WHERE id=?", enable, jobID)
 }
 
-// DeleteJob deletes a job and its tasks
+// DeleteJob deletes a job and its tasks. Large item sets are removed in bounded
+// chunks before deleting the parent job/job_task rows so an interruption never
+// leaves orphaned job_task_item rows unreachable by retries or retention cleanup.
 func DeleteJob(jobID int64) error {
 	chunkSize := effectiveItemDeleteChunkSize()
-	var taskIDs []int64
-	var deletedItems int64
-
-	err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
-		taskIDs = nil
-		deletedItems = 0
-
-		rows, err := conn.QueryContext(ctx, "SELECT id FROM job_task WHERE jobId=?", jobID)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var taskID int64
-			if err := rows.Scan(&taskID); err != nil {
-				_ = rows.Close()
+	for {
+		done := false
+		err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
+			var probeCount int64
+			if err := conn.QueryRowContext(
+				ctx,
+				"SELECT COUNT(*) FROM (SELECT 1 FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE jobId=?) LIMIT ?)",
+				jobID, chunkSize+1,
+			).Scan(&probeCount); err != nil {
 				return err
 			}
-			taskIDs = append(taskIDs, taskID)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-
-		res, err := conn.ExecContext(
-			ctx,
-			"DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE jobId=?) LIMIT ?)",
-			jobID, chunkSize,
-		)
+			if probeCount > int64(chunkSize) {
+				if _, err := conn.ExecContext(
+					ctx,
+					"DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE jobId=?) LIMIT ?)",
+					jobID, chunkSize,
+				); err != nil {
+					return err
+				}
+				return nil
+			}
+			if _, err := conn.ExecContext(
+				ctx,
+				"DELETE FROM job_task_item WHERE taskId IN (SELECT id FROM job_task WHERE jobId=?)",
+				jobID,
+			); err != nil {
+				return err
+			}
+			if _, err := conn.ExecContext(ctx, "DELETE FROM job_task WHERE jobId=?", jobID); err != nil {
+				return err
+			}
+			if _, err := conn.ExecContext(ctx, "DELETE FROM job WHERE id=?", jobID); err != nil {
+				return err
+			}
+			done = true
+			return nil
+		})
 		if err != nil {
 			return err
 		}
-		if affected, err := res.RowsAffected(); err == nil {
-			deletedItems = affected
+		if done {
+			return nil
 		}
-
-		if _, err := conn.ExecContext(ctx, "DELETE FROM job_task WHERE jobId=?", jobID); err != nil {
-			return err
-		}
-		if _, err := conn.ExecContext(ctx, "DELETE FROM job WHERE id=?", jobID); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
-
-	if deletedItems >= int64(chunkSize) && len(taskIDs) > 0 {
-		return deleteRemainingTaskItemsByTaskIDs(taskIDs, chunkSize)
-	}
-	return nil
 }
 
 // --- Job Task ---
@@ -329,9 +407,29 @@ func GetJobTaskByID(taskID int64) (map[string]interface{}, error) {
 	return rst[0], nil
 }
 
-// AddJobTask inserts a new job task
+// AddJobTask inserts a new job task, recording the job's current alistId when available.
 func AddJobTask(jobID int64, runTime int64) (int64, error) {
-	return ExecuteInsert("INSERT INTO job_task (jobId, runTime) VALUES (?, ?)", jobID, runTime)
+	return ExecuteInsert(
+		"INSERT INTO job_task (jobId, alistId, runTime) VALUES (?, COALESCE((SELECT alistId FROM job WHERE id=?), 0), ?)",
+		jobID, jobID, runTime,
+	)
+}
+
+// AddJobTaskWithAlist inserts a new job task with an explicit alistId snapshot.
+func AddJobTaskWithAlist(jobID, alistID, runTime int64) (int64, error) {
+	return ExecuteInsert("INSERT INTO job_task (jobId, alistId, runTime) VALUES (?, ?, ?)", jobID, alistID, runTime)
+}
+
+// BackfillJobTaskAlistID records the previous engine ID on pre-migration tasks
+// before a job switches to a different engine.
+func BackfillJobTaskAlistID(jobID, alistID int64) error {
+	if jobID <= 0 || alistID <= 0 {
+		return nil
+	}
+	return ExecuteUpdate(
+		"UPDATE job_task SET alistId=? WHERE jobId=? AND (alistId IS NULL OR alistId=0)",
+		alistID, jobID,
+	)
 }
 
 // UpdateJobTaskStatus updates task status
@@ -356,59 +454,70 @@ func effectiveItemDeleteChunkSize() int {
 	return taskItemDeleteChunkSize
 }
 
-// DeleteJobTaskByTaskID deletes a task and its items
+// DeleteJobTaskByTaskID deletes a task and its items. Excess items are removed
+// in bounded chunks before the parent job_task row is deleted in the final
+// transaction so an interruption leaves the parent retryable with no orphans.
 func DeleteJobTaskByTaskID(taskID int64) error {
 	chunkSize := effectiveItemDeleteChunkSize()
-	var deletedItems int64
+	for {
+		done := false
+		err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
+			var status int
+			if err := conn.QueryRowContext(ctx, "SELECT status FROM job_task WHERE id=?", taskID).Scan(&status); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return errors.New(msg.TaskNotFound)
+				}
+				return err
+			}
+			if status == 0 || status == 1 {
+				return errors.New(msg.JobRunningCannotDelete)
+			}
 
-	err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
-		deletedItems = 0
+			var probeCount int64
+			if err := conn.QueryRowContext(
+				ctx,
+				"SELECT COUNT(*) FROM (SELECT 1 FROM job_task_item WHERE taskId=? LIMIT ?)",
+				taskID, chunkSize+1,
+			).Scan(&probeCount); err != nil {
+				return err
+			}
+			if probeCount > int64(chunkSize) {
+				if _, err := conn.ExecContext(
+					ctx,
+					"DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId=? LIMIT ?)",
+					taskID, chunkSize,
+				); err != nil {
+					return err
+				}
+				return nil
+			}
 
-		var status int
-		if err := conn.QueryRowContext(ctx, "SELECT status FROM job_task WHERE id=?", taskID).Scan(&status); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+			result, err := conn.ExecContext(ctx, "DELETE FROM job_task WHERE id=? AND status NOT IN (0,1)", taskID)
+			if err != nil {
+				return err
+			}
+			if affected, err := result.RowsAffected(); err != nil {
+				return err
+			} else if affected == 0 {
 				return errors.New(msg.TaskNotFound)
 			}
-			return err
-		}
-		if status == 0 || status == 1 {
-			return errors.New(msg.JobRunningCannotDelete)
-		}
 
-		result, err := conn.ExecContext(ctx, "DELETE FROM job_task WHERE id=? AND status NOT IN (0,1)", taskID)
+			if _, err := conn.ExecContext(ctx, "DELETE FROM job_task_item WHERE taskId=?", taskID); err != nil {
+				return err
+			}
+			done = true
+			return nil
+		})
 		if err != nil {
 			return err
 		}
-		if affected, err := result.RowsAffected(); err != nil {
-			return err
-		} else if affected == 0 {
-			return errors.New(msg.TaskNotFound)
+		if done {
+			return nil
 		}
-
-		itemRes, err := conn.ExecContext(
-			ctx,
-			"DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId=? LIMIT ?)",
-			taskID, chunkSize,
-		)
-		if err != nil {
-			return err
-		}
-		if affected, err := itemRes.RowsAffected(); err == nil {
-			deletedItems = affected
-		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
-
-	if deletedItems >= int64(chunkSize) {
-		return deleteRemainingTaskItemsByTaskIDs([]int64{taskID}, chunkSize)
-	}
-	return nil
 }
 
-// DeleteJobTaskByRunTime deletes old tasks
+// DeleteJobTaskByRunTime deletes old tasks and sweeps any orphaned items.
 func DeleteJobTaskByRunTime(runTime int64) error {
 	for {
 		taskIDs, err := expiredJobTaskIDs(runTime, expiredTaskDeleteBatchSize)
@@ -416,18 +525,21 @@ func DeleteJobTaskByRunTime(runTime int64) error {
 			return err
 		}
 		if len(taskIDs) == 0 {
-			runRetentionMaintenance()
-			return nil
+			break
 		}
 		deletedCount, err := deleteJobTasksByIDs(taskIDs)
 		if err != nil {
 			return err
 		}
 		if deletedCount == 0 {
-			runRetentionMaintenance()
-			return nil
+			break
 		}
 	}
+	if err := deleteOrphanedTaskItems(effectiveItemDeleteChunkSize()); err != nil {
+		return err
+	}
+	runRetentionMaintenance()
+	return nil
 }
 
 func runRetentionMaintenance() {
@@ -474,6 +586,34 @@ func expiredJobTaskIDs(cutoff int64, limit int) ([]int64, error) {
 	return taskIDs, nil
 }
 
+func queryEligibleTaskIDs(ctx context.Context, conn *sql.Conn, clause string, args []interface{}) ([]int64, error) {
+	rows, err := conn.QueryContext(
+		ctx,
+		"SELECT id FROM job_task WHERE id IN ("+clause+") AND status NOT IN (0, 1)",
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 func deleteJobTasksByIDs(taskIDs []int64) (int, error) {
 	if len(taskIDs) == 0 {
 		return 0, nil
@@ -489,66 +629,89 @@ func deleteJobTasksByIDs(taskIDs []int64) (int, error) {
 		idBatch := taskIDs[start:end]
 		clause, args := int64InClause(idBatch)
 
-		var deletedTaskIDs []int64
-		var deletedItems int64
+		for {
+			done := false
+			var batchDeleted int
+			err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
+				batchDeleted = 0
 
-		err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
-			deletedTaskIDs = nil
-			deletedItems = 0
+				eligibleIDs, err := queryEligibleTaskIDs(ctx, conn, clause, args)
+				if err != nil {
+					return err
+				}
+				if len(eligibleIDs) == 0 {
+					done = true
+					return nil
+				}
 
-			// Re-verify status NOT IN (0, 1) atomically under BEGIN IMMEDIATE so
-			// tasks that became active are never deleted.
-			rows, err := conn.QueryContext(
-				ctx,
-				"DELETE FROM job_task WHERE id IN ("+clause+") AND status NOT IN (0, 1) RETURNING id",
-				args...,
-			)
-			if err != nil {
-				return err
-			}
-			for rows.Next() {
-				var id int64
-				if err := rows.Scan(&id); err != nil {
+				elClause, elArgs := int64InClause(eligibleIDs)
+				var probeCount int64
+				if err := conn.QueryRowContext(
+					ctx,
+					"SELECT COUNT(*) FROM (SELECT 1 FROM job_task_item WHERE taskId IN ("+elClause+") LIMIT ?)",
+					appendSQLArgs(elArgs, chunkSize+1)...,
+				).Scan(&probeCount); err != nil {
+					return err
+				}
+				if probeCount > int64(chunkSize) {
+					if _, err := conn.ExecContext(
+						ctx,
+						"DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId IN ("+elClause+") LIMIT ?)",
+						appendSQLArgs(elArgs, chunkSize)...,
+					); err != nil {
+						return err
+					}
+					return nil
+				}
+
+				// Re-verify status NOT IN (0, 1) atomically under BEGIN IMMEDIATE so
+				// tasks that became active are never deleted, and remove the parent
+				// rows in the same final transaction as their last chunk of items.
+				rows, err := conn.QueryContext(
+					ctx,
+					"DELETE FROM job_task WHERE id IN ("+elClause+") AND status NOT IN (0, 1) RETURNING id",
+					elArgs...,
+				)
+				if err != nil {
+					return err
+				}
+				var deletedTaskIDs []int64
+				for rows.Next() {
+					var id int64
+					if err := rows.Scan(&id); err != nil {
+						_ = rows.Close()
+						return err
+					}
+					deletedTaskIDs = append(deletedTaskIDs, id)
+				}
+				if err := rows.Err(); err != nil {
 					_ = rows.Close()
 					return err
 				}
-				deletedTaskIDs = append(deletedTaskIDs, id)
-			}
-			if err := rows.Err(); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			if err := rows.Close(); err != nil {
-				return err
-			}
+				if err := rows.Close(); err != nil {
+					return err
+				}
 
-			if len(deletedTaskIDs) == 0 {
+				if len(deletedTaskIDs) > 0 {
+					delClause, delArgs := int64InClause(deletedTaskIDs)
+					if _, err := conn.ExecContext(
+						ctx,
+						"DELETE FROM job_task_item WHERE taskId IN ("+delClause+")",
+						delArgs...,
+					); err != nil {
+						return err
+					}
+				}
+				batchDeleted = len(deletedTaskIDs)
+				done = true
 				return nil
-			}
-
-			delClause, delArgs := int64InClause(deletedTaskIDs)
-			itemArgs := appendSQLArgs(delArgs, chunkSize)
-			res, err := conn.ExecContext(
-				ctx,
-				"DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId IN ("+delClause+") LIMIT ?)",
-				itemArgs...,
-			)
+			})
 			if err != nil {
-				return err
-			}
-			if affected, err := res.RowsAffected(); err == nil {
-				deletedItems = affected
-			}
-			return nil
-		})
-		if err != nil {
-			return totalDeleted, err
-		}
-
-		totalDeleted += len(deletedTaskIDs)
-		if deletedItems >= int64(chunkSize) && len(deletedTaskIDs) > 0 {
-			if err := deleteRemainingTaskItemsByTaskIDs(deletedTaskIDs, chunkSize); err != nil {
 				return totalDeleted, err
+			}
+			totalDeleted += batchDeleted
+			if done {
+				break
 			}
 		}
 	}
@@ -556,46 +719,41 @@ func deleteJobTasksByIDs(taskIDs []int64) (int, error) {
 	return totalDeleted, nil
 }
 
-func deleteRemainingTaskItemsByTaskIDs(taskIDs []int64, chunkSize int) error {
-	if len(taskIDs) == 0 {
-		return nil
-	}
+func deleteOrphanedTaskItems(chunkSize int) error {
 	if chunkSize <= 0 {
 		chunkSize = effectiveItemDeleteChunkSize()
 	}
-
-	for start := 0; start < len(taskIDs); start += sqlInClauseChunkSize {
-		end := start + sqlInClauseChunkSize
-		if end > len(taskIDs) {
-			end = len(taskIDs)
-		}
-		clause, idArgs := int64InClause(taskIDs[start:end])
-		query := "DELETE FROM job_task_item WHERE id IN (SELECT id FROM job_task_item WHERE taskId IN (" + clause + ") LIMIT ?)"
-		args := appendSQLArgs(idArgs, chunkSize)
-
-		for {
-			var deleted int64
-			err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
-				res, err := conn.ExecContext(ctx, query, args...)
-				if err != nil {
-					return err
-				}
-				affected, err := res.RowsAffected()
-				if err != nil {
-					return err
-				}
-				deleted = affected
-				return nil
-			})
+	for {
+		var deleted int64
+		err := withImmediateWriteTx(context.Background(), func(ctx context.Context, conn *sql.Conn) error {
+			res, err := conn.ExecContext(
+				ctx,
+				`DELETE FROM job_task_item
+				 WHERE id IN (
+				     SELECT jti.id FROM job_task_item AS jti
+				     LEFT JOIN job_task AS jt ON jt.id = jti.taskId
+				     WHERE jt.id IS NULL
+				     LIMIT ?
+				 )`,
+				chunkSize,
+			)
 			if err != nil {
 				return err
 			}
-			if deleted < int64(chunkSize) {
-				break
+			affected, err := res.RowsAffected()
+			if err != nil {
+				return err
 			}
+			deleted = affected
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if deleted < int64(chunkSize) {
+			return nil
 		}
 	}
-	return nil
 }
 
 // UpdateJobTaskNumMany batch updates task result counts
