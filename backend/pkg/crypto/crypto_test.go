@@ -131,3 +131,42 @@ func TestReadOrSetFileTightensInsecurePermissions(t *testing.T) {
 		t.Fatalf("tightened mode = %04o, want 0600", mode)
 	}
 }
+
+func TestReadOrSetFileSkipsPOSIXPermissionCheckWhenDisabled(t *testing.T) {
+	prev := enforcePOSIXSecretPermissions
+	enforcePOSIXSecretPermissions = false
+	t.Cleanup(func() { enforcePOSIXSecretPermissions = prev })
+
+	// Creating a new secret file should succeed without failing on POSIX mode bits.
+	newPath := filepath.Join(t.TempDir(), "nested", "secret.key")
+	got, err := ReadOrSetFile(newPath, "windows-secret", false)
+	if err != nil {
+		t.Fatalf("ReadOrSetFile(create) error = %v, want nil", err)
+	}
+	if got != "windows-secret" {
+		t.Fatalf("ReadOrSetFile(create) = %q, want windows-secret", got)
+	}
+
+	// Reading an existing file with non-0600 permissions (e.g. Windows 0666/0644)
+	// should succeed instead of crashing startup.
+	existingPath := filepath.Join(t.TempDir(), "secret.key")
+	if err := os.WriteFile(existingPath, []byte("existing-win-secret"), 0o644); err != nil {
+		t.Fatalf("setup secret: %v", err)
+	}
+	got, err = ReadOrSetFile(existingPath, "replacement", false)
+	if err != nil {
+		t.Fatalf("ReadOrSetFile(existing 0644) error = %v, want nil", err)
+	}
+	if got != "existing-win-secret" {
+		t.Fatalf("ReadOrSetFile(existing 0644) = %q, want existing-win-secret", got)
+	}
+
+	// Empty files must still be rejected.
+	emptyPath := filepath.Join(t.TempDir(), "empty.key")
+	if err := os.WriteFile(emptyPath, []byte("   \n"), 0o644); err != nil {
+		t.Fatalf("setup empty secret: %v", err)
+	}
+	if _, err := ReadOrSetFile(emptyPath, "replacement", false); err == nil {
+		t.Fatalf("ReadOrSetFile(empty) error = nil, want error")
+	}
+}

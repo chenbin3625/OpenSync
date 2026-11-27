@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
@@ -58,6 +59,12 @@ func IsModernPasswordHash(storedHash string) bool {
 		strings.HasPrefix(storedHash, "$2y$")
 }
 
+// enforcePOSIXSecretPermissions controls whether ReadOrSetFile enforces Unix
+// 0400/0600 mode bits. On Windows Go's os.Stat always reports 0666 (or 0444
+// when read-only) for regular files and os.Chmod cannot clear group/other bits,
+// so checking POSIX mode bits unconditionally fails startup.
+var enforcePOSIXSecretPermissions = runtime.GOOS != "windows"
+
 // isOwnerOnlySecretPerm reports whether perm grants no group, other, or execute
 // permissions (e.g. 0400 read-only mounted secret or 0600 owner read/write).
 func isOwnerOnlySecretPerm(perm os.FileMode) bool {
@@ -81,19 +88,21 @@ func ReadOrSetFile(fileName string, defaultVal string, force bool) (string, erro
 			if len(strings.TrimSpace(string(data))) == 0 {
 				return "", fmt.Errorf("%s is empty", fileName)
 			}
-			perm := info.Mode().Perm()
-			if !isOwnerOnlySecretPerm(perm) {
-				if err := os.Chmod(fileName, 0600); err != nil {
-					return "", err
+			if enforcePOSIXSecretPermissions {
+				perm := info.Mode().Perm()
+				if !isOwnerOnlySecretPerm(perm) {
+					if err := os.Chmod(fileName, 0600); err != nil {
+						return "", err
+					}
+					info, err = os.Stat(fileName)
+					if err != nil {
+						return "", err
+					}
+					perm = info.Mode().Perm()
 				}
-				info, err = os.Stat(fileName)
-				if err != nil {
-					return "", err
+				if !isOwnerOnlySecretPerm(perm) {
+					return "", fmt.Errorf("%s has insecure permissions %04o", fileName, perm)
 				}
-				perm = info.Mode().Perm()
-			}
-			if !isOwnerOnlySecretPerm(perm) {
-				return "", fmt.Errorf("%s has insecure permissions %04o", fileName, perm)
 			}
 			return string(data), nil
 		} else if !os.IsNotExist(err) {
@@ -118,9 +127,11 @@ func ReadOrSetFile(fileName string, defaultVal string, force bool) (string, erro
 		}
 	}()
 
-	if err := tmpFile.Chmod(0600); err != nil {
-		_ = tmpFile.Close()
-		return "", err
+	if enforcePOSIXSecretPermissions {
+		if err := tmpFile.Chmod(0600); err != nil {
+			_ = tmpFile.Close()
+			return "", err
+		}
 	}
 	if _, err := tmpFile.WriteString(defaultVal); err != nil {
 		_ = tmpFile.Close()
@@ -138,12 +149,14 @@ func ReadOrSetFile(fileName string, defaultVal string, force bool) (string, erro
 	}
 	cleanup = false
 
-	info, err := os.Stat(fileName)
-	if err != nil {
-		return "", err
-	}
-	if !isOwnerOnlySecretPerm(info.Mode().Perm()) {
-		return "", fmt.Errorf("%s has insecure permissions %04o", fileName, info.Mode().Perm())
+	if enforcePOSIXSecretPermissions {
+		info, err := os.Stat(fileName)
+		if err != nil {
+			return "", err
+		}
+		if !isOwnerOnlySecretPerm(info.Mode().Perm()) {
+			return "", fmt.Errorf("%s has insecure permissions %04o", fileName, info.Mode().Perm())
+		}
 	}
 	return defaultVal, nil
 }
